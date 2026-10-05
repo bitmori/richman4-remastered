@@ -280,6 +280,10 @@ std::optional<Item> from_event(const GameEvent &event, const World &world) {
         return box(format(patterns[event.announcement_id],
                           {player_name(world, std::int64_t(event.player)), std::int64_t(event.value)}));
     }
+    case Announcement::tool_use: // "使用%s" (0x4653e5), 1500 ms, before a computer's tool runs
+        if (event.announcement_id < 1 || event.announcement_id > services::tool_names.size())
+            return std::nullopt;
+        return box("使用" + std::string(services::tool_names[event.announcement_id - 1U]));
     case Announcement::toll_waived: { // AUDIO item 4: _rich4_check_pay_toll_to_owner strings 0x463bb8..0x463c54
         static constexpr std::array<std::string_view, 9> patterns{
             "房屋查封中\n\n免收%s！", "與%s同盟中\n\n免收%s！", "死神顯靈\n\n免收%s！",

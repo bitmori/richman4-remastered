@@ -144,6 +144,8 @@ enum class Announcement : std::uint8_t {
     toll_waived,       // _rich4_check_pay_toll_to_owner box "...免收%s！" (1500 ms) before event voice 13:
                        // id 0 seized, 1 allied, 2 god of death, 3 hotel, 4 away, 5 prison, 6 hospital,
                        // 7 hibernating, 8 sleepwalking; subject = owner, property = 2000+land / 4000+facility.
+    tool_use,          // "使用%s" box (1500 ms) before a computer/託管 player's tool runs
+                       // (rich4_ui_use_tool.asm:1721, the automatic tool loop); id = tool 1..13.
 };
 
 // Which original per-character speech table a bubble line comes from (docs/ui/messages.md §1.4).

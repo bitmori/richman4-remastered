@@ -651,6 +651,8 @@ struct GameSession::Impl {
                         throw UnsupportedRule{selected.message};
                     if (selected.decision) {
                         const auto &request = *selected.decision;
+                        // The original announces the tool before calling its function (presentation only).
+                        announce(Announcement::tool_use, actor(), static_cast<std::uint8_t>(request.tool));
                         const auto result = tools::use(world, random, actor(), request.tool, request.target,
                                                        request.destination, tool_callbacks());
                         if (!result.supported)
