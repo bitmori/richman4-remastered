@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -162,15 +163,38 @@ class Font {
     Font(const Font &) = delete;
     Font &operator=(const Font &) = delete;
 
-    int measure(std::string_view text, int size = 16) {
+    int measure(std::string_view text, int size = 16, bool monochrome = false) {
         int width = 0;
         for (const auto character : codepoints(text))
-            width += glyph(character, size).advance;
+            width += glyph(character, size, monochrome).advance;
         return width;
     }
 
+    // Ink bounding box of a single line drawn with draw(text, 0, 0, size), plus `spacing` extra
+    // pixels after each glyph. Empty text yields an empty rectangle at the origin.
+    graphics::Rect ink_bounds(std::string_view text, int size = 16, int spacing = 0, bool monochrome = false) {
+        graphics::Rect bounds{0, 0, 0, 0};
+        bool any = false;
+        int x = 0;
+        for (const auto character : codepoints(text)) {
+            const auto &bitmap = glyph(character, size, monochrome);
+            if (bitmap.width && bitmap.height) {
+                const graphics::Rect ink{x + bitmap.left, size - bitmap.top, x + bitmap.left + bitmap.width,
+                                         size - bitmap.top + bitmap.height};
+                if (!any)
+                    bounds = ink;
+                else
+                    bounds = {std::min(bounds.left, ink.left), std::min(bounds.top, ink.top),
+                              std::max(bounds.right, ink.right), std::max(bounds.bottom, ink.bottom)};
+                any = true;
+            }
+            x += bitmap.advance + spacing;
+        }
+        return bounds;
+    }
+
     void draw(graphics::Image &image, std::string_view text, int x, int y, int size = 16,
-              std::uint16_t value = ink, int wrap_width = 0) {
+              std::uint16_t value = ink, int wrap_width = 0, bool monochrome = false) {
         const int start_x = x;
         for (const auto character : codepoints(text)) {
             if (character == U'\n') {
@@ -178,7 +202,7 @@ class Font {
                 y += size + 5;
                 continue;
             }
-            const auto &bitmap = glyph(character, size);
+            const auto &bitmap = glyph(character, size, monochrome);
             if (wrap_width > 0 && x > start_x && x + bitmap.advance > start_x + wrap_width) {
                 x = start_x;
                 y += size + 5;
@@ -271,8 +295,10 @@ class Font {
         int width, height, left, top, advance;
         std::vector<std::uint8_t> mask;
     };
-    const Glyph &glyph(char32_t character, int size) {
-        const auto key = std::pair(size, character);
+    // monochrome yields aliased glyphs like the original unsmoothed GDI text: the smoothed coverage
+    // is thresholded (FreeType's 1-bit rasterizer drops thin MingLiU strokes).
+    const Glyph &glyph(char32_t character, int size, bool monochrome = false) {
+        const auto key = std::tuple(size, character, monochrome);
         if (const auto found = glyphs_.find(key); found != glyphs_.end())
             return found->second;
         if (FT_Set_Pixel_Sizes(face_, 0, static_cast<FT_UInt>(size)) ||
@@ -293,13 +319,14 @@ class Font {
                 result.mask[row * result.width + column] =
                     bitmap.pixel_mode == FT_PIXEL_MODE_MONO
                         ? static_cast<std::uint8_t>(((line[column / 8] >> (7 - column % 8)) & 1) * 255)
-                        : line[column];
+                    : monochrome ? static_cast<std::uint8_t>(line[column] >= 56 ? 255 : 0)
+                                 : line[column];
         }
         return glyphs_.emplace(key, std::move(result)).first->second;
     }
     FT_Library library_{};
     FT_Face face_{};
-    std::map<std::pair<int, char32_t>, Glyph> glyphs_;
+    std::map<std::tuple<int, char32_t, bool>, Glyph> glyphs_;
 };
 
 inline std::string money(std::int64_t amount) {
