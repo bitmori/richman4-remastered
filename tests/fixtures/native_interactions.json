@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "synthetic": true,
+  "purpose": "Reproducible native inventory and map-target interaction fixtures",
+  "cards_by_fixture": {
+    "cards-01-15": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    "cards-16-30": [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+    "tools-01-13": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    "cards-facility": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  },
+  "tools": {"ids": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], "quantity_each": 3},
+  "scope": "Generated test setup only; not an original game capture or a complete playthrough"
+}
