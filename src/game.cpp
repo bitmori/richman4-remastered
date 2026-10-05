@@ -9,6 +9,7 @@
 #include "rich4/random.hpp"
 #include "rich4/stocks.hpp"
 #include "rich4/stocks_ai.hpp"
+#include "rich4/trading.hpp"
 #include "rich4/services.hpp"
 #include "rich4/auction.hpp"
 #include "rich4/lottery.hpp"
@@ -129,12 +130,14 @@ struct GameSession::Impl {
     }
     void set_phase(GamePhase next) { phase = next; phase_elapsed = 0; }
     void finish_turn() {
+        if (phase == GamePhase::finished) return;
         if (property_pending && phase != GamePhase::finished) {
             property_pending=false;
             const bool purchased=purchased_property;purchased_property=false;
             run_rule([this,purchased]{
                 if(purchased)check_god(gods::after_successful_purchase(world,random,actor(),player().node_id,god_callbacks()));
                 check_god(gods::after_property(world,actor(),player().node_id,god_callbacks()));
+                flight_bombardment();
             });
             return;
         }
@@ -182,6 +185,7 @@ struct GameSession::Impl {
     }
     void update_status() {
         auto& value = status();
+        const bool left_building = (value.days_in_hotel | value.days_in_prison | value.days_in_hospital) & 0x80U;
         bool released = false;
         for (auto* days_left : {&value.days_in_hotel, &value.days_disappearing,
                                &value.days_in_prison, &value.days_in_hospital}) {
@@ -235,6 +239,10 @@ struct GameSession::Impl {
                 }else{player().traffic_method=0;player().dice_count=1;}
             }
         }
+        if (left_building) {
+            check_god(gods::after_property(world, actor(), player().node_id, god_callbacks()));
+            flight_bombardment();
+        }
     }
     void start_turn(bool update = true) {
         spawn_if_needed();
@@ -281,6 +289,11 @@ struct GameSession::Impl {
             for (const auto& trade : stocks_ai::sell(world, random, actor(), closed))
                 emit(GameEventKind::notice, "电脑卖出股票" + std::to_string(trade.stock + 1) +
                      "，" + std::to_string(trade.quantity) + "股", trade.value);
+            reconcile_financing(false);
+            if(phase==GamePhase::finished || !player().controller_flags)return;
+            const auto offers = trading::ai_turn(world, random, actor());
+            if (offers.posted) emit(GameEventKind::notice, "电脑发布出售报价");
+            if (offers.purchased) emit(GameEventKind::notice, "电脑购买出售物品", offers.purchased->offer.price);
             reconcile_financing(false);
             if(phase==GamePhase::finished || !player().controller_flags)return;
             if(random.next()&1U){
@@ -354,8 +367,7 @@ struct GameSession::Impl {
                                                 static_cast<std::int32_t>(next.y) - state.y);
         state.x = static_cast<std::uint16_t>(next.x);
         state.y = static_cast<std::uint16_t>(next.y);
-        for(auto id : {status().god_info,status().attached_bomb})
-            if(id)world.objects.at(id-1).node_id=state.node_id;
+        sync_attached_objects(actor());
         --remaining; animation.reset();
         emit(GameEventKind::moved, player_name(actor()) + "到达道路" + std::to_string(next_node));
         const auto object=static_cast<std::uint16_t>((next.flags>>16U)&255U);
@@ -667,8 +679,8 @@ struct GameSession::Impl {
             const auto key = choice_sequence++;
             if (const auto answer = event_choices.find(key); answer != event_choices.end()) return static_cast<std::uint16_t>(answer->second);
             GameDecision prompt{DecisionKind::property_target,actor(),0,0,"选择工程公司建设的地产",{}};
-            for (std::size_t i = 1; i < world.lands.size(); ++i) prompt.options.push_back({"房产" + std::to_string(i),static_cast<std::int32_t>(2000+i)});
-            for (std::size_t i = 1; i < world.facilities.size(); ++i) prompt.options.push_back({"设施" + std::to_string(i),static_cast<std::int32_t>(4000+i)});
+            for (std::size_t i = 1; i < world.lands.size(); ++i) prompt.options.push_back({"房产" + std::to_string(i),static_cast<std::int32_t>(2000+i),DecisionLocation{world.lands[i].x,world.lands[i].y}});
+            for (std::size_t i = 1; i < world.facilities.size(); ++i) prompt.options.push_back({"设施" + std::to_string(i),static_cast<std::int32_t>(4000+i),DecisionLocation{world.facilities[i].x,world.facilities[i].y}});
             prompt.options.push_back({"放弃选择",0}); throw NeedChoice{std::move(prompt),key};
         }
         std::uint16_t selected = 0; unsigned score = 0;
@@ -919,6 +931,11 @@ struct GameSession::Impl {
                 pay(static_cast<int>(i + 100), static_cast<int>(slot), amount, 1); return;
             }
     }
+    void sync_attached_objects(std::size_t slot) {
+        const auto& entry = world.players.at(slot);
+        for (const auto id : {entry.status.god_info, entry.status.attached_bomb})
+            if (id) world.objects.at(id - 1).node_id = entry.state.node_id;
+    }
     void clear_absences(std::size_t slot) {
         auto& value = world.players.at(slot).status;
         if (value.days_in_prison) world.prison_roster[slot] = 0;
@@ -977,6 +994,7 @@ struct GameSession::Impl {
             state.last_node_id = 0; value.saved_direction = 15;
             const auto& building = world.landscapes.at(hospital ? 1 : 2);
             state.x = building.x; state.y = building.y;
+            sync_attached_objects(slot);
             days_field = static_cast<std::uint8_t>(days_left);
             (hospital ? world.hospital_roster : world.prison_roster)[slot] = 1;
         } else days_field = static_cast<std::uint8_t>((days_field + days_left) & 0x7f);
@@ -1119,6 +1137,29 @@ struct GameSession::Impl {
                 if (!entry.level) { entry.facility_type = 0; release_hotel_guests(); }
             }
         }
+    }
+    void flight_bombardment() {
+        // 0x448a7e schedules the attack; phase3 at 0x40da4b applies
+        // downgrade mode2 (demolish the building, retain ownership/lease).
+        if (!player().controller_flags || (player().traffic_method & 0x83U) != 3 ||
+            status().days_sleep_walking || status().days_in_hotel) return;
+        const auto code = world.nodes.at(player().node_id).type_and_index;
+        std::uint8_t owner = 0;
+        if (code > 2000 && code < 4000) {
+            auto& land = world.lands.at(code - 2000).economy;
+            if (land.owner_code == actor() + 1 || !land.level) return;
+            owner = land.owner_code;
+            land.level = land.chain_store = 0;
+        } else if (code > 4000 && code < 6000) {
+            auto& facility = world.facilities.at(code - 4000);
+            if (facility.owner_code == actor() + 1 || !facility.level) return;
+            owner = facility.owner_code;
+            facility.level = facility.facility_type = 0;
+            release_hotel_guests();
+        } else return;
+        if (owner) update_hostility(owner - 1U, actor(), multiply32(30, world.header.price_index));
+        status().saved_direction = player().direction;
+        emit(GameEventKind::notice, "飞行工具炸毁脚下建筑");
     }
     void turn_around(std::size_t slot) {
         const auto turn = [&](auto& state) {
@@ -1746,22 +1787,23 @@ struct GameSession::Impl {
             set_phase(GamePhase::awaiting_decision);
         } else {
             run_rule([this,passing]{
+            using E = numeric::Extended;
             const auto total = add32(player().cash, player().bank_balance);
-            if (total > 0) {
-                const float ratio = static_cast<float>(player().cash) / static_cast<float>(total);
-                float target = static_cast<float>(status().init_cash_ratio) / 100.0F;
-                if (world.header.date.day <= 7) target = static_cast<float>(static_cast<double>(target) * 1.5);
-                else if (world.header.date.day >= 26) target = static_cast<float>(static_cast<double>(target) * 0.5);
-                if (target >= 1.0F) target = 0.9F;
-                if (target <= 0.0F) target = 0.1F;
-                const float difference = ratio - target;
-                if (difference >= 0.25F || difference <= -0.25F || player().cash == 0) {
-                    player().cash = static_cast<std::int32_t>(static_cast<double>(total) * target);
-                    player().bank_balance = subtract32(total, player().cash);
-                    emit(GameEventKind::bank_transfer, "电脑玩家调整现金与存款");
-                }
+            const float ratio = total ? (E::from(player().cash) / E::from(total)).single() : 0.0F;
+            float target = (E::from(status().init_cash_ratio) / E::from(100)).single();
+            if (world.header.date.day <= 7) target = (E::from(target) * E::from(1.5)).single();
+            else if (world.header.date.day >= 26) target = (E::from(target) * E::from(0.5)).single();
+            if (target >= 1.0F) target = 0.9F;
+            if (target <= 0.0F) target = 0.1F;
+            // Original retains this subtraction in x87 and a binary64 spill;
+            // rounding it to float can change the quarter-ratio boundary.
+            const double difference = static_cast<double>(ratio) - target;
+            if ((total && (difference >= 0.25 || difference <= -0.25)) || player().cash == 0) {
+                player().cash = (E::from(total) * E::from(target)).integer();
+                player().bank_balance = subtract32(total, player().cash);
+                emit(GameEventKind::bank_transfer, "电脑玩家调整现金与存款");
+                reconcile_financing(true);
             }
-            reconcile_financing(true);
             if (!passing && phase!=GamePhase::finished) ai_bank_loan();
             },true,false,[this]{if(phase!=GamePhase::finished)leave_bank();});
         }
@@ -1828,12 +1870,10 @@ struct GameSession::Impl {
         for (auto& entry : world.players) {
             auto& state = entry.state;
             if (state.controller_flags && state.loan == 0) {
-                const auto value = static_cast<double>(state.bank_balance) * 1.1;
-                // Real games stay in this range; malformed/overflowing states
-                // are rejected instead of invoking a C++ float-to-int UB.
-                if (value < std::numeric_limits<std::int32_t>::min() || value > std::numeric_limits<std::int32_t>::max())
-                    throw std::runtime_error("monthly interest exceeds signed cash range");
-                state.bank_balance = static_cast<std::int32_t>(value);
+                // Preserve the original x87 product and FISTP truncation,
+                // including its INT32_MIN sentinel for out-of-range amounts.
+                state.bank_balance = (numeric::Extended::from(state.bank_balance) *
+                                      numeric::Extended::from(1.1)).integer();
             }
             entry.status.total_winter_sleep_days = 0;
             entry.status.cumulative_spending = entry.status.cumulative_income = 0;
@@ -2006,6 +2046,31 @@ bool GameSession::sell_stock(std::size_t stock,std::int32_t quantity) {
 bool GameSession::close_stock_market() {
     if(impl_->phase!=GamePhase::human_ready)return false;
     impl_->run_rule([this]{impl_->reconcile_financing(false);},true,false);return true;
+}
+bool GameSession::open_trading() {
+    if (impl_->phase != GamePhase::human_ready) return false;
+    (void)trading::prune(impl_->world);
+    return true;
+}
+bool GameSession::post_offer(const trading::Listing& offer) {
+    if (impl_->phase != GamePhase::human_ready) return false;
+    const auto result = trading::post(impl_->world, impl_->actor(), offer);
+    if (result.applied) impl_->emit(GameEventKind::notice, "出售报价已发布", offer.price);
+    return result.applied;
+}
+bool GameSession::cancel_offer(std::size_t index) {
+    return impl_->phase == GamePhase::human_ready && trading::cancel(impl_->world, impl_->actor(), index);
+}
+bool GameSession::buy_offer(std::size_t seller, std::size_t index) {
+    if (impl_->phase != GamePhase::human_ready) return false;
+    const auto result = trading::buy(impl_->world, impl_->actor(), seller, index);
+    if (result.applied) impl_->emit(GameEventKind::notice, "购买出售物品完成");
+    return result.applied;
+}
+bool GameSession::close_trading() {
+    if (impl_->phase != GamePhase::human_ready) return false;
+    impl_->run_rule([this] { impl_->reconcile_financing(false); }, true, false);
+    return true;
 }
 bool GameSession::respond(std::size_t option, std::int32_t amount) {
     if (impl_->phase != GamePhase::awaiting_decision || !impl_->decision || option >= impl_->decision->options.size()) return false;

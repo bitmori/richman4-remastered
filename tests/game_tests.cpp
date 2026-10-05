@@ -5,6 +5,7 @@
 #include "rich4/gods.hpp"
 #include "rich4/holidays.hpp"
 #include "rich4/calendar.hpp"
+#include "rich4/trading.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -53,6 +54,7 @@ rich4::World world(unsigned count = 4, unsigned land_count = 1) {
         p.x = static_cast<std::uint16_t>(value.nodes[p.node_id].x); p.y = 128;
         p.controller_flags = static_cast<std::uint8_t>(i ? 2 : 1);
         p.cash = 100000; p.bank_balance = 10000; p.dice_count = 1;
+        p.cards.fill(0); p.tool_amounts.fill(0);
         value.nodes[p.node_id].flags |= 0x100U << i;
     }
     value.lands[1].id = 1;
@@ -382,6 +384,110 @@ void special_financing() {
     require(!market.world().players[0].state.special_finance && market.world().players[0].state.bank_balance==9000 &&
             market.world().players[0].status.cumulative_spending==0,"lost financing ownership must collect debt without ordinary expense bookkeeping");
 }
+void computer_atm_financing() {
+    auto value = world();
+    value.players[0].state.controller_flags = 2;
+    value.players[1].state.controller_flags = 1;
+    value.players[0].status.loan_ratio = 0;
+    value.players[0].status.init_cash_ratio = 50;
+    for (auto& node : value.nodes) node.flags = (node.flags & ~255U) | 14;
+    value.commercials[1].commerce_type = 7; value.commercials[1].owner_code = 2;
+    value.players[1].state.special_finance = 60000;
+    rich4::GameSession unchanged(value, 7);
+    until(unchanged, [&] { return unchanged.phase() == rich4::GamePhase::advancing_turn; });
+    require(unchanged.world().players[0].state.cash == 100000 &&
+            unchanged.world().players[1].state.special_finance == 60000,
+            "computer ATM must not collect financing when its ratio requires no transfer");
+    value.players[0].state.cash = 0; value.players[0].state.bank_balance = 100000;
+    rich4::GameSession rebalanced(value, 7);
+    until(rebalanced, [&] { return rebalanced.phase() == rich4::GamePhase::advancing_turn; });
+    require(rebalanced.world().players[0].state.cash == 75000 &&
+            rebalanced.world().players[0].state.bank_balance == 25000 &&
+            rebalanced.world().players[1].state.special_finance == 45000,
+            "computer withdrawal must use the date-adjusted ratio then recover uncovered bank financing");
+}
+void flight_and_confinement_objects() {
+    auto value = world(); property_nodes(value);
+    value.players[0].state.traffic_method = 0x1f;
+    value.lands[1].economy.owner_code = 2;
+    value.lands[1].economy.level = 3;
+    value.lands[1].expired_date = 0x7eb0101;
+    rich4::GameSession flight(value, 0); first_landing(flight);
+    require(flight.world().lands[1].economy.level == 0 &&
+            flight.world().lands[1].economy.owner_code == 2 &&
+            flight.world().lands[1].expired_date == 0x7eb0101,
+            "flight bombardment must demolish buildings but preserve ownership and lease");
+    require(flight.world().players[0].state.cash == 98800 &&
+            flight.world().players[1].status.hostility[0] == 30,
+            "flight must pay the original toll before bombing and anger the owner by 30 times index");
+    value = world(); property_nodes(value); value.players[0].state.traffic_method = 0x1f;
+    value.players[0].status.days_sleep_walking = 2;
+    value.lands[1].economy.owner_code = 2; value.lands[1].economy.level = 3;
+    rich4::GameSession sleeping(value, 0);
+    until(sleeping, [&] { return sleeping.phase() == rich4::GamePhase::advancing_turn; });
+    require(sleeping.world().lands[1].economy.level == 3, "sleepwalking must suppress plane bombing");
+    value = world(); value.header.current_player = 3;
+    value.nodes[1].flags &= ~0x100U;
+    value.players[0].state.node_id = 2; value.players[0].state.last_node_id = 0;
+    value.players[0].state.x = value.players[0].state.y = 500;
+    value.players[0].status.days_in_hospital = 0x80;
+    value.players[0].status.saved_direction = 15;
+    value.players[0].status.god_info = 9;
+    value.objects[8].kind = 9; value.objects[8].node_id = 2;
+    value.objects[8].attached_player = 1; value.objects[8].remaining_days = 10;
+    value.nodes[2].type_and_index = 2001;
+    value.lands[1].economy.owner_code = 2; value.lands[1].economy.level = 1;
+    rich4::GameSession release(value, 9);
+    until(release, [&] { return release.completed_days() == 1 && release.phase() == rich4::GamePhase::human_ready; });
+    require(!release.world().players[0].status.days_in_hospital &&
+            release.world().players[0].state.node_id == 2 && release.world().lands[1].economy.level == 2,
+            "returning from a building must reapply the attached god before ready input");
+    value = world();
+    for (auto& node : value.nodes) node.flags = (node.flags & ~255U) | 3;
+    value.nodes[7].flags = (value.nodes[7].flags & ~255U) | 5;
+    value.fortune_deck.fill(12); value.fortune_cursor = 0;
+    value.players[0].status.god_info = 1;
+    value.objects[0].kind = 1; value.objects[0].node_id = 1;
+    value.objects[0].attached_player = 1; value.objects[0].remaining_days = 4;
+    value.players[0].status.attached_bomb = 37;
+    value.objects[36].kind = 18; value.objects[36].node_id = 1;
+    value.objects[36].attached_player = 1; value.objects[36].remaining_days = 20;
+    // No other player on the first step: retain the bomb until hospitalization.
+    value.nodes[2].flags &= ~0x200U;
+    value.players[1].state.node_id = 6; value.players[1].state.x = static_cast<std::uint16_t>(value.nodes[6].x);
+    value.nodes[6].flags |= 0x200U;
+    rich4::GameSession hospital(value, 0); first_landing(hospital);
+    require(hospital.world().players[0].status.days_in_hospital == 3 &&
+            hospital.world().players[0].state.node_id == 7 &&
+            hospital.world().objects[0].node_id == 7 && hospital.world().objects[36].node_id == 7,
+            "confinement must synchronize attached god and bomb node references");
+}
+void direct_trading() {
+    auto value = world();
+    value.players[0].state.cards[0] = 1;
+    value.players[1].state.cards[0] = 2;
+    require(rich4::trading::post(value, 1, {rich4::OfferKind::card, 2, 100, 0}).applied,
+            "test seller could not post an owned card");
+    rich4::GameSession game(value, 77);
+    const auto random = game.random_state();
+    require(game.open_trading() && game.post_offer({rich4::OfferKind::card, 1, 100, 0}),
+            "human listing input rejected at ready phase");
+    require(game.world().players[0].state.cards[0] == 1,
+            "posting must not consume inventory");
+    require(game.buy_offer(1, 0) && game.world().players[0].state.cash == 99900 &&
+            game.world().players[1].state.bank_balance == 10100 &&
+            game.world().players[1].state.cards[0] == 0,
+            "direct sale must debit buyer cash and credit seller bank");
+    require(game.cancel_offer(0) && game.close_trading() &&
+            game.phase() == rich4::GamePhase::human_ready && game.random_state() == random,
+            "direct trading should preserve the player's pending dice action and RNG");
+    require(game.post_offer({rich4::OfferKind::card, 1, 100, 0}), "relisting failed");
+    auto saved = game.export_save();
+    require(rich4::World::from_save(saved).offers == game.world().offers,
+            "native save lost a posted offer");
+    require(game.roll_dice() && !game.cancel_offer(0) && !game.open_trading(),
+            "in-flight turn accepted market mutations");
+}
 void lifecycle_and_finished_saves() {
     auto value=world();
     for(std::size_t i=1;i<value.players.size();++i)value.players[i].state.controller_flags=0;
@@ -432,7 +538,7 @@ void explicit_unsupported_and_save_guard() {
 int main() {
     try {
         dice_and_paths(); property_and_rent(); alliance_rent(); bank_and_failure();
-        thirty_days_and_timing(); save_reload_and_deferred_spawn(); facilities_events_and_rescue(); service_and_auction_choices(); native_actions_and_money_spinner(); loan_and_free_toll(); special_financing(); lifecycle_and_finished_saves(); explicit_unsupported_and_save_guard();
+        thirty_days_and_timing(); save_reload_and_deferred_spawn(); facilities_events_and_rescue(); service_and_auction_choices(); native_actions_and_money_spinner(); loan_and_free_toll(); special_financing(); computer_atm_financing(); flight_and_confinement_objects(); direct_trading(); lifecycle_and_finished_saves(); explicit_unsupported_and_save_guard();
         std::cout << "native game rule tests passed\n";
         return 0;
     } catch (const std::exception& error) {

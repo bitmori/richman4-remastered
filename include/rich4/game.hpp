@@ -14,6 +14,7 @@
 namespace rich4 {
 
 class World;
+namespace trading { struct Listing; }
 
 enum class GamePhase { human_ready, rolling, moving, awaiting_decision, advancing_turn, finished };
 enum class DecisionKind { buy_land, upgrade_land, bank, card_target, choose_card, rescue, buy_facility, construct_facility, upgrade_facility, roulette, shop, magic_category, magic_effect, auction, lottery, primary_stock, property_target, action_target, notice, money_spinner };
@@ -90,6 +91,11 @@ public:
     bool buy_stock(std::size_t stock, std::int32_t quantity);
     bool sell_stock(std::size_t stock, std::int32_t quantity);
     bool close_stock_market();
+    bool open_trading();
+    bool post_offer(const trading::Listing& offer);
+    bool cancel_offer(std::size_t index);
+    bool buy_offer(std::size_t seller, std::size_t index);
+    bool close_trading();
     bool respond(std::size_t option, std::int32_t amount = 0);
     void tick(unsigned elapsed_ms);
     [[nodiscard]] std::vector<GameEvent> drain_events();
