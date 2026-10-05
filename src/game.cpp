@@ -99,6 +99,10 @@ struct GameSession::Impl {
     bool interactive_mini_games = false; // RICH4.CFG[1]; off = closed mode (replay harness)
     // AI settings (託管) requested mid-turn; applied at the next turn boundary (next_turn).
     std::array<std::optional<AiSettings>, 4> pending_ai_settings;
+    // Presentation only (player_costume): gown 19 / stripes 20 per player, and the sprite inputs
+    // (traffic, sleep flags) it was put on with; any change is an original sprite update that ends it.
+    std::array<std::uint8_t, 4> costumes{};
+    std::array<std::uint32_t, 4> costume_keys{};
 
     explicit Impl(World value, std::uint32_t seed)
         : world(std::move(value)),
@@ -147,6 +151,35 @@ struct GameSession::Impl {
         const auto &state = world.players.at(slot).state;
         effects.push_back({kind, slot, state.node_id, target, std::nullopt, 0, {}, property, events.size()});
     }
+    // Board movies: `from` marks the actor's old point when the movie shows them leaving.
+    void board_movie(EffectKind kind, std::size_t slot, EffectPoint target, std::optional<EffectPoint> from,
+                     std::uint8_t variant = 0) {
+        effect(kind, slot, target);
+        effects.back().from = from;
+        effects.back().object_kind = variant;
+    }
+    // Original board draw (fcn_0040829d): a player is drawn when placed and not away/confined.
+    bool on_board(std::size_t slot) const {
+        const auto &entry = world.players.at(slot);
+        const auto &value = entry.status;
+        return entry.state.controller_flags && (entry.state.x || entry.state.y) &&
+               (!(value.days_in_hotel | value.days_disappearing | value.days_in_prison | value.days_in_hospital) ||
+                (entry.state.controller_flags & 0x20U));
+    }
+    std::uint32_t costume_key(std::size_t slot) const {
+        const auto &entry = world.players.at(slot);
+        return entry.state.traffic_method | (entry.status.days_sleep_walking ? 0x100U : 0U) |
+               (entry.status.days_sleeping ? 0x200U : 0U);
+    }
+    void end_costume(std::size_t slot) { // _rich4_update_player_sprite
+        if (slot < costumes.size())
+            costumes[slot] = 0;
+    }
+    void refresh_costumes() {
+        for (std::size_t slot = 0; slot < std::min(costumes.size(), world.players.size()); ++slot)
+            if (costumes[slot] && costume_keys[slot] != costume_key(slot))
+                costumes[slot] = 0;
+    }
     EffectPoint actor_point(std::size_t slot) const {
         const auto &state = world.players.at(slot).state;
         return {state.x, state.y};
@@ -185,6 +218,28 @@ struct GameSession::Impl {
             return;
         effect(card == 12 ? EffectKind::demolish : EffectKind::monster, actor(), property_point(target->value),
                target->value);
+    }
+    // AI targeted cards: the card sprite (Data 415) flies from the user to the target first
+    // (rich4_card_*.asm, _rich4_animate_object(0, ..., 100), skipped for a human user).
+    void card_throw(const CardUse &use) {
+        static constexpr std::array<std::uint8_t, 16> flying{4, 5, 9, 10, 11, 12, 13, 14, 16, 17, 23, 26, 27, 28, 29, 30};
+        if (human() || !use.target || std::find(flying.begin(), flying.end(), use.card_id) == flying.end())
+            return;
+        std::optional<EffectPoint> point;
+        const auto value = use.target->value;
+        if (use.target->kind == CardTargetKind::actor && value < world.players.size())
+            point = actor_point(value);
+        else if (use.target->kind == CardTargetKind::property)
+            point = property_point(value);
+        else if (use.target->kind == CardTargetKind::object && value && value <= world.objects.size()) {
+            const auto node = world.objects[value - 1U].node_id;
+            if (node && node < world.nodes.size())
+                point = EffectPoint{world.nodes[node].x, world.nodes[node].y};
+        }
+        if (!point)
+            return;
+        effect(EffectKind::card_throw, actor(), *point, use.target->kind == CardTargetKind::property ? value : 0);
+        effects.back().from = actor_point(actor());
     }
     // Presentation-only event for the original message boxes and announcement screens.
     GameEvent &announce(Announcement kind, std::size_t slot, std::uint8_t id = 0) {
@@ -286,7 +341,7 @@ struct GameSession::Impl {
                     check_god(gods::after_successful_purchase(world, random, actor(), player().node_id,
                                                               god_callbacks()));
                 check_god(gods::after_property(world, actor(), player().node_id, god_callbacks()));
-                flight_bombardment();
+                construction_vehicle_demolish();
             });
             return;
         }
@@ -336,6 +391,8 @@ struct GameSession::Impl {
         const auto &last = world.nodes[state.last_node_id];
         state.direction = direction::from_delta(node.x - last.x, node.y - last.y);
         world.nodes[state.node_id].flags |= 0x100U << actor();
+        // fcn_00418c55: the new player parachutes in (Data 559 + character), camera on the node.
+        board_movie(EffectKind::parachute, actor(), actor_point(actor()), std::nullopt, state.character);
     }
     static void age_status(std::uint8_t &value) {
         value &= 0x7fU;
@@ -346,6 +403,11 @@ struct GameSession::Impl {
         auto &value = status();
         const bool left_building =
             (value.days_in_hotel | value.days_in_prison | value.days_in_hospital) & 0x80U;
+        // Presentation: fcn_0040d4e5 replays the absence movie (bit 0x40: UFO, else airplane).
+        const auto returning = (value.days_disappearing & 0x80U) ? std::optional<std::uint8_t>(value.days_disappearing)
+                                                                  : std::nullopt;
+        if ((value.days_in_prison | value.days_in_hospital) & 0x80U)
+            end_costume(actor()); // released through _rich4_release_player_from_*: sprite update
         bool released = false;
         for (auto *days_left : {&value.days_in_hotel, &value.days_disappearing, &value.days_in_prison,
                                 &value.days_in_hospital}) {
@@ -355,8 +417,8 @@ struct GameSession::Impl {
             } else if (*days_left) {
                 --*days_left;
                 const auto mask = days_left == &value.days_disappearing ? 0x3fU : 0x7fU;
-                if ((*days_left & mask) == 0)
-                    *days_left = 0x80;
+                if ((*days_left & mask) == 0) // loc_0041c8d5 keeps the UFO mode bit (0x40)
+                    *days_left = static_cast<std::uint8_t>(0x80U | (*days_left & ~mask & 0x7fU));
             }
         }
         if (released) {
@@ -373,6 +435,11 @@ struct GameSession::Impl {
             state.x = static_cast<std::uint16_t>(node.x);
             state.y = static_cast<std::uint16_t>(node.y);
             world.nodes[state.node_id].flags |= 0x100U << actor();
+            if (returning) { // the player reappears at the commit frame
+                end_costume(actor());
+                board_movie((*returning & 0x40U) ? EffectKind::ufo : EffectKind::airplane, actor(),
+                            actor_point(actor()), std::nullopt, 1);
+            }
         }
         if (!(value.days_in_hotel | value.days_disappearing | value.days_in_prison |
               value.days_in_hospital)) {
@@ -430,7 +497,7 @@ struct GameSession::Impl {
         }
         if (left_building) {
             check_god(gods::after_property(world, actor(), player().node_id, god_callbacks()));
-            flight_bombardment();
+            construction_vehicle_demolish();
         }
     }
     void start_turn(bool update = true) {
@@ -550,6 +617,7 @@ struct GameSession::Impl {
                     if (const auto request =
                             choose_ai_card(world, random, actor(), callbacks, &card_ai_memory)) {
                         begin_card(*request);
+                        card_throw(*request);
                         const auto result = apply_card(world, random, actor(), *request, callbacks);
                         if (result.status == CardUseStatus::missing_callback)
                             throw UnsupportedRule{result.message};
@@ -1627,6 +1695,12 @@ struct GameSession::Impl {
     }
     void clear_absences(std::size_t slot) {
         auto &value = world.players.at(slot).status;
+        // fcn_0040d761 -> fcn_0040bf93: pulled out early, the player keeps wearing the stripes (prison)
+        // or the gown (hospital wins) until their next sprite update. Presentation only.
+        if (slot < costumes.size() && (value.days_in_prison || value.days_in_hospital)) {
+            costumes[slot] = value.days_in_hospital ? 19 : 20;
+            costume_keys[slot] = costume_key(slot);
+        }
         if (value.days_in_prison)
             world.prison_roster[slot] = 0;
         if (value.days_in_hospital)
@@ -1688,6 +1762,10 @@ struct GameSession::Impl {
         auto &value = entry.status;
         auto &days_field = hospital ? value.days_in_hospital : value.days_in_prison;
         if (!days_field) {
+            // Ambulance / police car movie (cfg-gated in the original): camera on the old spot, the
+            // player is driven away at the commit frame. Only drawn there if they were on the board.
+            const auto old_point = actor_point(slot);
+            const auto old_shown = on_board(slot);
             clear_absences(slot);
             absence_voice(slot, days_left);
             state.controller_flags &= 0x0fU;
@@ -1707,6 +1785,8 @@ struct GameSession::Impl {
             sync_attached_objects(slot);
             days_field = static_cast<std::uint8_t>(days_left);
             (hospital ? world.hospital_roster : world.prison_roster)[slot] = 1;
+            board_movie(hospital ? EffectKind::ambulance : EffectKind::police, slot, old_point,
+                        old_shown ? std::optional<EffectPoint>(old_point) : std::nullopt);
         } else
             days_field = static_cast<std::uint8_t>((days_field + days_left) & 0x7f);
         voice(slot, hospital ? 20 : 19);
@@ -1729,6 +1809,10 @@ struct GameSession::Impl {
             value.days_disappearing = encoded;
             auto &node = world.nodes.at(entry.state.node_id);
             node.flags &= ~(0x100U << slot);
+            // fcn_0040d375: UFO (mode != 0, Data 533) or airplane (Data 558) takes the player away from
+            // where they stand (the redraw before the movie shows them there, even if just released).
+            const auto old_point = actor_point(slot);
+            board_movie(mode ? EffectKind::ufo : EffectKind::airplane, slot, old_point, old_point);
             entry.state.x = static_cast<std::uint16_t>(node.x);
             entry.state.y = static_cast<std::uint16_t>(node.y);
         } else
@@ -1919,25 +2003,29 @@ struct GameSession::Impl {
             }
         }
     }
-    void flight_bombardment() {
-        // 0x448a7e schedules the attack; phase3 at 0x40da4b applies
-        // downgrade mode2 (demolish the building, retain ownership/lease).
+    void construction_vehicle_demolish() {
+        // 工程車 (traffic 3) stopping on an opponent's building: 0x448a7e schedules the attack;
+        // phase3 at 0x40da4b applies downgrade mode2 (demolish the building, retain ownership/lease).
         if (!player().controller_flags || (player().traffic_method & 0x83U) != 3 ||
             status().days_sleep_walking || status().days_in_hotel)
             return;
         const auto code = world.nodes.at(player().node_id).type_and_index;
-        std::uint8_t owner = 0;
+        std::uint8_t owner = 0, level = 0, type = 0;
         if (code > 2000 && code < 4000) {
             auto &land = world.lands.at(code - 2000).economy;
             if (land.owner_code == actor() + 1 || !land.level)
                 return;
             owner = land.owner_code;
+            level = land.level;
+            type = land.chain_store;
             land.level = land.chain_store = 0;
         } else if (code > 4000 && code < 6000) {
             auto &facility = world.facilities.at(code - 4000);
             if (facility.owner_code == actor() + 1 || !facility.level)
                 return;
             owner = facility.owner_code;
+            level = facility.level;
+            type = facility.facility_type;
             facility.level = facility.facility_type = 0;
             release_hotel_guests();
         } else
@@ -1945,8 +2033,15 @@ struct GameSession::Impl {
         if (owner)
             update_hostility(owner - 1U, actor(), multiply32(30, world.header.price_index));
         status().saved_direction = player().direction;
-        cue(actor(), 15); // AUDIO: 工程車 swing, player_utils.asm:918 board preset [22]
-        emit(GameEventKind::notice, "飞行工具炸毁脚下建筑");
+        // Picture: the truck turns to the building and swings (pose 12) under a Data 526 puff.
+        const auto &node = world.nodes.at(player().node_id);
+        const auto building = property_point(code);
+        effect(EffectKind::truck_demolish, actor(), building, code);
+        effects.back().from = actor_point(actor());
+        effects.back().object_kind = direction::from_delta(building.x - node.x, building.y - node.y);
+        effects.back().previous_level = level;
+        effects.back().previous_type = type;
+        emit(GameEventKind::notice, "工程车拆除脚下建筑");
     }
     void turn_around(std::size_t slot) {
         const auto turn = [&](auto &state) {
@@ -2272,6 +2367,10 @@ struct GameSession::Impl {
         };
         callbacks.arrival = [this](auto slot, auto kind) { announce(Announcement::god_arrival, slot, kind); };
         callbacks.sound = [this](auto slot, auto sound) { cue(slot, sound); }; // AUDIO: 54 / 35 / 36
+        callbacks.dog = [this](auto slot, bool on_foot) { // Data 532 dust fight / Data 552 vehicle
+            board_movie(on_foot ? EffectKind::dog_fight : EffectKind::dog_vehicle, slot, actor_point(slot),
+                        on_foot ? std::optional<EffectPoint>(actor_point(slot)) : std::nullopt);
+        };
         return callbacks;
     }
     EventCallbacks event_callbacks() {
@@ -2289,6 +2388,10 @@ struct GameSession::Impl {
             disappear(slot, days_left, mode);
         };
         callbacks.try_mianzui_jiahuo = [this](auto slot) { return try_defense_card(slot); };
+        callbacks.news_picture = [this](auto id, auto code) { // camera on the hit property
+            effect(EffectKind::news_movie, actor(), property_point(code), code);
+            effects.back().object_kind = id;
+        };
         callbacks.set_loan_due_date = [this](auto slot) { set_loan_due_date(slot); };
         callbacks.choose_card = [this](auto slot, auto victim) { return choose_victim_card(slot, victim); };
         callbacks.auction = [this](auto property) { auction(property); };
@@ -2797,6 +2900,7 @@ struct GameSession::Impl {
     void resolve_event(bool news) {
         run_rule([this, news] {
             const auto position = events.size();
+            const auto effect_count = effects.size();
             const auto result = screen_first([&] {
                 return news ? apply_news(world, random, event_callbacks())
                             : apply_fortune(world, random, actor(), event_callbacks());
@@ -2804,6 +2908,9 @@ struct GameSession::Impl {
             if (!result.supported)
                 throw UnsupportedRule{result.message};
             announce_event(news, actor(), result, position);
+            for (auto i = effect_count; i < effects.size(); ++i) // the handler's movies play after the screen
+                if (effects[i].after_events >= position)
+                    ++effects[i].after_events;
             emit(GameEventKind::notice, result.message);
         });
     }
@@ -3188,8 +3295,10 @@ struct GameSession::Impl {
             visit_confinement(kind == 5);
         else if (kind == 9)
             open_lottery();
-        else if (kind == 13)
+        else if (kind == 13) {
+            effect(EffectKind::item_box, actor(), actor_point(actor())); // Data 536 "?" spin first
             receive_random_card();
+        }
         else if (kind == 15)
             open_shop(node.type_and_index);
         else if (kind == 16)
@@ -3213,6 +3322,7 @@ struct GameSession::Impl {
         } else if (kind >= 10 && kind <= 12) {
             const auto amount = kind == 10 ? 50 : kind == 11 ? 30 : 10;
             player().points = static_cast<std::uint16_t>(player().points + amount);
+            effect(EffectKind::coupon, actor(), actor_point(actor())); // Data 537 ticket, then the box
             // The original shows the coupon box before the speech bubble.
             announce(Announcement::point_coupon, actor()).amount = amount;
             if (kind == 10)
@@ -3512,6 +3622,11 @@ struct GameSession::Impl {
                                                        world.header.stage_id));
         if (date.day == 15) // original core_actions:4836: dividends (fcn_0042ba97) before the lottery draw
             pay_dividends();
+        // fcn_00452444 (presentation only): New Year / national day fireworks, Christmas Santa.
+        if (const auto party = holidays::celebration(date, world.header.map_id, world.header.stage_id);
+            party && party->movie)
+            effect(party->movie == 554 ? EffectKind::christmas : EffectKind::holiday_fireworks, actor(),
+                   actor_point(actor()));
         if (lottery::draw_due(world.header.date)) {
             auto show = monthly_figures(); // MONTHLY: the draw show needs the tickets before the draw
             show.tickets = world.lottery_tickets;
@@ -3961,7 +4076,13 @@ void GameSession::tick(unsigned elapsed_ms) {
     }
     throw std::runtime_error("native game exceeded one tick's transition limit");
 }
+std::uint8_t GameSession::player_costume(std::size_t slot) const noexcept {
+    if (slot >= impl_->costumes.size() || slot >= impl_->world.players.size())
+        return 0;
+    return impl_->costume_keys[slot] == impl_->costume_key(slot) ? impl_->costumes[slot] : 0;
+}
 std::vector<GameEvent> GameSession::drain_events() {
+    impl_->refresh_costumes();
     auto output = std::move(impl_->events);
     impl_->events.clear();
     return output;

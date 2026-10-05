@@ -56,6 +56,9 @@ struct EventCallbacks {
     std::function<void(std::uint16_t, std::uint16_t, std::uint8_t, bool)> area_damage;
     // Original 0x429040: 0 updates all stocks, otherwise one-based stock ID.
     std::function<void(std::uint32_t)> update_stocks;
+    // Presentation only: news 4/5/15/20/21 play their board movie on this property code right
+    // after the damage, before the owner's voice (rich4_news.asm). Must not draw randomness.
+    std::function<void(std::uint8_t, std::uint16_t)> news_picture;
 };
 
 [[nodiscard]] bool news_eligible(const World &world, std::uint8_t id);

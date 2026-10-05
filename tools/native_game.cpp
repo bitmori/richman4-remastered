@@ -340,8 +340,10 @@ class Application {
         auto last_tick = SDL_GetTicks();
         for (unsigned iteration = 0; running_; ++iteration) {
             draw();
-            if (options_.auto_rounds && !effects_.active() && !intro_.active() &&
-                options_.minigame < 0) // replay input waits for movies; MINIGAMES dev runs alone
+            // Replay input waits for movies; they only play on the board, so another screen (e.g. the
+            // stock market opened at a turn start) must still be driven, or a queued movie deadlocks.
+            if (options_.auto_rounds && !(effects_.active() && screen_ == Screen::game) && !intro_.active() &&
+                options_.minigame < 0) // MINIGAMES dev runs alone
                 drive_test();
             SDL_Event event{};
             while (SDL_PollEvent(&event)) {
@@ -1127,8 +1129,13 @@ class Application {
         items_.shot.clear();
         if (options_.auto_rounds)
             items_.clock = rendered_frames_ * 250;
-        if (session_) // EFFECTS: pre-mutation board for effect commit frames (only while idle)
+        if (session_) { // EFFECTS: pre-mutation board for effect commit frames (only while idle)
+            std::array<std::uint8_t, 4> costumes{}; // BOARD MOVIES: gown/stripes poses
+            for (std::size_t slot = 0; slot < costumes.size(); ++slot)
+                costumes[slot] = session_->player_costume(slot);
+            effects_.set_costumes(costumes);
             effects_.remember(session_->world(), session_.get(), frame_.ticks);
+        }
         const bool menu_backdrop = screen_ == Screen::menu || ((screen_ == Screen::settings || screen_ == Screen::load) &&
                                                                previous_screen_ == Screen::menu) ||
                                    !session_;
@@ -1351,7 +1358,7 @@ class Application {
         std::vector<board::PlayerSprite> players;
         for (const auto &player : world.players) {
             const auto &state = player.state;
-            if (!state.controller_flags || (!state.x && !state.y))
+            if (!native::on_board(world, state.slot)) // BOARD MOVIES: away/confined players are not drawn
                 continue;
             board::Point position{state.x, state.y};
             bool moving = false;
@@ -1370,6 +1377,7 @@ class Application {
                  static_cast<std::uint16_t>(state.color), state.slot, state.slot == active.slot, moving,
                  state.node_id < world.nodes.size() && (world.nodes[state.node_id].flags & 0x80000000U) != 0,
                  player.status.days_sleep_walking != 0, (state.controller_flags & 0x40U) != 0});
+            players.back().special_pose = session_->player_costume(state.slot); // BOARD MOVIES: gown/stripes
             if (const auto toss = main_screen_.toss_frame(state.slot)) { // pre-roll toss pose
                 players.back().tossing = true;
                 players.back().animation_frame = *toss;

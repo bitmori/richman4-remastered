@@ -9,21 +9,38 @@
 
 namespace rich4::native {
 
-SceneData make_scene(const World &world, std::uint64_t ticks) {
+bool on_board(const World &world, std::size_t slot) {
+    if (slot >= world.players.size())
+        return false;
+    const auto &state = world.players[slot].state;
+    const auto &value = world.players[slot].status;
+    return state.controller_flags && (state.x || state.y) &&
+           (!(value.days_in_hotel | value.days_disappearing | value.days_in_prison | value.days_in_hospital) ||
+            (state.controller_flags & 0x20U));
+}
+
+namespace {
+board::PlayerSprite player_sprite(const World &world, std::size_t slot, std::uint8_t frame, std::uint8_t costume) {
+    const auto &player = world.players.at(slot);
+    const auto &state = player.state;
+    board::PlayerSprite sprite{{state.x, state.y}, state.character, state.direction, frame,
+                               static_cast<std::uint8_t>(state.traffic_method & 3U),
+                               static_cast<std::uint16_t>(state.color), state.slot,
+                               state.slot == world.header.current_player, false,
+                               state.node_id < world.nodes.size() &&
+                                   (world.nodes[state.node_id].flags & 0x80000000U) != 0,
+                               player.status.days_sleep_walking != 0, (state.controller_flags & 0x40U) != 0};
+    sprite.special_pose = costume;
+    return sprite;
+}
+} // namespace
+
+SceneData make_scene(const World &world, std::uint64_t ticks, const std::array<std::uint8_t, 4> &costumes) {
     SceneData scene;
     const auto frame = static_cast<std::uint8_t>((ticks / 120) % 6);
-    const auto active_slot = world.header.current_player;
-    for (const auto &player : world.players) {
-        const auto &state = player.state;
-        if (!state.controller_flags || (!state.x && !state.y))
-            continue;
-        scene.players.push_back(
-            {{state.x, state.y}, state.character, state.direction, frame,
-             static_cast<std::uint8_t>(state.traffic_method & 3U), static_cast<std::uint16_t>(state.color),
-             state.slot, state.slot == active_slot, false,
-             state.node_id < world.nodes.size() && (world.nodes[state.node_id].flags & 0x80000000U) != 0,
-             player.status.days_sleep_walking != 0, (state.controller_flags & 0x40U) != 0});
-    }
+    for (std::size_t slot = 0; slot < world.players.size(); ++slot)
+        if (on_board(world, slot))
+            scene.players.push_back(player_sprite(world, slot, frame, slot < 4 ? costumes[slot] : 0));
     for (std::size_t index = 1; index < world.lands.size(); ++index) {
         const auto &land = world.lands[index];
         scene.lands.push_back({land.id, land.economy.owner_code, land.economy.level, land.economy.chain_store,
@@ -104,6 +121,50 @@ EffectSpec effect_spec(const EffectEvent &effect) {
     case EffectKind::lottery_draw:
     case EffectKind::month_report:
         return {'p', -1, 0, -1, 0, 0, false};
+    // ---- docs/audit/data-400-601.md board movies (fcn_0045144f flags/sounds from the asm) ----
+    case EffectKind::ambulance: // 440x74 at (0,210), flags 0x1E0001, Effect 92
+        return {'d', 524, 30, 92, 0, 0, true, 0, 210, EffectSpec::Actor::leave, true};
+    case EffectKind::police: // flags 0x120001, Effect 94
+        return {'d', 538, 18, 94, 0, 0, true, 0, 40, EffectSpec::Actor::leave};
+    case EffectKind::dog_vehicle: // flags 0x10001, Effect 85
+        return {'d', 552, 1, 85, 0, 0, true};
+    case EffectKind::dog_fight: // flags 0x30001, Effect 93; hospital (ambulance) follows
+        return {'d', 532, 3, 93, 0, 0, true, 0, 40, EffectSpec::Actor::stay, true};
+    case EffectKind::ufo: // fcn_0040d375 / fcn_0040d4e5: flags 0x1C0001, Effect 84
+        return {'d', 533, 28, 84, 0, 0, true, 0, 40,
+                effect.object_kind ? EffectSpec::Actor::arrive : EffectSpec::Actor::leave};
+    case EffectKind::airplane: // flags 0x140001, Effect 96
+        return {'d', 558, 20, 96, 0, 0, true, 0, 40,
+                effect.object_kind ? EffectSpec::Actor::arrive : EffectSpec::Actor::leave};
+    case EffectKind::parachute: // fcn_00418c55: Data 559 + character, flags 1, no sound; the player
+        return {'d', 559 + std::min<int>(effect.object_kind, 11), 0, -1, 0, 0, true, 0, 40, EffectSpec::Actor::hide}; // appears afterwards
+    case EffectKind::news_movie: // rich4_news.asm, camera on the hit property
+        switch (effect.object_kind) {
+        case 4: // meteor, flags 0x180001
+            return {'d', 531, 24, 86, 0, 0, true};
+        case 5: // UFO, flags 0x200001
+            return {'d', 539, 32, 84, 0, 0, true};
+        case 15: // gas explosion, flags 0x50001
+            return {'d', 527, 5, 87, 0, 0, true};
+        case 20: // typhoon / tornado, flags 0x80001
+            return {'d', 534, 8, 89, 0, 0, true};
+        case 21:
+            return {'d', 535, 8, 88, 0, 0, true};
+        default:
+            return {'d', -1, 0, -1, 0, 0, true};
+        }
+    case EffectKind::card_throw: // _rich4_animate_object(0, ...): Data 415, hold 100 ms, no sound
+        return {'d', -1, 0, -1, 0, 100, false};
+    case EffectKind::item_box: // core_actions:2507, flags 1 at (208,180), Effect 99
+        return {'d', 536, 0, 99, 0, 0, false, 208, 180};
+    case EffectKind::coupon: // core_actions:2394, flags 1 at (204,180), Effect 98
+        return {'d', 537, 0, 98, 0, 0, false, 204, 180};
+    case EffectKind::truck_demolish: // player_utils state 3: pose 12 + Data 526 puff, Effect 15
+        return {'d', 526, 0, 15, 0, 0, false};
+    case EffectKind::holiday_fireworks: // fcn_00452444, flags 1
+        return {'d', 523, 0, 90, 0, 0, false};
+    case EffectKind::christmas:
+        return {'d', 554, 0, 114, 0, 0, false};
     }
     return {};
 }
@@ -111,7 +172,7 @@ EffectSpec effect_spec(const EffectEvent &effect) {
 void EffectPlayer::remember(const World &world, const void *owner, std::uint64_t ticks) {
     if (active())
         return;
-    snapshot_ = make_scene(world, ticks);
+    snapshot_ = make_scene(world, ticks, costumes_);
     snapshot_owner_ = owner;
 }
 
@@ -125,7 +186,8 @@ void EffectPlayer::enqueue(std::vector<EffectEvent> effects, const void *owner) 
     if (skip_)
         return;
     for (auto &effect : effects)
-        if (effect.kind == EffectKind::object_throw || effect_spec(effect).entry >= 0)
+        if (effect.kind == EffectKind::object_throw || effect.kind == EffectKind::card_throw ||
+            effect_spec(effect).entry >= 0)
             queue_.push_back(std::move(effect));
 }
 
@@ -170,6 +232,7 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
             if (index >= 0 && play_sound)
                 play_sound(static_cast<std::size_t>(index));
         };
+        const bool truck = event.kind == EffectKind::truck_demolish;
         // Camera (fcn_0041d476(x,y,0)): the target for targeted movies, else the actor.
         board::Point actor{event.target.x, event.target.y};
         if (event.from)
@@ -183,7 +246,26 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
         // ---- timeline ----
         int frame_index = 0;
         bool finished = false, committed = true;
-        if (play.movie) {
+        int pose_frame = 0; // truck: pose 12 frame of the swinging player
+        if (truck && play.movie) {
+            // player_utils.asm state 3, one step per 80 ms game tick: tick 0 turns to the building,
+            // ticks 1-6 wait (0x4749e0), then the swing frame c advances one per tick from 1; at c = 2
+            // the sound plays and the Data 526 puff starts (one frame per tick), at c = 3 the
+            // building is demolished (board commit). No puff during the wait is UNVERIFIED.
+            const auto tick = static_cast<int>(play.elapsed / 80U);
+            const auto count = static_cast<int>(play.movie->frame_count());
+            pose_frame = tick == 0 ? 0 : tick <= 7 ? 1 : tick - 6;
+            frame_index = tick - 8; // puff frame, < 0 = not started
+            while (frame_index >= 0 && static_cast<int>(play.movie->decoded_frames()) <= frame_index &&
+                   play.movie->next())
+                play.frame = play.movie->image();
+            if (!play.sounded && tick >= 8) {
+                sound(play.spec.sound);
+                play.sounded = true;
+            }
+            committed = tick >= 9;
+            finished = frame_index >= count;
+        } else if (play.movie) {
             const auto count = static_cast<int>(std::max<std::size_t>(1, play.movie->frame_count()));
             frame_index = std::min(static_cast<int>(play.elapsed / play.delay), count - 1);
             finished = play.elapsed >= static_cast<unsigned>(count) * play.delay + play.spec.hold_ms;
@@ -194,7 +276,7 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
                 play.sounded = true;
             }
             committed = frame_index >= play.spec.commit_frame;
-        } else { // object throw: one step per 8 screen px, >= 24 ms per step
+        } else { // object/card throw: one step per 8 screen px, >= 24 ms per step
             if (play.path.empty()) {
                 const auto from = board::project(actor, camera);
                 const auto to = board::project({event.target.x, event.target.y}, camera);
@@ -222,17 +304,65 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
         }
 
         // ---- board: pre-mutation snapshot until the commit frame, then the live world ----
+        SceneData scene;
         if (committed || !snapshot_) {
             if (committed)
                 snapshot_.reset(); // later effects of the same batch use the live world (spec §9.4)
-            const auto live = make_scene(world, ticks);
-            board.render(canvas, live.view(), camera);
+            scene = make_scene(world, ticks, costumes_);
         } else
-            board.render(canvas, snapshot_->view(), camera);
+            scene = *snapshot_;
+        // The acting player as the movie shows them (the world already moved or hid them).
+        using Actor = EffectSpec::Actor;
+        const auto mode = play.spec.actor;
+        if ((mode != Actor::world || truck) && event.player < world.players.size()) {
+            const auto slot = world.players[event.player].state.slot;
+            std::optional<board::PlayerSprite> sprite;
+            for (const auto &player : scene.players)
+                if (player.slot == slot)
+                    sprite = player;
+            std::erase_if(scene.players, [&](const auto &player) { return player.slot == slot; });
+            if (((mode == Actor::leave && !committed) || mode == Actor::stay) && event.from) {
+                if (!sprite) {
+                    const auto &state = world.players[event.player].state;
+                    sprite = board::PlayerSprite{{}, state.character, state.direction, 0,
+                                                 static_cast<std::uint8_t>(state.traffic_method & 3U),
+                                                 static_cast<std::uint16_t>(state.color), slot, true};
+                    sprite->special_pose = event.player < 4 ? costumes_[event.player] : 0;
+                }
+                sprite->position = {event.from->x, event.from->y};
+                sprite->injured = sprite->injured || play.spec.injured;
+                scene.players.push_back(*sprite);
+            } else if (mode == Actor::arrive && committed && sprite)
+                scene.players.push_back(*sprite);
+            else if (truck && sprite) { // facing the building, demolish swing pose 12
+                sprite->direction = static_cast<std::uint8_t>(event.object_kind & 7U);
+                sprite->special_pose = 12;
+                sprite->tossing = sprite->walking = false;
+                sprite->animation_frame = static_cast<std::uint8_t>(pose_frame);
+                scene.players.push_back(*sprite);
+            }
+        }
+        if (truck && !committed) { // the building still stands until the swing's frame 3
+            const bool facility = event.property > 4000;
+            auto &properties = facility ? scene.facilities : scene.lands;
+            const auto id = static_cast<std::uint32_t>(event.property - (facility ? 4000 : 2000));
+            std::erase_if(properties, [&](const auto &property) { return property.id == id; });
+            std::uint8_t owner = 0;
+            if (facility && id < world.facilities.size())
+                owner = world.facilities[id].owner_code;
+            else if (!facility && id < world.lands.size())
+                owner = world.lands[id].economy.owner_code;
+            properties.push_back({id, owner, event.previous_level, event.previous_type});
+        }
+        board.render(canvas, scene.view(), camera);
 
         // ---- picture ----
         if (!play.movie) {
             const auto &point = play.path[static_cast<std::size_t>(frame_index)];
+            if (event.kind == EffectKind::card_throw) { // Data 415 frame 0
+                graphics::blit(canvas, artwork_.frame('d', 0x19f, 0), point.x, point.y, viewport);
+                return;
+            }
             std::uint8_t direction = 0;
             for (const auto &object : world.objects)
                 if (object.node_id == event.node && object.kind == event.object_kind)
@@ -242,8 +372,10 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
             graphics::blit(canvas, sprite, point.x, point.y, viewport);
             return;
         }
-        int x = 0, y = 40; // 440x440 movies cover the viewport exactly (= project(target) - (220,220))
-        if (event.kind == EffectKind::demon_puff) {
+        if (truck && frame_index < 0)
+            return; // the puff has not started yet
+        int x = play.spec.x, y = play.spec.y; // 440x440 movies cover the viewport (= project(target) - (220,220))
+        if (event.kind == EffectKind::demon_puff || truck) {
             // Building anchor approximated by the projected plot point (spec §9.7, UNVERIFIED).
             const auto anchor = board::project({event.target.x, event.target.y}, camera);
             if (!anchor)

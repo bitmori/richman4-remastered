@@ -26,6 +26,8 @@ struct Callbacks {
     std::function<void(std::size_t, std::uint8_t)> arrival;
     // Optional, presentation only: Effect.mkf cue for the player (54 god leaves, 35/36 gift pickup).
     std::function<void(std::size_t, std::uint8_t)> sound;
+    // Presentation only: the dog (kind 11) was met, on foot (fight, then hospital) or riding.
+    std::function<void(std::size_t, bool)> dog;
 };
 struct Result {
     bool supported = true, applied = false, stop_movement = false;

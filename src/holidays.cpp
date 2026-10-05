@@ -203,6 +203,37 @@ std::optional<std::size_t> festival_picture(calendar::Date date, std::uint16_t m
     return std::size_t(first_picture[stage * 4U + map]) + *row;
 }
 
+namespace {
+// Presentation columns of the same table (0x47ff4f flags, 0x47ff50 FLC, 0x47ff52 sound,
+// 0x47ff54 MIDI) for the rows that have any: {block, row, flags, movie, sound, music}.
+struct Party {
+    std::uint8_t block, row, flags;
+    std::uint16_t movie, sound, music;
+};
+constexpr std::array<Party, 16> parties{{
+    {0, 0, 3, 523, 90, 0},   {0, 10, 3, 523, 90, 0}, {0, 15, 15, 554, 114, 13}, {0, 17, 4, 0, 0, 14},
+    {1, 0, 3, 523, 90, 0},   {1, 9, 3, 523, 90, 0},  {1, 10, 15, 554, 114, 13}, {1, 12, 4, 0, 0, 14},
+    {2, 0, 3, 523, 90, 0},   {2, 18, 15, 554, 114, 13}, {3, 1, 3, 523, 90, 0}, {3, 19, 15, 554, 114, 13},
+    {4, 7, 8, 0, 0, 0},      {5, 9, 8, 0, 0, 0},     {6, 12, 8, 0, 0, 0},        {7, 9, 8, 0, 0, 0},
+}};
+} // namespace
+
+std::optional<Celebration> celebration(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
+    if (map > 3 || stage > 1)
+        throw std::invalid_argument("Holiday map/stage is outside the original eight maps");
+    (void)calendar::weekday(date); // validates the date
+    const auto row = festival_row(date, map, stage);
+    if (!row)
+        return std::nullopt;
+    const auto block = stage * 4U + map;
+    for (const auto &party : parties)
+        if (party.block == block && party.row == *row && (party.flags & 5U))
+            return Celebration{(party.flags & 1U) ? party.movie : std::uint16_t{0},
+                               (party.flags & 1U) ? party.sound : std::uint16_t{0},
+                               (party.flags & 4U) ? party.music : std::uint16_t{0}};
+    return std::nullopt;
+}
+
 calendar::Date loan_due_date(calendar::Date current, std::uint16_t map, std::uint16_t stage) {
     auto date = calendar::add_days(current, 90);
     while (is_closed(date, map, stage))

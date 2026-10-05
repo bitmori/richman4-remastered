@@ -279,6 +279,30 @@ Other actor and event FLCs (all at (0,40), 440 wide):
 | Christmas (Santa) | 554, 90 frames | ? | ? | rich4.asm:26116 (`fcn_00452444`) | **UNVERIFIED** |
 | Board-overlay character reactions | Data 416–439 (12 characters × 2, ~100×100) | — | — | not traced | **UNVERIFIED** use |
 
+### Native board movies (data-400-601 audit B gaps)
+
+`EffectKind` ambulance/police (from `add_confinement`, new stays only, real players), dog_vehicle /
+dog_fight (`gods::Callbacks::dog`), ufo/airplane (`disappear()` leave, `update_status()` return,
+`object_kind` 1), parachute (`spawn_if_needed()`, `object_kind` = character), news_movie
+(`EventCallbacks::news_picture`, `object_kind` = news id), card_throw (AI targeted cards, before
+`apply_card`), item_box / coupon (special squares 13 / 10–12, screen anchors (208,180)/(204,180)),
+truck_demolish (`construction_vehicle_demolish()`, 工程車) and holiday_fireworks / christmas
+(`holidays::celebration`, the presentation columns of table `0x47ff4c`). `EffectSpec::actor` says
+how the acting player is drawn under the movie (leaving at `from` until the commit frame, arriving at
+it, hidden for the parachute). The board no longer draws players who are away or confined
+(`fcn_0040829d`: dword `+50` non-zero unless controller bit 0x20), and draws Data 414 ZZZ above
+sleepwalkers. Poses 19/20 come from `GameSession::player_costume`.
+
+**Parachute / return position (audit item 4).** `fcn_0040829d` picks a random unoccupied node only
+when the current player has x = y = 0. Neither `fcn_0040d375` (leave: x,y are set to the node after
+the movie) nor `fcn_0040d4e5` (return) clears x,y, so a returning player reappears on the node they
+left, exactly as natively. The x = y = 0 case is the new-game placement (native `spawn_if_needed`,
+same RNG), and that is when `fcn_00418c55` plays Data 559 + character. No rule change was needed.
+The only state fix: a finished absence keeps the UFO mode bit (`0x80 | 0x40`, loc_0041c8d5).
+
+Not done: holiday MIDI (13 Christmas, 14 lunar new year) and the Christmas card gift of table flag 8
+(stage 1 maps; a rule with RNG, not ported); the cfg "animation" gate (always on).
+
 ## 7. jump.mkf
 
 This is not an in-board asset. It is the new-game flow:
