@@ -729,6 +729,27 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
                           sound(1);
                   });
     }
+    // Native-only help (the original shows item descriptions only in its Help screen; on a phone there
+    // is no hover either): while an item is picked, its help.mkf description covers the side the player
+    // is not choosing from -- the hand grid for a shelf pick, the shelf for a hand pick. A tap on the
+    // strip cancels the pick; it takes precedence over the controls it covers.
+    if (shop.pick_kind >= 0) {
+        const bool buying = shop.pick_kind < 2, card = shop.pick_kind % 2 == 0;
+        const auto item = unsigned(shop.pick_value % 100);
+        const Rect strip = buying ? Rect{grid_x + 2, 295, grid_x + 410, 471}
+                                  : Rect{list_x + 4, 236, list_x + 222, 470}; // below the balloon
+        ui::fill(frame.canvas, strip, ui::paper);
+        ui::border(frame.canvas, strip, ui::color(110, 74, 26));
+        frame.text(card ? services::card_names.at(item - 1) : services::tool_names.at(item - 1),
+                   strip.left + 10, strip.top + 8, 18, ui::blue);
+        frame.text(description(frame.artwork, card, item), strip.left + 10, strip.top + 36, 16, ui::ink,
+                   strip.right - strip.left - 20);
+        frame.text("點此取消", strip.right - 74, strip.bottom - 24, 14, ui::color(90, 80, 60));
+        frame.buttons.insert(frame.buttons.begin(), Button{282, strip, true, [this] {
+                                                               shop_.pick_kind = -1;
+                                                               shop_.balloon.clear();
+                                                           }});
+    }
     // Switch shop, EXIT and points box.
     const Rect switch_rect{542, 13, 627, 98}, exit_rect{556, 246, 636, 286};
     const bool switch_down = frame.pointer_down && frame.pointer_in(switch_rect);
