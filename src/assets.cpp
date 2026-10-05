@@ -274,7 +274,9 @@ std::vector<std::uint8_t> decompress(std::span<const std::uint8_t> source,
         if (distance > output.size()) {
             throw AssetError("Compressed back-reference precedes the decoded resource");
         }
-        // Rich4 clips a final match to the size recorded in the MKF header.
+        // Match the upstream C decoder's bounded-output contract. The original
+        // EXE has no length argument and trusts EOS; malformed streams must not
+        // be allowed to overwrite the caller's declared output allocation.
         const auto length = std::min(symbol - 0xfdU, decoded_size - output.size());
         for (std::size_t i = 0; i < length; ++i) {
             // Intentionally supports overlap: each emitted byte can become the

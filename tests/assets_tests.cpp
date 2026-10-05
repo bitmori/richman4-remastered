@@ -61,7 +61,7 @@ void compression_tests() {
     check(decompress(overlap, 9) == Bytes(9, 'A'), "overlapping match decoding");
     check(decompress(abc_repeat, 9) == Bytes({'A','B','C','A','B','C','A','B','C'}),
           "nontrivial match distance");
-    check(decompress(overlap, 4) == Bytes(4, 'A'), "original final-match clipping");
+    check(decompress(overlap, 4) == Bytes(4, 'A'), "bounded final-match clipping");
     check(decompress({}, 0).empty(), "empty output must not read input");
     rejects([] { (void)decompress({}, 1); }, "empty input accepted");
     for (std::size_t length = 0; length < abc.size(); ++length) {
