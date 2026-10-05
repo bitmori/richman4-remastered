@@ -1,0 +1,8 @@
+.local/
+artifacts/
+.DS_Store
+*.mkf
+*.avi
+*.mid
+*.exe
+*.apk
