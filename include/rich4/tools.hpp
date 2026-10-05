@@ -13,6 +13,9 @@ struct Callbacks {
     std::function<void(std::uint16_t)> upgrade;
     std::function<void(std::uint16_t, bool, std::size_t)> blast;
     std::function<void(std::size_t)> before_teleport;
+    // Presentation only, never draws randomness: the user says _tool_strings[character][tool-1]
+    // (mood 0) where the original rich4_tool_*.asm handler calls _rich4_player_say.
+    std::function<void(std::size_t, unsigned)> say;
 };
 struct Result {
     bool supported = true, applied = false;

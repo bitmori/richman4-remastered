@@ -14,6 +14,10 @@
 
 namespace rich4::native::messages {
 namespace {
+struct Line {
+    std::uint16_t voice = 0; // Speaking.mkf entry from the line's "#NNNN" prefix; 0 = no line.
+    std::string_view text;
+};
 #include "message_strings.inc"
 
 constexpr auto near_black = ui::color(16, 16, 16); // #101010
@@ -120,6 +124,31 @@ Item speech_bubble(std::uint8_t character, unsigned category, std::optional<std:
     return item;
 }
 
+std::optional<Item> item_speech_bubble(std::uint8_t character, SpeechTable table, unsigned slot,
+                                       std::uint8_t mood, std::optional<std::size_t> focus) {
+    character %= 12;
+    Line line;
+    if (table == SpeechTable::card && slot < 90)
+        line = card_lines.at(character)[slot];
+    else if (table == SpeechTable::tool && slot < 26)
+        line = tool_lines.at(character)[slot];
+    if (!line.voice)
+        return std::nullopt;
+    Item item;
+    item.kind = Item::Kind::bubble;
+    item.focus = focus;
+    item.character = character;
+    item.mood = static_cast<std::uint8_t>(mood % 4);
+    if (line.text.starts_with('@'))
+        item.pictogram = std::stoi(std::string(line.text.substr(1)));
+    else
+        item.text = line.text;
+    item.voice = line.voice;
+    item.minimum_ms = 1000;
+    item.wait_voice = true;
+    return item;
+}
+
 namespace {
 Item bubble(const World &world, std::size_t slot, unsigned category) {
     return speech_bubble(world.players.at(slot).state.character, category, slot);
@@ -220,6 +249,10 @@ std::optional<Item> god_item(const GameEvent &event) {
 } // namespace
 
 std::optional<Item> from_event(const GameEvent &event, const World &world) {
+    // Card/tool lines: the core already applied the original absent-speaker gate when emitting.
+    if (event.speech_table != SpeechTable::event && event.player < world.players.size())
+        return item_speech_bubble(world.players[event.player].state.character, event.speech_table,
+                                  event.speech_slot, event.speech_mood, event.player);
     if (event.voice_category && event.player < world.players.size() && *event.voice_category < 27) {
         const auto &status = world.players[event.player].status;
         if (status.days_disappearing) // The original says nothing for an absent player.

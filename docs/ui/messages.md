@@ -151,6 +151,36 @@ direct call sites (cards, tools, gods, news, fortune, hospital, prison, bankrupt
 PI = price index (`_rich4_price_index`). The full table text was dumped from the EXE. For example,
 character 10 (小丹尼): slot 0 "#1320帥呆了！", slot 9 "#1329太貴了！", slot 19 "#1339讓我出去！".
 
+**Card and tool lines** (implemented: `SpeechTable::card/tool` events, `messages::item_speech_bubble`).
+`_rich4_card_strings[char][row][card-1]` (slot = row·30 + card−1): row 0 the user, row 1 the user
+targeting itself, row 2 the victim. `_tool_strings[char][slot]`: slot = tool−1, plus 14 roadblock hit,
+15 mine hit, 16 time bomb picked up (`rich4_player_core_actions.asm:3277/3398/3493`, moods 1/1/2). No
+line choice uses `rand()`. Call order, from each handler (popup → card function, so the user always
+speaks after the card art):
+
+| card / tool | user line (mood) | then | victim line (mood) |
+| --- | --- | --- | --- |
+| 1 均富, 15 冬眠, 9 天使 | row 0 (3), after consuming | — | — |
+| 2 均貧 | row 0 (3) | cash split | target row 2 (1) |
+| 3 購地 | row 0 (3), before the owner change | payment | seller row 2 (1) |
+| 4 換地, 5 換屋 | row 0 (3) only if the swap favours the user | swap | other owner row 2 (2) |
+| 6 轉向 | row 0 (3) | turn | self: row 1 (0); player: row 2 (2) |
+| 7 改建 | row 0 (3), before the facility type pick | — | — |
+| 8 拍賣 | row 0 (3) | owner ≠ user: row 2 (1) | then the auction |
+| 10 惡魔, 22 送神 (after removal), 23 請神 (before attach), 24 紅, 25 黑 (before the stock pick), 27 漲價, 28 查封 | row 0 (0) | — | — |
+| 11 怪獸, 12 拆除 | row 0 (0) | Data 557 / 529 movie | owner row 2 (1) |
+| 13 搶奪 | row 0 (3), before the item pick | steal | target row 2 (1) |
+| 14 停留, 30 烏龜 | row 0 (3) if target ≠ user | — | self: row 1 (3); player: row 2 (2) |
+| 16 夢遊 | row 0 (3) | 免罪/嫁禍 | victim **event** slot 21 (1), then 復仇 |
+| 17 陷害 | row 0 (3) | 免罪/嫁禍, jail | victim row 2 (1), then 復仇 |
+| 26 查稅 | row 0 (0) | 免費/嫁禍, payment, box | payer row 2 (2) |
+| 29 同盟 | row 0 (3) | alliance | target row 2 (0) |
+| 18 復仇 / 19 嫁禍 / 20 免費 / 21 免罪 (`rich4_card_passive.asm`) | holder row 0 (0) after popup | — | 18: user row 2 (2); 19: framed row 2 (2); 20: payee row 2 (1) |
+| tools 1–13 | slot tool−1 (0) | throw / movie / effect | — (remote dice: human only) |
+
+Character 6's card lines #0752/#0753 end with the Big5 user-defined glyph 0x9DDD, which has no
+Unicode mapping and is dropped in the port.
+
 ### 1.5 Second popup type (`fcn_0044ec30` / `fcn_0044ecb6` / `fcn_0044ee18`)
 
 This popup is used inside facility screens (bank, shop, hospital, prison, lottery, auction, magic house,
@@ -493,11 +523,10 @@ above are implemented.
 
 1. **Event string tables.** The UI or assets layer needs 324 per-character event lines (0x48084a), card
    lines (0x48123a, 12×90) and tool lines (0x480d5a, 12×26), as Big5 data with their `#NNNN` voice ids.
-   They are absent from `src/`. Extract them to a data file or a header, or read them from the EXE at
-   asset-import time.
-2. **Card and tool speech events.** Cards and tools speak through `_rich4_card_strings` and
-   `_tool_strings`. Native emits only `"使用…"` notices with no voice or bubble. A `GameEvent` field such
-   as `speech_table {event, card, tool}` plus `speech_slot` is needed.
+   Done: all three are ported to UTF-8 in `tools/screens/message_strings.inc`.
+2. **Card and tool speech events.** Done: `GameEvent::speech_table/speech_slot/speech_mood`, emitted
+   through `CardCallbacks::say` and `tools::Callbacks::say` at the original call points (§1.4 table);
+   tables ported to `tools/screens/message_strings.inc`.
 3. **Mood.** It is a pure function of the event-category slot (table §1.4), so the UI can derive it.
    Card and tool lines pass mood 0 at the call sites checked (hongka, dilei). Other call sites are
    UNVERIFIED.

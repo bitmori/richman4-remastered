@@ -2108,6 +2108,12 @@ class Application {
         shoot("bubble-john-3lines", messages::speech_bubble(0, 24, 0));
         shoot("bubble-sara-mood1", messages::speech_bubble(5, 18, 0));
         shoot("bubble-beibei-pictogram", messages::speech_bubble(11, 3, 0));
+        // Card (slot row*30 + card-1) and tool lines with their call-site moods.
+        shoot("bubble-card-monster-user", messages::item_speech_bubble(0, SpeechTable::card, 10, 0, 0));
+        shoot("bubble-card-monster-owner", messages::item_speech_bubble(3, SpeechTable::card, 70, 1, 0));
+        shoot("bubble-card-beibei-demolish", messages::item_speech_bubble(11, SpeechTable::card, 11, 0, 0));
+        shoot("bubble-tool-missile", messages::item_speech_bubble(6, SpeechTable::tool, 6, 0, 0));
+        shoot("bubble-tool-mine-hit", messages::item_speech_bubble(9, SpeechTable::tool, 15, 1, 0));
         std::uint16_t land = 1;
         while (land + 1U < world.lands.size() && world.lands[land].economy.street_name.empty())
             ++land;

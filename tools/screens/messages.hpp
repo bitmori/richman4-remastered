@@ -50,6 +50,10 @@ struct Audio {
 
 // Speech bubble for event_strings[character][category] (§1.4), optionally centring the camera.
 [[nodiscard]] Item speech_bubble(std::uint8_t character, unsigned category, std::optional<std::size_t> focus);
+// Speech bubble for a card (_rich4_card_strings, slot = row*30 + card-1) or tool (_tool_strings)
+// line with the call site's mood; nullopt for an empty table slot.
+[[nodiscard]] std::optional<Item> item_speech_bubble(std::uint8_t character, SpeechTable table, unsigned slot,
+                                                     std::uint8_t mood, std::optional<std::size_t> focus);
 // Translates a core event into its original overlay (nothing for plain notices).
 [[nodiscard]] std::optional<Item> from_event(const GameEvent &event, const World &world);
 // Yes/no prompts (§2.2): buy/upgrade land or facility. Others keep their own dialogs.

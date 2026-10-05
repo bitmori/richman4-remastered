@@ -223,20 +223,38 @@ Result use(World &w, Random &, std::size_t slot, unsigned tool, std::uint16_t ta
         throw std::invalid_argument("invalid tool action");
     if (!w.players[slot].state.tool_amounts[tool - 1])
         return skipped("沒有這項道具");
-    if (tool == 5 || tool == 6 || tool == 12)
-        return equip(w, slot, tool);
-    if (tool >= 2 && tool <= 4)
-        return place(w, slot, tool, target);
+    // Speech (_tool_strings[character][tool-1], mood 0). The original speaks before the map pick
+    // for tools 2-4, 7, 9, 11 and 13; the native pick happens before this call, so those lines are
+    // said once the use is known to apply (still before the throw / missile / build pictures).
+    const auto say = [&] {
+        if (callbacks.say)
+            callbacks.say(slot, tool - 1);
+    };
+    if (tool == 5 || tool == 6 || tool == 12) {
+        auto result = equip(w, slot, tool);
+        if (result.applied) // rich4_tool_jiche/qiche/gongchengche: after mounting.
+            say();
+        return result;
+    }
+    if (tool >= 2 && tool <= 4) {
+        auto result = place(w, slot, tool, target);
+        if (result.applied)
+            say();
+        return result;
+    }
     if (tool == 11) {
         auto result = teleport(w, slot, target, destination, callbacks);
-        if (result.applied)
+        if (result.applied) {
             (void)consume_tool(w.players[slot].state.tool_amounts, w.tool_supply, 11);
+            say();
+        }
         return result;
     }
     if (tool == 1) {
         if (!callbacks.robot)
             return missing("機器娃娃行動尚未接入");
         (void)consume_tool(w.players[slot].state.tool_amounts, w.tool_supply, 1);
+        say(); // rich4_tool_jiqiwawa: after consuming, before the doll clears the road.
         callbacks.robot(slot);
         return {true, true, {}};
     }
@@ -245,6 +263,8 @@ Result use(World &w, Random &, std::size_t slot, unsigned tool, std::uint16_t ta
             return skipped("選擇一至六點");
         if (!callbacks.remote_dice)
             return missing("遙控骰子尚未接入");
+        if (w.players[slot].state.controller_flags == 1)
+            say(); // rich4_tool_yaokongtouzi: only the human dice dialog speaks; computers are silent.
         callbacks.remote_dice(slot, target);
         (void)consume_tool(w.players[slot].state.tool_amounts, w.tool_supply, 8);
         return {true, true, {}};
@@ -252,6 +272,7 @@ Result use(World &w, Random &, std::size_t slot, unsigned tool, std::uint16_t ta
     if (tool == 10) {
         if (!callbacks.restore_last_state)
             return missing("時光機尚未接入");
+        say(); // rich4_tool_shiguangji: speaks before trying to restore.
         if (!callbacks.restore_last_state())
             return skipped("沒有可恢復的回合");
         (void)consume_tool(w.active_player().state.tool_amounts, w.tool_supply, 10);
@@ -266,6 +287,7 @@ Result use(World &w, Random &, std::size_t slot, unsigned tool, std::uint16_t ta
         if (!callbacks.upgrade)
             return missing("機器工人尚未接入");
         (void)consume_tool(w.players[slot].state.tool_amounts, w.tool_supply, 9);
+        say();
         callbacks.upgrade(target);
         return {true, true, {}};
     }
@@ -274,6 +296,7 @@ Result use(World &w, Random &, std::size_t slot, unsigned tool, std::uint16_t ta
             return missing("飛彈區域效果尚未接入");
         (void)consume_tool(w.players[slot].state.tool_amounts, w.tool_supply,
                            static_cast<std::uint8_t>(tool));
+        say();
         callbacks.blast(target, tool == 13, slot);
         return {true, true, {}};
     }

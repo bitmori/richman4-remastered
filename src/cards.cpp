@@ -178,6 +178,12 @@ void break_ally(World &w, std::size_t target) {
     p.allied_player = 0;
     p.allied_days = 0;
 }
+// Card speech (rich4_card_*.asm -> _rich4_player_say): presentation only.
+void say(const CardCallbacks &cb, std::size_t speaker, std::uint8_t row, std::uint8_t card,
+         std::uint8_t mood) {
+    if (cb.say)
+        cb.say(speaker, row, card, mood);
+}
 CardResult result(CardUseStatus status, const char *message) {
     return {status, message};
 }
@@ -288,6 +294,7 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
             }
         const auto average = sum / count;
         consume(w, actor, id);
+        say(cb, actor, 0, id, 3);
         for (std::size_t i = 0; i < w.players.size(); ++i)
             if (w.players[i].state.controller_flags) {
                 auto &cash = w.players[i].state.cash;
@@ -300,10 +307,12 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
     case 2: {
         const auto average = add32(player.state.cash, w.players[target].state.cash) / 2;
         consume(w, actor, id);
+        say(cb, actor, 0, id, 3);
         if (w.players[target].state.cash > average)
             hostility(w, cb, target, actor, add32(w.players[target].state.cash, -average) / 100);
         player.state.cash = average;
         w.players[target].state.cash = average;
+        say(cb, target, 2, id, 1);
         return used();
     }
     case 3: {
@@ -316,6 +325,7 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         const auto seller = p.owner - 1;
         const auto price = cost(w, standing);
         hostility(w, cb, std::size_t(seller), actor, property_hostility(mul32(p.base, index), p.level));
+        say(cb, actor, 0, id, 3);
         p.owner = std::uint8_t(actor + 1);
         if (w.lease_mode) {
             constexpr std::array<std::uint32_t, 6> intervals{0, 0x20000, 0x10000, 0x600, 0x300, 0x100};
@@ -325,18 +335,31 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
                     intervals[w.lease_mode]);
         }
         cb.pay(std::int32_t(actor), seller, price, 0);
+        say(cb, std::size_t(seller), 2, id, 1);
         consume(w, actor, id);
         return used();
     }
     case 4:
     case 5: {
         auto a = property(w, standing), b = property(w, target);
+        // rich4_card_huandika/huanwuka: the user speaks only when the swap favours it (its own
+        // property for one at least as built up); the other owner then complains.
+        const unsigned mine = unsigned(actor) + 1, owner_a = a.owner, owner_b = b.owner;
+        const auto level_a = a.level, level_b = b.level;
+        const bool gain_b = owner_a == mine && owner_b != mine && level_b >= level_a;
+        const bool gain_a = owner_a != mine && owner_b == mine && level_a >= level_b;
+        if (gain_a || gain_b)
+            say(cb, actor, 0, id, 3);
         if (id == 4)
             std::swap(a.owner, b.owner);
         else {
             std::swap(a.level, b.level);
             std::swap(a.type, b.type);
         }
+        if (gain_b && owner_b)
+            say(cb, owner_b - 1, 2, id, 2);
+        else if (gain_a && owner_a)
+            say(cb, owner_a - 1, 2, id, 2);
         consume(w, actor, id);
         return used();
     }
@@ -344,11 +367,17 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         if (!cb.turn_around)
             return missing();
         consume(w, actor, id);
+        say(cb, actor, 0, id, 3);
         cb.turn_around(target);
+        if (target == actor)
+            say(cb, actor, 1, id, 0);
+        else if (target < 4)
+            say(cb, target, 2, id, 2);
         return used();
     case 7: {
         if (!property_code(w, standing) || !level(w, standing))
             return result(CardUseStatus::cancelled, "Standing property has no building");
+        say(cb, actor, 0, id, 3); // Before the facility type choice, even if it is then cancelled.
         auto p = property(w, standing);
         if (land_code(w, standing)) {
             p.type ^= 1;
@@ -381,6 +410,9 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         auto p = property(w, standing);
         if (p.owner)
             hostility(w, cb, p.owner - 1, actor, property_hostility(mul32(p.base, index), p.level));
+        say(cb, actor, 0, id, 3);
+        if (p.owner && p.owner != actor + 1)
+            say(cb, p.owner - 1U, 2, id, 1);
         if (!cb.auction_property(standing, std::int32_t(actor))) {
             p.owner = 0;
             p.expiry = 0;
@@ -396,6 +428,7 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
             if (!cb.remove_object)
                 return missing();
             consume(w, actor, id);
+            say(cb, actor, 0, id, 0);
             cb.remove_object(target);
             return used();
         }
@@ -404,6 +437,8 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         if (facility_code(w, target) && id != 9 && level(w, target) && !cb.release_hotel)
             return missing();
         consume(w, actor, id);
+        say(cb, actor, 0, id, id == 9 ? 3 : 0);
+        const auto victim = owner(w, target); // Monster/demolish: the owner speaks after the picture.
         const auto properties =
             (id == 9 || id == 10) ? same_street(w, target) : std::vector<std::uint16_t>{target};
         for (auto code : properties) {
@@ -433,9 +468,12 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
                     cb.release_hotel(code);
             }
         }
+        if ((id == 11 || id == 12) && victim)
+            say(cb, victim - 1U, 2, id, 1);
         return used();
     }
     case 13: {
+        say(cb, actor, 0, id, 3); // Before the inventory pick, even if it is then cancelled.
         auto item = use.choice;
         if (!item) {
             if (!cb.choose_inventory)
@@ -458,11 +496,16 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         // Original 0x44192a returns a bare tool ID; the caller still indexes the card-price table.
         hostility(w, cb, target, actor, services::card_prices[item->value - 1]);
         consume(w, actor, id);
+        say(cb, target, 2, id, 1);
         return used();
     }
     case 14:
     case 30:
         consume(w, actor, id);
+        if (target != actor)
+            say(cb, actor, 0, id, 3);
+        if (target < 4) // rich4_card_tingliuka/wuguika: self row 1 (mood 3), victim row 2 (mood 2).
+            say(cb, target, target == actor ? 1 : 2, id, target == actor ? 3 : 2);
         if (target < 4) {
             if (id == 14)
                 w.players[target].status.days_stopping = target == actor ? 0x80 : 1;
@@ -477,6 +520,7 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         return used();
     case 15:
         consume(w, actor, id);
+        say(cb, actor, 0, id, 3);
         for (std::size_t i = 0; i < w.players.size(); ++i) {
             auto &p = w.players[i];
             if (i == actor || !p.state.controller_flags || !p.state.x || p.status.days_in_hotel)
@@ -501,6 +545,7 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
             !cb.try_mianzui_jiahuo)
             return missing();
         consume(w, actor, id);
+        say(cb, actor, 0, id, 3);
         if (target >= 4) {
             if (id == 17)
                 cb.add_prison(target, 5);
@@ -516,12 +561,21 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
             return used();
         if (std::size_t(redirected) >= w.players.size())
             return result(CardUseStatus::invalid, "Defense returned invalid player");
-        if (id == 16)
+        if (id == 16) {
+            if (cb.voice) // rich4_card_mengyouka: the victim says event line 21 (mood 1) first.
+                cb.voice(std::size_t(redirected), 21);
             sleepwalk(w, std::size_t(redirected), redirected == std::int32_t(actor) ? 4 : 5, true);
-        else
+        } else {
             cb.add_prison(std::size_t(redirected), redirected == std::int32_t(actor) ? 4 : 5);
+            say(cb, std::size_t(redirected), 2, id, 1);
+        }
         if (redirected == target && has_card(w.players[target].state.cards, 18)) {
+            // rich4_card_passive _rich4_use_card_fuchouka: popup, consume, holder then user speak.
+            if (cb.passive_card)
+                cb.passive_card(target, 18);
             consume(w, target, 18);
+            say(cb, target, 0, 18, 0);
+            say(cb, actor, 2, 18, 2);
             if (id == 16)
                 sleepwalk(w, actor, 5, false);
             else
@@ -542,6 +596,7 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         if (bad)
             cb.detach_god(actor);
         consume(w, actor, id);
+        say(cb, actor, 0, id, 0);
         return used();
     }
     case 23: {
@@ -551,6 +606,7 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         if (!object)
             return result(CardUseStatus::cancelled, "No nearby attachable god");
         consume(w, actor, id);
+        say(cb, actor, 0, id, 0);
         cb.attach_god(actor, *object);
         return used();
     }
@@ -558,6 +614,7 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
     case 25: {
         if (!cb.update_stocks)
             return missing();
+        say(cb, actor, 0, id, 0);
         const float old_price = std::bit_cast<float>(w.stocks[target].float_bits[2]);
         w.stocks[target].news_movement = id == 24 ? 0x20 : 2;
         cb.update_stocks(target + 1);
@@ -584,6 +641,7 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         if (has_card(w.players[target].state.cards, 19) && tax > 2000 && !cb.try_frame)
             return missing();
         consume(w, actor, id);
+        say(cb, actor, 0, id, 0);
         hostility(w, cb, target, actor, tax / 100);
         if (has_card(w.players[target].state.cards, 20) && cb.try_free(target, actor, tax))
             return used();
@@ -593,13 +651,16 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
             if (redirect != -1)
                 payer = redirect;
         }
-        if (payer != std::int32_t(actor))
+        if (payer != std::int32_t(actor)) {
             cb.pay(payer, std::int32_t(actor), w.players.at(std::size_t(payer)).state.cash / 5, 0);
+            say(cb, std::size_t(payer), 2, id, 2);
+        }
         return used();
     }
     case 27:
     case 28:
         consume(w, actor, id);
+        say(cb, actor, 0, id, 0);
         for (auto code : same_street(w, target)) {
             property(w, code).temporary = id == 27 ? 0x50 : 0x51;
             if (id == 28 && facility_code(w, code) && w.facilities[code - 4000].facility_type == 4)
@@ -608,12 +669,14 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         return used();
     case 29:
         consume(w, actor, id);
+        say(cb, actor, 0, id, 3);
         break_ally(w, actor);
         break_ally(w, target);
         player.status.allied_player = std::uint8_t(target + 1);
         player.status.allied_days = 7;
         w.players[target].status.allied_player = std::uint8_t(actor + 1);
         w.players[target].status.allied_days = 7;
+        say(cb, target, 2, id, 0);
         return used();
     default:
         return result(CardUseStatus::invalid, "Passive or unknown card");

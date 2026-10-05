@@ -2,6 +2,7 @@
 #include "rich4/tools.hpp"
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 using namespace rich4;
 namespace {
 void require(bool b, const char *why) {
@@ -121,10 +122,30 @@ void callbacks() {
     require(!tools::use(w, r, 0, 10, 0, 0, callbacks).applied && w.players[0].state.tool_amounts[9] == 2,
             "failed restore preserves tool");
 }
+// _tool_strings speech: only applied uses speak; the computer's remote dice is silent.
+void speech() {
+    auto w = sample();
+    Random r(3);
+    std::vector<unsigned> said;
+    tools::Callbacks callbacks;
+    callbacks.say = [&](auto slot, auto line) {
+        require(slot == 0, "the user speaks");
+        said.push_back(line);
+    };
+    callbacks.remote_dice = [](auto, auto) {};
+    require(tools::use(w, r, 0, 5, 0, 0, callbacks).applied, "equip motorcycle");
+    require(!tools::use(w, r, 0, 5, 0, 0, callbacks).applied, "same transport is refused");
+    require(tools::use(w, r, 0, 8, 3, 0, callbacks).applied, "human remote dice");
+    w.players[0].state.controller_flags = 2;
+    require(tools::use(w, r, 0, 8, 3, 0, callbacks).applied, "computer remote dice");
+    require(said == std::vector<unsigned>{4, 7}, "motorcycle line 4 once, human remote dice line 7 only");
+    require(r.state() == Random(3).state(), "speech draws no randomness");
+}
 } // namespace
 int main() {
     try {
         transport();
+        speech();
         obstacles();
         teleport();
         callbacks();
