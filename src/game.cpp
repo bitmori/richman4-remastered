@@ -2483,8 +2483,8 @@ struct GameSession::Impl {
                          slot,
                          0,
                          0,
-                         "請選擇設施類別", // 0x465289
-                         {{"空地", 0}, {"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}},
+                         "請選擇設施類別", // 0x465289; fcn_00440aac(1): right-click returns -1
+                         {{"公園", 0}, {"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}, {"取消", -1}}},
             key};
     }
     CardLookahead lookahead(std::size_t slot, std::size_t count) {

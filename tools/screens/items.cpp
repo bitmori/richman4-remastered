@@ -570,7 +570,9 @@ bool Screens::draw_decision(Frame &frame, GameSession &session, const Host &host
         draw_remote_dice(frame, decision, host);
         return true;
     case DecisionKind::card_target: // 嫁禍卡 victim (rich4_card_passive.asm:170-215)
-        if (decision.prompt != "使用嫁祸卡？")
+        // The core prompt is 0x46535d "請選擇嫁禍對象..." (several) or "是否嫁禍給%s？" (one, which
+        // is also a 2-option yes/no); the old simplified text is kept for the items gallery.
+        if (decision.prompt != "使用嫁祸卡？" && decision.prompt != "請選擇嫁禍對象...")
             break;
         end_visits();
         draw_frame_up(frame, session, decision, host);
