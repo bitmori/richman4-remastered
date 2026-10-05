@@ -44,7 +44,12 @@ void callbacks(){auto w=sample();Random r(3);tools::Callbacks callbacks;
     require(!result.supported && w.players[0].state.tool_amounts[6]==2,"missing blast must not consume");
     unsigned blasts=0;callbacks.blast=[&](auto target,bool nuclear,auto slot){require(target==2001 && nuclear && slot==0,"blast arguments");++blasts;};
     require(tools::use(w,r,0,13,2001,0,callbacks).applied && blasts==1,"nuclear dispatch");
-    unsigned face=0;callbacks.remote_dice=[&](auto slot,unsigned n){require(slot==0,"die actor");face=n;};
+    unsigned face=0;callbacks.remote_dice=[&](auto slot,unsigned n){
+        require(slot==0,"die actor");
+        require(w.players[slot].state.tool_amounts[7] == 2 && w.tool_supply[7] == 10,
+                "controlled die begins and snapshots history before its inventory consumption");
+        face=n;
+    };
     require(!tools::use(w,r,0,8,7,0,callbacks).applied,"invalid controlled die");
     require(tools::use(w,r,0,8,6,0,callbacks).applied && face==6 && w.tool_supply[7]==11,"controlled die returned to supply");
     callbacks.restore_last_state=[](){return false;};

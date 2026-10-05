@@ -140,7 +140,8 @@ Result use(World& w,Random&,std::size_t slot,unsigned tool,std::uint16_t target,
     if(tool==8){
         if(!target || target>6)return skipped("選擇一至六點");
         if(!callbacks.remote_dice)return missing("遙控骰子尚未接入");
-        (void)consume_tool(w.players[slot].state.tool_amounts,w.tool_supply,8);callbacks.remote_dice(slot,target);return {true,true,{}};
+        callbacks.remote_dice(slot,target);
+        (void)consume_tool(w.players[slot].state.tool_amounts,w.tool_supply,8);return {true,true,{}};
     }
     if(tool==10){
         if(!callbacks.restore_last_state)return missing("時光機尚未接入");
