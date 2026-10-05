@@ -52,7 +52,8 @@ if(RICH4_BUILD_GAME)
   target_link_libraries(rich4-contact-sheet PRIVATE rich4_core Freetype::Freetype Iconv::Iconv)
   add_executable(rich4-effect-preview tools/screens/effect_preview.cpp tools/screens/effects.cpp)
   target_link_libraries(rich4-effect-preview PRIVATE rich4_core Freetype::Freetype Iconv::Iconv)
-  add_executable(rich4-native tools/native_game.cpp tools/native_audio.cpp tools/screens/main_screen.cpp
+  add_executable(rich4-native tools/native_game.cpp tools/native_audio.cpp tools/platform_desktop.cpp
+    tools/screens/main_screen.cpp
     tools/screens/effects.cpp tools/screens/intro.cpp
     tools/screens/messages.cpp tools/screens/draw.cpp tools/screens/finance.cpp
     tools/screens/stocks.cpp tools/screens/market.cpp tools/screens/menus.cpp

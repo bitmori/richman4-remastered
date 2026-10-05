@@ -2,6 +2,7 @@
 #include "board_audio.hpp" // AUDIO: walk loops, context music
 #include "native_audio.hpp"
 #include "native_frame.hpp"
+#include "platform.hpp"
 #include "screens/voices.hpp" // AUDIO: auction / lottery announcer clips
 #include "native_stock_names.hpp"
 #include "native_ui.hpp"
@@ -425,6 +426,8 @@ class Application {
                                         << "}\n";
                             if (sound_effects_ && button.click_sound && button.id != messages::skip_button)
                                 audio_->play_sound(9);
+                            if (button.id != messages::skip_button && !options_.auto_rounds)
+                                platform::haptic_tap(); // a light tap on phones for every button press
                             buttons_.clear(); // Remaining events cannot invoke controls from the previous
                                               // screen/decision.
                             action();

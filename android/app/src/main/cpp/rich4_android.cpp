@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "rich4_android.hpp"
+#include "platform.hpp" // tools/
 
 #include <SDL3/SDL.h>
 #include <android/log.h>
+#include <jni.h>
 #include <iconv.h> // GNU libiconv (see CMakeLists.txt)
 #include <unistd.h>
 
@@ -161,3 +163,27 @@ Paths prepare() {
 }
 
 } // namespace rich4::android_platform
+
+namespace rich4::platform {
+
+// Rich4Activity.hapticTap(): View.performHapticFeedback(KEYBOARD_TAP) on the UI thread. It needs
+// no VIBRATE permission and follows the phone's own touch-feedback setting.
+void haptic_tap() {
+    auto *env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity)
+        return;
+    static jmethodID method = nullptr;
+    if (!method) {
+        const jclass type = env->GetObjectClass(activity);
+        method = env->GetMethodID(type, "hapticTap", "()V");
+        env->DeleteLocalRef(type);
+    }
+    if (method)
+        env->CallVoidMethod(activity, method);
+    if (env->ExceptionCheck())
+        env->ExceptionClear();
+    env->DeleteLocalRef(activity);
+}
+
+} // namespace rich4::platform
