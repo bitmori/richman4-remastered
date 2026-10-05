@@ -8,12 +8,12 @@ val thirdParty = rootProject.file("third_party")
 val sdlJava = File(thirdParty, "SDL3-3.4.16/android-project/app/src/main/java")
 
 android {
-    namespace = "com.simonliang.rich4"
+    namespace = "io.divby0.rich4"
     compileSdk = 36
     ndkVersion = "28.2.13676358"
 
     defaultConfig {
-        applicationId = "com.simonliang.rich4"
+        applicationId = "io.divby0.rich4"
         minSdk = 28 // bionic iconv/libc baseline; Big5 itself comes from bundled GNU libiconv
         targetSdk = 36
         // Sideload-only spike. Play rule: plain integer, +1 per upload, never derived.
