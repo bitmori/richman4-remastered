@@ -7,3 +7,5 @@ artifacts/
 *.exe
 *.apk
 __pycache__/
+/build/
+/CMakeUserPresets.json
