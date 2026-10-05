@@ -94,6 +94,9 @@ void lossless_and_patching() {
     world.players[1].state.cash = -123; put32(expected, 0x10 + 104 + 28, 0xffffff85U);
     world.players[1].state.node_id = 4; put16(expected, 0x10 + 104 + 12, 4);
     world.players[1].status.days_rejected_by_bank = 9; expected[0x10 + 104 + 59] = 9;
+    world.players[1].status.card_strategy = 1; expected[0x10 + 104 + 22] = 1;
+    world.players[1].status.loan_ratio = 73; expected[0x10 + 104 + 24] = 73;
+    world.players[1].status.god_luck_modifier = -3; put16(expected, 0x10 + 104 + 68, 0xfffd);
     world.players[1].status.cumulative_income = 0xffaabcde; put32(expected, 0x10 + 104 + 96, 0xffaabcde);
     world.players[1].state.cards[0] = 30; expected[0x654 + 15] = 30;
     world.card_supply[29] = 0xff; expected[0x6cc + 29] = 0xff;
@@ -106,6 +109,20 @@ void lossless_and_patching() {
     world.stock_history_bits[2][143] = 0xffc56789; put32(expected, 0x6f6 + 2 * 576 + 143 * 4, 0xffc56789);
     world.public_fund = -1; put32(expected, 0x26ba, 0xffffffff);
     world.lease_mode = 4; put32(expected, 0x267e, 4);
+    world.camera_rotation = 7; put32(expected, 0x2743, 7);
+    world.round_counter = 0xffffffff; put32(expected, 0x2692, 0xffffffff);
+    world.lottery_tickets[35] = 4; expected[0x26be + 35] = 4;
+    world.stock_market_index = -32; put32(expected, 0x26a2, 0xffffffe0);
+    world.stock_market_movement_bits = 0x7fa01234; put32(expected, 0x26a6, 0x7fa01234);
+    auto& object = world.objects[45]; const auto object_offset = 0x204 + 45 * 24;
+    object.kind = 18; expected[object_offset] = 18;
+    object.direction = 7; expected[object_offset + 1] = 7;
+    object.node_id = 4; put16(expected, object_offset + 2, 4);
+    object.remaining_days = 9; expected[object_offset + 4] = 9;
+    object.attached_player = 3; expected[object_offset + 5] = 3;
+    object.animation_remaining = 254; expected[object_offset + 6] = 254;
+    object.animation_step = 231; expected[object_offset + 7] = 231;
+    object.motion_bits[3] = 0x7faabcde; put32(expected, object_offset + 20, 0x7faabcde);
     world.special_actors[4].inactive_state = 3; expected[0x1b4 + 4 * 16 + 10] = 3;
     const auto land = map_offset + u32(input, map_offset + 12) + 52;
     world.lands[1].economy.owner_code = 2; expected[land + 25] = 2;
@@ -117,6 +134,7 @@ void lossless_and_patching() {
     std::copy_n(world.commercials[1].shareholder_order.begin(), 4, expected.begin() + static_cast<std::ptrdiff_t>(company + 28));
     const auto facility = map_offset + u32(input, map_offset + 20) + 56;
     world.facilities[1].toll_by_level[2] = 321; put16(expected, facility + 40, 321);
+    world.facilities[1].flags_30 = 9; expected[facility + 30] = 9;
     require(world.export_save() == expected, "Mutations change exactly their documented bytes, no snapshot or padding drift");
     auto loaded = World::from_save(SaveFile::decode(expected));
     require(loaded.active_player().state.cash == -123 && loaded.lands[1].economy.owner_code == 2,
@@ -156,6 +174,18 @@ void fresh_world() {
     require(world.prison_roster[4] == 1 && world.prison_roster[5] == 1 &&
             world.hospital_roster[6] == 1 && world.hospital_roster[7] == 1,
             "Original special-actor prison/hospital roster defaults");
+    std::array<unsigned, 19> object_counts{};
+    for (const auto& object : world.objects) {
+        require(object.kind > 0 && object.kind <= 18 && object.node_id == 0 && object.attached_player == 0,
+                "Fresh objects have exact types and await placement");
+        ++object_counts[object.kind];
+    }
+    for (std::size_t kind = 1; kind <= 14; ++kind) require(object_counts[kind] == 1, "Fourteen distinct gods");
+    require(object_counts[15] == 2 && object_counts[16] == 10 && object_counts[17] == 10 && object_counts[18] == 10,
+            "Original bomb/barrier/mine object pool sizes");
+    require(world.players[0].status.loan_ratio == 30 && world.players[0].status.card_strategy == 3 &&
+            world.lottery_tickets[35] == 0 && world.camera_rotation == 0 && world.round_counter == 0,
+            "Fresh profile and persistent global defaults");
     for (const auto& player : world.players) require(player.state.node_id == 0 && player.state.last_node_id == 0,
                                                     "Default placement waits for each player's first turn");
     require(world.players[0].state.cash == 100000 && world.players[1].state.cash == 120000 &&

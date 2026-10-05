@@ -15,7 +15,9 @@ namespace rich4 {
 
 // Runtime values, never overlays of the original packed 32-bit structures.
 struct PlayerStatus {
+    std::uint8_t card_strategy = 0; // Original profile byte +22; bit 1 permits active-card AI.
     std::uint8_t rescue_strategy = 0; // Original profile byte +23.
+    std::uint8_t loan_ratio = 0; // Original profile byte +24.
     std::uint8_t init_cash_ratio = 50;
     std::uint8_t saved_direction = 0; // +27, saved facing while absent/in a facility.
     std::uint32_t loan_due_date = 0;
@@ -35,6 +37,7 @@ struct PlayerStatus {
     std::uint8_t attached_bomb = 0;
     std::uint8_t allied_player = 0; // One-based owner code, zero means none.
     std::uint8_t total_winter_sleep_days = 0;
+    std::int16_t god_luck_modifier = 0; // Original signed word +68.
     std::int16_t money_fortune_modifier = 0; // Original signed word +70.
     std::int16_t other_fortune_modifier = 0; // Original signed word +72.
     std::uint16_t facility_id = 0; // Original word +74.
@@ -77,6 +80,15 @@ struct SpecialActor {
     std::uint8_t days_stopping = 0, days_tortoise_walking = 0;
 };
 
+// IDs in node flags and god_info are one-based; array subscripts are ID-1.
+struct MapObject {
+    std::uint8_t kind = 0, direction = 0;
+    std::uint16_t node_id = 0;
+    std::uint8_t remaining_days = 0, attached_player = 0;
+    std::uint8_t animation_remaining = 0, animation_step = 0;
+    std::array<std::uint32_t, 4> motion_bits{}; // Original binary32 position/delta, never canonicalized.
+};
+
 struct MapNode {
     std::uint32_t id = 0;
     std::int16_t x = 0;
@@ -110,6 +122,7 @@ struct Facility {
     std::uint8_t level = 0;
     std::uint8_t direction = 0;
     std::uint8_t temporary_state = 0;
+    std::uint8_t flags_30 = 0; // Original facility byte +0x1e, cleared by sealing card.
     std::uint16_t land_price = 0;
     std::array<std::uint16_t, 6> toll_by_level{};
     [[nodiscard]] std::uint16_t price_per_level() const noexcept { return toll_by_level[0]; }
@@ -188,12 +201,18 @@ public:
     std::array<std::uint8_t, 8> prison_roster{};
     std::array<std::uint8_t, 8> hospital_roster{};
     std::array<SpecialActor, 5> special_actors{};
+    std::array<MapObject, 46> objects{};
+    std::array<std::uint8_t, 36> lottery_tickets{}; // Number 1..36: owner slot+1, zero unowned.
     std::array<StockState, 12> stocks{};
     std::array<std::array<std::uint32_t, 144>, 12> stock_history_bits{};
     std::int32_t stock_history_cursor = 0;
+    std::int32_t stock_market_index = 0; // Original 0x499078.
+    std::uint32_t stock_market_movement_bits = 0; // Original binary32 at 0x4990ec.
     std::int32_t public_fund = 0; // Original recipient -1 payment accumulator.
     std::int32_t news_effect_days = 0; // Original 0x4990dc, news event 26.
     std::uint32_t lease_mode = 0; // Original 0x499110, not inferred from expiry dates.
+    std::uint32_t camera_rotation = 0; // Original 0x499088.
+    std::uint32_t round_counter = 0; // Original 0x4990e4, company type 3 fee multiplier.
 
     [[nodiscard]] WorldPlayer& active_player();
     [[nodiscard]] const WorldPlayer& active_player() const;

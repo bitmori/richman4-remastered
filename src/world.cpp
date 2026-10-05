@@ -50,7 +50,9 @@ std::size_t record_offset(const MapTableSummary& table, std::size_t id) {
 
 struct StatusByte { std::uint8_t PlayerStatus::* member; std::size_t offset; };
 constexpr std::array status_bytes{
+    StatusByte{&PlayerStatus::card_strategy, 22},
     StatusByte{&PlayerStatus::rescue_strategy, 23},
+    StatusByte{&PlayerStatus::loan_ratio, 24},
     StatusByte{&PlayerStatus::init_cash_ratio, 25},
     StatusByte{&PlayerStatus::saved_direction, 27},
     StatusByte{&PlayerStatus::days_in_hotel, 50},
@@ -165,6 +167,7 @@ World World::from_save(const SaveFile& save) {
         const auto offset = 0x10 + slot * 104;
         for (const auto& field : status_bytes) player.status.*field.member = bytes[offset + field.offset];
         player.status.loan_due_date = u32(bytes, offset + 44);
+        player.status.god_luck_modifier = std::bit_cast<std::int16_t>(u16(bytes, offset + 68));
         player.status.money_fortune_modifier = std::bit_cast<std::int16_t>(u16(bytes, offset + 70));
         player.status.other_fortune_modifier = std::bit_cast<std::int16_t>(u16(bytes, offset + 72));
         player.status.facility_id = u16(bytes, offset + 74);
@@ -183,10 +186,15 @@ World World::from_save(const SaveFile& save) {
     std::copy_n(bytes.begin() + 0x271e, world.fortune_deck.size(), world.fortune_deck.begin());
     std::copy_n(bytes.begin() + 0x26e2, world.prison_roster.size(), world.prison_roster.begin());
     std::copy_n(bytes.begin() + 0x26ea, world.hospital_roster.size(), world.hospital_roster.begin());
+    std::copy_n(bytes.begin() + 0x26be, world.lottery_tickets.size(), world.lottery_tickets.begin());
     world.news_cursor = u32(bytes, 0x26f2); world.fortune_cursor = u32(bytes, 0x26f6);
     world.public_fund = std::bit_cast<std::int32_t>(u32(bytes, 0x26ba));
     world.news_effect_days = std::bit_cast<std::int32_t>(u32(bytes, 0x269a));
     world.lease_mode = u32(bytes, 0x267e);
+    world.camera_rotation = u32(bytes, 0x2743);
+    world.round_counter = u32(bytes, 0x2692);
+    world.stock_market_index = std::bit_cast<std::int32_t>(u32(bytes, 0x26a2));
+    world.stock_market_movement_bits = u32(bytes, 0x26a6);
     world.stock_history_cursor = std::bit_cast<std::int32_t>(u32(bytes, 0x6f2));
     for (std::size_t id = 0; id < world.special_actors.size(); ++id) {
         const auto offset = 0x1b4 + id * 16;
@@ -202,6 +210,14 @@ World World::from_save(const SaveFile& save) {
         stock.flags_10 = u16(bytes, offset + 10); stock.raw_32 = u32(bytes, offset + 32);
         for (std::size_t i = 0; i < 5; ++i) stock.float_bits[i] = u32(bytes, offset + 12 + 4 * i);
         for (std::size_t i = 0; i < 144; ++i) world.stock_history_bits[id][i] = u32(bytes, 0x6f6 + id * 576 + i * 4);
+    }
+    for (std::size_t id = 0; id < world.objects.size(); ++id) {
+        const auto offset = 0x204 + id * 24;
+        auto& object = world.objects[id];
+        object.kind = bytes[offset]; object.direction = bytes[offset + 1]; object.node_id = u16(bytes, offset + 2);
+        object.remaining_days = bytes[offset + 4]; object.attached_player = bytes[offset + 5];
+        object.animation_remaining = bytes[offset + 6]; object.animation_step = bytes[offset + 7];
+        for (std::size_t i = 0; i < 4; ++i) object.motion_bits[i] = u32(bytes, offset + 8 + i * 4);
     }
     for (std::uint32_t id = 0; id <= world.map_.nodes.count; ++id) {
         const auto offset = record_offset(world.map_.nodes, id);
@@ -236,6 +252,7 @@ World World::from_save(const SaveFile& save) {
         facility.name = name_at(bytes, offset + 4); facility.facility_type = bytes[offset + 24];
         facility.owner_code = bytes[offset + 25]; facility.level = bytes[offset + 26];
         facility.direction = bytes[offset + 27]; facility.temporary_state = bytes[offset + 28];
+        facility.flags_30 = bytes[offset + 30];
         facility.land_price = u16(bytes, offset + 34);
         for (std::size_t i = 0; i < 6; ++i) facility.toll_by_level[i] = u16(bytes, offset + 36 + 2 * i);
         facility.removed_building = u32(bytes, offset + 48); facility.expired_date = u32(bytes, offset + 52);
@@ -274,10 +291,14 @@ void World::clear_bankrupt_player_fields(std::size_t slot) {
     player.state.special_finance = 0; player.state.points = 0;
     const auto ratio = player.status.init_cash_ratio;
     const auto rescue = player.status.rescue_strategy;
+    const auto card_strategy = player.status.card_strategy;
+    const auto loan_ratio = player.status.loan_ratio;
     const auto saved_direction = player.status.saved_direction;
     player.status = {};
     player.status.init_cash_ratio = ratio;
     player.status.rescue_strategy = rescue;
+    player.status.card_strategy = card_strategy;
+    player.status.loan_ratio = loan_ratio;
     player.status.saved_direction = saved_direction;
 }
 
@@ -312,6 +333,7 @@ std::vector<std::uint8_t> World::export_save() const {
         put32(bytes, offset + 44, player.status.loan_due_date);
         put16(bytes, offset + 48, state.points);
         for (const auto& field : status_bytes) bytes[offset + field.offset] = player.status.*field.member;
+        put16(bytes, offset + 68, std::bit_cast<std::uint16_t>(player.status.god_luck_modifier));
         put16(bytes, offset + 70, std::bit_cast<std::uint16_t>(player.status.money_fortune_modifier));
         put16(bytes, offset + 72, std::bit_cast<std::uint16_t>(player.status.other_fortune_modifier));
         put16(bytes, offset + 74, player.status.facility_id);
@@ -332,10 +354,14 @@ std::vector<std::uint8_t> World::export_save() const {
     std::copy(fortune_deck.begin(), fortune_deck.end(), bytes.begin() + 0x271e);
     std::copy(prison_roster.begin(), prison_roster.end(), bytes.begin() + 0x26e2);
     std::copy(hospital_roster.begin(), hospital_roster.end(), bytes.begin() + 0x26ea);
+    std::copy(lottery_tickets.begin(), lottery_tickets.end(), bytes.begin() + 0x26be);
     put32(bytes, 0x26f2, news_cursor); put32(bytes, 0x26f6, fortune_cursor);
     put32(bytes, 0x26ba, std::bit_cast<std::uint32_t>(public_fund));
     put32(bytes, 0x269a, std::bit_cast<std::uint32_t>(news_effect_days));
     put32(bytes, 0x267e, lease_mode);
+    put32(bytes, 0x2743, camera_rotation); put32(bytes, 0x2692, round_counter);
+    put32(bytes, 0x26a2, std::bit_cast<std::uint32_t>(stock_market_index));
+    put32(bytes, 0x26a6, stock_market_movement_bits);
     put32(bytes, 0x6f2, std::bit_cast<std::uint32_t>(stock_history_cursor));
     for (std::size_t id = 0; id < special_actors.size(); ++id) {
         const auto offset = 0x1b4 + id * 16; const auto& actor = special_actors[id];
@@ -352,6 +378,13 @@ std::vector<std::uint8_t> World::export_save() const {
         put16(bytes, offset + 10, stock.flags_10); put32(bytes, offset + 32, stock.raw_32);
         for (std::size_t i = 0; i < 5; ++i) put32(bytes, offset + 12 + 4 * i, stock.float_bits[i]);
         for (std::size_t i = 0; i < 144; ++i) put32(bytes, 0x6f6 + id * 576 + 4 * i, stock_history_bits[id][i]);
+    }
+    for (std::size_t id = 0; id < objects.size(); ++id) {
+        const auto offset = 0x204 + id * 24; const auto& object = objects[id];
+        bytes[offset] = object.kind; bytes[offset + 1] = object.direction; put16(bytes, offset + 2, object.node_id);
+        bytes[offset + 4] = object.remaining_days; bytes[offset + 5] = object.attached_player;
+        bytes[offset + 6] = object.animation_remaining; bytes[offset + 7] = object.animation_step;
+        for (std::size_t i = 0; i < 4; ++i) put32(bytes, offset + 8 + i * 4, object.motion_bits[i]);
     }
     for (const auto& node : nodes) {
         const auto offset = record_offset(map_.nodes, node.id);
@@ -375,6 +408,7 @@ std::vector<std::uint8_t> World::export_save() const {
         bytes[offset + 24] = facility.facility_type; bytes[offset + 25] = facility.owner_code;
         bytes[offset + 26] = facility.level; bytes[offset + 27] = facility.direction;
         bytes[offset + 28] = facility.temporary_state; put16(bytes, offset + 34, facility.land_price);
+        bytes[offset + 30] = facility.flags_30;
         for (std::size_t i = 0; i < 6; ++i) put16(bytes, offset + 36 + 2 * i, facility.toll_by_level[i]);
         put32(bytes, offset + 48, facility.removed_building);
         put32(bytes, offset + 52, facility.expired_date);
@@ -428,6 +462,8 @@ World World::from_map_resource(std::span<const std::uint8_t> map, const NewGameO
     world.hospital_roster[6] = world.hospital_roster[7] = 1;
     for (std::size_t id = 0; id < world.special_actors.size(); ++id)
         world.special_actors[id].inactive_state = static_cast<std::uint8_t>(id / 2 + 1);
+    for (std::size_t id = 0; id < world.objects.size(); ++id)
+        world.objects[id].kind = static_cast<std::uint8_t>(id < 14 ? id + 1 : id < 16 ? 15 : 16 + (id - 16) / 10);
     for (std::size_t index = 0; index < world.stocks.size(); ++index) {
         const auto& source = initial_stocks[(options.stage_id * 4U + options.map_id) * 12U + index];
         auto& stock = world.stocks[index];
@@ -464,6 +500,7 @@ World World::from_map_resource(std::span<const std::uint8_t> map, const NewGameO
         state.controller_flags = option.controller; player.status.flags_100 = option.controller;
         player.status.init_cash_ratio = profile.cash_ratio;
         player.status.rescue_strategy = profile.strategy_23;
+        player.status.card_strategy = 3; player.status.loan_ratio = profile.strategy_24;
         state.traffic_method = option.traffic_method; state.dice_count = static_cast<std::uint8_t>(option.traffic_method + 1);
         const auto cash_ratio = option.controller == 1 ? 50 : profile.cash_ratio;
         state.cash = static_cast<std::int32_t>(std::int64_t(options.initial_fund) * cash_ratio / 100);

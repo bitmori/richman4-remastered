@@ -111,7 +111,7 @@ Fresh worlds serialize the complete legacy-shaped layout, including all required
 snapshot regions. Unknown state and historical snapshots begin at zero; original
 name/stock pointers are not fabricated. This makes them loadable by the portable
 codec and session, but is **not** a promise that a fresh portable save is already
-safe to restore in the original Windows executable. Stock scalar templates, stock holdings, event decks, special-player records and confinement rosters are now decoded or initialized in migration 014. Complete stock startup, 46 object records, placement of gods/objects (including eight RNG draws before the first player), and their remaining initialization side effects have not been migrated here. Consequently this factory does not claim a seed-for-seed match
+safe to restore in the original Windows executable. Stock scalar templates, stock holdings, event decks, special-player records and confinement rosters are now decoded or initialized in migration 014. Complete stock startup and placement of gods/objects (including eight RNG draws before the first player), and their remaining initialization side effects have not been migrated here. Consequently this factory does not claim a seed-for-seed match
 with the entire original new-game menu sequence. These omissions must be addressed
 as those gameplay systems are migrated, rather than faking RNG consumption alone.
 
@@ -131,3 +131,5 @@ oracle; no commercial saves or assets are committed with the tests. This verifie
 the state/data boundary, not the original game's complete rules or playability.
 
 Event-driven state extensions, stock/special-actor serialization, original deck shuffles and the facility toll/build-price alias are recorded in [migration 014](014-events.md).
+
+Lottery ownership, object records, camera/round counters, stock market globals and additional profile fields are recorded in [migration 019](019-lottery.md). The object pool is now decoded and initialized; its gameplay placement remains a separate operation.
