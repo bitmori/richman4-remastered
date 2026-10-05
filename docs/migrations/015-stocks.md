@@ -25,7 +25,7 @@ store as one building level and uses normal land/facility levels otherwise.
 It does not multiply by the game's current price index.
 
 The original x87 uses a 64-bit significand. ARM's `long double` has 53 bits and
-is insufficient. A small private finite arithmetic type implements explicit
+is insufficient. The shared `numeric::Extended` finite arithmetic type (migration 023) implements explicit
 64-bit significand rounding with `uint64_t` and the Clang/GCC `__uint128_t`
 integer extension, including explicit binary32 stores. These are numeric
 widths, not 32-bit host-address assumptions. This currently targets the
