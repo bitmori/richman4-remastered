@@ -164,6 +164,12 @@ class StockMarket {
     }
     void draw(Host &host, const World &world, std::size_t player, NumberPad &pad, const StockActions &actions);
     void cancel(Host &host, const StockActions &actions); // EXIT / right-click / Back
+    // 紅卡 / 黑卡 target (_rich4_ui_stock_entry modes 1/2): the price page with trading disabled. A
+    // row's option (subject = stock) is answered through `respond(option index)` with the first tap
+    // selecting and the second committing; EXIT answers the 取消 option. `decision` may be null to
+    // draw the read-only page the original holds for 1000 ms after the card took effect.
+    void draw_card_target(Host &host, const World &world, std::size_t player, const GameDecision *decision,
+                          int option_base, const std::function<void(std::size_t)> &respond);
     std::optional<std::size_t> selected;
     int page = 0;
     bool info_open = false;

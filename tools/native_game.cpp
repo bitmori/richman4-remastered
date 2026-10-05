@@ -1060,7 +1060,8 @@ class Application {
         std::optional<EffectEvent> effect;
     };
     bool presenting() const {
-        return hold_ms_ > 0 || intro_.active() || main_screen_.dice_busy() || effects_.active() || messages_.active() ||
+        return hold_ms_ > 0 || SDL_GetTicks() < stock_card_hold_until_ || intro_.active() || main_screen_.dice_busy() ||
+               effects_.active() || messages_.active() ||
                spinners_.active() || monthly_.active() || auction_room_.sold_active() ||
                items_.magic_cast_active(); // MONTHLY / AUCTION / MAGIC full-screen sequences
     }
@@ -1232,6 +1233,14 @@ class Application {
             draw_monthly(); // MONTHLY: full screen, modal
         if (session_ && screen_ == Screen::game)
             draw_intro();
+        if (session_ && screen_ == Screen::game && SDL_GetTicks() < stock_card_hold_until_) {
+            buttons_.clear(); // the updated price page, as the original redraws it before returning
+            auto host = make_host();
+            stock_market_.draw_card_target(host, session_->world(), stock_card_player_, nullptr, 210, {});
+        } else if (stock_card_hold_until_) {
+            stock_card_hold_until_ = 0;
+            stock_market_.selected.reset();
+        }
         if (options_.minigame >= 0 && screen_ == Screen::menu) {
             draw_dev_minigame(); // MINIGAMES (dev): one game alone, replayed with the next seed
         } else if (screen_ == Screen::menu) {
@@ -1924,6 +1933,26 @@ class Application {
             draw_map_decision(decision);
             return;
         }
+        if (decision.kind == DecisionKind::action_target && // 紅卡 / 黑卡: pick a company on the market page
+            std::any_of(decision.options.begin(), decision.options.end(), [](const auto &option) {
+                return option.subject && option.subject->kind == CardTargetKind::stock;
+            })) {
+            buttons_.clear();
+            auto host = make_host();
+            const auto player = decision.player;
+            stock_market_.draw_card_target(host, session_->world(), player, &decision, 210,
+                                           [this, player](std::size_t index) {
+                                               const bool used = session_->pending_decision() &&
+                                                                 session_->pending_decision()->options.at(index).value >= 0;
+                                               respond(index);
+                                               if (used && !options_.auto_rounds) { // ST:2205: redraw, wait 1000 ms
+                                                   stock_card_player_ = player;
+                                                   stock_card_hold_until_ = SDL_GetTicks() + 1000;
+                                               } else
+                                                   stock_market_.selected.reset();
+                                           });
+            return;
+        }
         if (items_.draw_decision(frame_, *session_, item_host()))
             return;
         if (minigames::handles(decision)) { // MINIGAMES: full-screen game; its window closing submits
@@ -2528,6 +2557,20 @@ class Application {
         }
         pad_.close();
         stock_market_.reset();
+        { // 紅卡 target mode: trading off, row 5 outlined by the first tap.
+            GameDecision red{DecisionKind::action_target, session_->world().header.current_player, 0, 0, "紅卡：選擇目標", {}};
+            for (std::uint16_t i = 0; i < session_->world().stocks.size(); ++i)
+                red.options.push_back({"", std::int32_t((unsigned(CardTargetKind::stock) << 16U) | i), std::nullopt,
+                                       CardTarget{CardTargetKind::stock, i}});
+            red.options.push_back({"取消", -1});
+            stock_market_.selected = 5;
+            buttons_.clear();
+            canvas_ = graphics::make_canvas(640, 480, 0);
+            auto host = make_host();
+            stock_market_.draw_card_target(host, session_->world(), red.player, &red, 210, [](std::size_t) {});
+            graphics::write_ppm(canvas_, options_.gallery / "stocks-red-card.ppm");
+            stock_market_.reset();
+        }
         screen_ = Screen::game;
         // Trading board: post a tool through SALE -> picker -> price pad, then open it.
         if (session_->open_trading()) {
@@ -3151,6 +3194,8 @@ class Application {
                                   },
                                   [this] { audio_->stop_loop(); }}};
     Uint64 spinner_ticks_ = 0; // SPINNERS: last spinner effect draw time (MONTHLY shares this clock)
+    Uint64 stock_card_hold_until_ = 0; // 紅卡 / 黑卡: market page held after the card took effect
+    std::size_t stock_card_player_ = 0;
     Uint64 monthly_ticks_ = 0; // MONTHLY: last draw_monthly() time
     native::monthly::MonthlyScreens monthly_{{[this](std::size_t id) { // MONTHLY: Effect.mkf / Speaking.mkf
                                           if (sound_effects_)

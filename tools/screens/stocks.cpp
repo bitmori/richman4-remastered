@@ -195,6 +195,48 @@ void StockMarket::draw(Host &host, const World &world, std::size_t player, Numbe
     hit(host, ids::stock_info, tall(info_button), click_sound, [this] { info_open = true; });
 }
 
+void StockMarket::draw_card_target(Host &host, const World &world, std::size_t player,
+                                   const GameDecision *decision, int option_base,
+                                   const std::function<void(std::size_t)> &respond) {
+    auto &frame = host.frame;
+    ui::fill(frame.canvas, {0, 0, 640, 480}, 0);
+    backdrop(frame, 'p', 75, 0);
+    page = 0;
+    const Style off{16, 0xa0a0a0, 0x101010, shadow | bold};
+    text(frame, "持有股數表", 70, 24, 2, off);
+    text(frame, "買進", 163, 24, 2, off);
+    text(frame, "賣出", 237, 24, 2, off);
+    text(frame, "上市公司資訊", 343, 24, 2, off);
+    text(frame, grouped(world.players.at(player).state.bank_balance), 540, 24, 6, white_text);
+    draw_prices(host, world, player);
+    if (!decision)
+        return;
+    for (std::size_t index = 0; index < decision->options.size(); ++index) {
+        const auto &option = decision->options[index];
+        if (option.value < 0) { // 取消: EXIT stands in for the original right-click
+            if (frame.pointer_down && frame.pointer_in(exit_button))
+                pressed_bevel(frame.canvas, exit_button);
+            hit(host, option_base + int(index), {exit_button.left, 0, 640, 47}, exit_sound,
+                [this, respond, index] {
+                    selected.reset();
+                    respond(index);
+                });
+            continue;
+        }
+        if (!option.subject || option.subject->kind != CardTargetKind::stock ||
+            option.subject->value >= world.stocks.size())
+            continue;
+        const auto stock = std::size_t(option.subject->value);
+        hit(host, option_base + int(index), {16, 80 + 32 * int(stock), 625, 112 + 32 * int(stock)}, click_sound,
+            [this, respond, stock, index] {
+                if (selected == stock) // touch: a second tap on the outlined row uses the card
+                    respond(index);
+                else
+                    selected = stock; // the original outlines the row under the mouse
+            });
+    }
+}
+
 void StockMarket::draw_prices(Host &host, const World &world, std::size_t player) {
     auto &frame = host.frame;
     const auto &holder = world.players.at(player);

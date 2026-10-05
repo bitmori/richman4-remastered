@@ -634,6 +634,11 @@ struct GameSession::Impl {
                             throw UnsupportedRule{result.message};
                         if (result.status == CardUseStatus::used) {
                             card_picture();
+                            if ((request->card_id == 24 || request->card_id == 25) && request->target &&
+                                request->target->kind == CardTargetKind::stock) {
+                                auto &box = announce(Announcement::stock_card, actor(), request->card_id);
+                                box.subject = request->target->value;
+                            }
                             emit(GameEventKind::notice,
                                  std::string("电脑使用") +
                                      std::string(services::card_names.at(request->card_id - 1)));

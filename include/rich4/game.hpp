@@ -148,6 +148,8 @@ enum class Announcement : std::uint8_t {
                        // 7 hibernating, 8 sleepwalking; subject = owner, property = 2000+land / 4000+facility.
     tool_use,          // "使用%s" box (1500 ms) before a computer/託管 player's tool runs
                        // (rich4_ui_use_tool.asm:1721, the automatic tool loop); id = tool 1..13.
+    stock_card,        // "對%s使用%s！" box (0x4653ae, 1500 ms) after a computer's 紅卡/黑卡: id = card
+                       // 24/25, subject = stock index (rich4_card_hongka.asm / heika.asm AI branch).
     stolen,            // "搶得%s的\n\n%s" box (0x4652f8, 1500 ms) after a computer's 搶奪卡 pick:
                        // subject = victim, id 0 card / 1 tool, value = card or tool id.
     mini_game_points,  // Closed-mode mini-game "得點券%d點" box (2000 ms, SG:4392): amount 50..69.
