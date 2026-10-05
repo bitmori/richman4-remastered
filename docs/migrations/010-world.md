@@ -133,3 +133,10 @@ the state/data boundary, not the original game's complete rules or playability.
 Event-driven state extensions, stock/special-actor serialization, original deck shuffles and the facility toll/build-price alias are recorded in [migration 014](014-events.md).
 
 Lottery ownership, object records, camera/round counters, stock market globals and additional profile fields are recorded in [migration 019](019-lottery.md). The object pool is now decoded and initialized; its gameplay placement remains a separate operation.
+
+The month counter at original `0x499084` is exposed as `month_counter`, persisted
+at SAVE offset `0x2696`, and initialized to zero by the original new-game rule.
+The original character profile byte `+26` is exposed as
+`PlayerStatus::stock_investment_ratio`; fresh worlds use the existing exact
+character profile scalar values. Both fields have exact-byte patch tests. The
+investment ratio survives bankruptcy, whose clearing range begins at byte 28.

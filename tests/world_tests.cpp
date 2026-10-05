@@ -96,6 +96,7 @@ void lossless_and_patching() {
     world.players[1].status.days_rejected_by_bank = 9; expected[0x10 + 104 + 59] = 9;
     world.players[1].status.card_strategy = 1; expected[0x10 + 104 + 22] = 1;
     world.players[1].status.loan_ratio = 73; expected[0x10 + 104 + 24] = 73;
+    world.players[1].status.stock_investment_ratio = 81; expected[0x10 + 104 + 26] = 81;
     world.players[1].status.god_luck_modifier = -3; put16(expected, 0x10 + 104 + 68, 0xfffd);
     world.players[1].status.cumulative_income = 0xffaabcde; put32(expected, 0x10 + 104 + 96, 0xffaabcde);
     world.players[1].state.cards[0] = 30; expected[0x654 + 15] = 30;
@@ -111,6 +112,7 @@ void lossless_and_patching() {
     world.lease_mode = 4; put32(expected, 0x267e, 4);
     world.camera_rotation = 7; put32(expected, 0x2743, 7);
     world.round_counter = 0xffffffff; put32(expected, 0x2692, 0xffffffff);
+    world.month_counter = 0xfedcba98; put32(expected, 0x2696, 0xfedcba98);
     world.lottery_tickets[35] = 4; expected[0x26be + 35] = 4;
     world.stock_market_index = -32; put32(expected, 0x26a2, 0xffffffe0);
     world.stock_market_movement_bits = 0x7fa01234; put32(expected, 0x26a6, 0x7fa01234);
@@ -153,7 +155,8 @@ void lossless_and_patching() {
     world.clear_bankrupt_player_fields(1);
     require(world.export_save() == bankrupt && world.players[1].state.cash == 0 &&
             world.players[1].status.cumulative_income == 0 &&
-            world.players[1].status.init_cash_ratio == input[0x10 + 104 + 25],
+            world.players[1].status.init_cash_ratio == input[0x10 + 104 + 25] &&
+            world.players[1].status.stock_investment_ratio == input[0x10 + 104 + 26],
             "Bankruptcy clears the exact original byte range including unknown state but preserves inventory/profile");
 }
 
@@ -184,6 +187,7 @@ void fresh_world() {
     require(object_counts[15] == 2 && object_counts[16] == 10 && object_counts[17] == 10 && object_counts[18] == 10,
             "Original bomb/barrier/mine object pool sizes");
     require(world.players[0].status.loan_ratio == 30 && world.players[0].status.card_strategy == 3 &&
+            world.players[0].status.stock_investment_ratio == 15 && world.month_counter == 0 &&
             world.lottery_tickets[35] == 0 && world.camera_rotation == 0 && world.round_counter == 0,
             "Fresh profile and persistent global defaults");
     for (const auto& player : world.players) require(player.state.node_id == 0 && player.state.last_node_id == 0,

@@ -54,6 +54,7 @@ constexpr std::array status_bytes{
     StatusByte{&PlayerStatus::rescue_strategy, 23},
     StatusByte{&PlayerStatus::loan_ratio, 24},
     StatusByte{&PlayerStatus::init_cash_ratio, 25},
+    StatusByte{&PlayerStatus::stock_investment_ratio, 26},
     StatusByte{&PlayerStatus::saved_direction, 27},
     StatusByte{&PlayerStatus::days_in_hotel, 50},
     StatusByte{&PlayerStatus::days_disappearing, 51},
@@ -193,6 +194,7 @@ World World::from_save(const SaveFile& save) {
     world.lease_mode = u32(bytes, 0x267e);
     world.camera_rotation = u32(bytes, 0x2743);
     world.round_counter = u32(bytes, 0x2692);
+    world.month_counter = u32(bytes, 0x2696);
     world.stock_market_index = std::bit_cast<std::int32_t>(u32(bytes, 0x26a2));
     world.stock_market_movement_bits = u32(bytes, 0x26a6);
     world.stock_history_cursor = std::bit_cast<std::int32_t>(u32(bytes, 0x6f2));
@@ -293,12 +295,14 @@ void World::clear_bankrupt_player_fields(std::size_t slot) {
     const auto rescue = player.status.rescue_strategy;
     const auto card_strategy = player.status.card_strategy;
     const auto loan_ratio = player.status.loan_ratio;
+    const auto investment_ratio = player.status.stock_investment_ratio;
     const auto saved_direction = player.status.saved_direction;
     player.status = {};
     player.status.init_cash_ratio = ratio;
     player.status.rescue_strategy = rescue;
     player.status.card_strategy = card_strategy;
     player.status.loan_ratio = loan_ratio;
+    player.status.stock_investment_ratio = investment_ratio;
     player.status.saved_direction = saved_direction;
 }
 
@@ -360,6 +364,7 @@ std::vector<std::uint8_t> World::export_save() const {
     put32(bytes, 0x269a, std::bit_cast<std::uint32_t>(news_effect_days));
     put32(bytes, 0x267e, lease_mode);
     put32(bytes, 0x2743, camera_rotation); put32(bytes, 0x2692, round_counter);
+    put32(bytes, 0x2696, month_counter);
     put32(bytes, 0x26a2, std::bit_cast<std::uint32_t>(stock_market_index));
     put32(bytes, 0x26a6, stock_market_movement_bits);
     put32(bytes, 0x6f2, std::bit_cast<std::uint32_t>(stock_history_cursor));
@@ -499,6 +504,7 @@ World World::from_map_resource(std::span<const std::uint8_t> map, const NewGameO
         state.character = option.character; state.color = profile.color; state.sex = profile.sex;
         state.controller_flags = option.controller; player.status.flags_100 = option.controller;
         player.status.init_cash_ratio = profile.cash_ratio;
+        player.status.stock_investment_ratio = profile.strategy_26;
         player.status.rescue_strategy = profile.strategy_23;
         player.status.card_strategy = 3; player.status.loan_ratio = profile.strategy_24;
         state.traffic_method = option.traffic_method; state.dice_count = static_cast<std::uint8_t>(option.traffic_method + 1);

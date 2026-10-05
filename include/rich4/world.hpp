@@ -19,6 +19,7 @@ struct PlayerStatus {
     std::uint8_t rescue_strategy = 0; // Original profile byte +23.
     std::uint8_t loan_ratio = 0; // Original profile byte +24.
     std::uint8_t init_cash_ratio = 50;
+    std::uint8_t stock_investment_ratio = 0; // Original profile byte +26.
     std::uint8_t saved_direction = 0; // +27, saved facing while absent/in a facility.
     std::uint32_t loan_due_date = 0;
     std::uint8_t days_in_hotel = 0;
@@ -213,6 +214,7 @@ public:
     std::uint32_t lease_mode = 0; // Original 0x499110, not inferred from expiry dates.
     std::uint32_t camera_rotation = 0; // Original 0x499088.
     std::uint32_t round_counter = 0; // Original 0x4990e4, company type 3 fee multiplier.
+    std::uint32_t month_counter = 0; // Original 0x499084, increments at each month boundary.
 
     [[nodiscard]] WorldPlayer& active_player();
     [[nodiscard]] const WorldPlayer& active_player() const;
