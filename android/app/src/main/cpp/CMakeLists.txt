@@ -61,6 +61,7 @@ add_subdirectory("${RICH4_REPO}" rich4 EXCLUDE_FROM_ALL)
 add_library(main SHARED
   "${RICH4_REPO}/tools/native_game.cpp"
   "${RICH4_REPO}/tools/native_audio.cpp"
+  "${RICH4_REPO}/tools/screens/main_screen.cpp"
   rich4_android.cpp)
 add_dependencies(main libiconv_build)
 target_include_directories(main PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${ICONV_PREFIX}/include")
