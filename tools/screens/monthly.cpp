@@ -168,7 +168,7 @@ void MonthlyScreens::start(Playing &playing) {
         playing.tick_ms = lottery_tick_ms;
         playing.layout = hosts;
         playing.state = 1; // 0x405 with the dialogue option on
-        say(playing, 22, 300, 47, 0, -10, 17, "嗨！\n又到了每月\n十五號樂透\n開獎時間～");
+        say(playing, 22, 300, 47, -10, 0, 17, "嗨！\n又到了每月\n十五號樂透\n開獎時間～");
         break;
     default:
         // Music 10 (fcn_004549cf(9)) is selected by the app's music controller while this screen is up.
@@ -268,7 +268,7 @@ void MonthlyScreens::lottery_tick(Frame &frame, Playing &playing) {
         switch (playing.state) {
         case 1:
             playing.state = 2;
-            say(playing, 22, 300, 47, 0, -10, 18, "現在馬上為您\n開出這一期的\n號碼．．。");
+            say(playing, 22, 300, 47, -10, 0, 18, "現在馬上為您\n開出這一期的\n號碼．．。");
             break;
         case 2: // LT:1482: the cage starts; Effect 57; the host works the cage
             playing.state = 3;
@@ -300,7 +300,7 @@ void MonthlyScreens::lottery_tick(Frame &frame, Playing &playing) {
             const auto number = figures.number;
             if (number >= 1 && number <= 36 && figures.tickets[number - 1] && figures.winner >= 0) {
                 playing.state = 4;
-                say(playing, 22, 300, 47, 0, -10, 19, "本月份的得主\n是．．．。");
+                say(playing, 22, 300, 47, -10, 0, 19, "本月份的得主\n是．．．。");
             } else {
                 playing.state = 70; // LT:2266: blocking 500 ms wait before the SORRY host
                 playing.counter = 0;
@@ -345,7 +345,7 @@ void MonthlyScreens::lottery_tick(Frame &frame, Playing &playing) {
             playing.movie.still = {};
             playing.plate = playing.green = false;
             playing.state = 6;
-            say(playing, 22, 300, 47, 0, -10, 32, "恭喜您獨得\n所有獎金！");
+            say(playing, 22, 300, 47, -10, 0, 32, "恭喜您獨得\n所有獎金！");
             break;
         }
         case 6:
@@ -360,11 +360,11 @@ void MonthlyScreens::lottery_tick(Frame &frame, Playing &playing) {
             playing.layout = hosts;
             playing.eye_patch = playing.mouth_patch = playing.left_patch = -1;
             playing.state = 9;
-            say(playing, 22, 300, 47, 0, -10, 35, "希望下次\n得獎者就\n是您！");
+            say(playing, 22, 300, 47, -10, 0, 35, "希望下次\n得獎者就\n是您！");
             break;
         case 9:
             playing.state = 10;
-            say(playing, 22, 300, 47, 0, -10, 36, "行動要快喔！");
+            say(playing, 22, 300, 47, -10, 0, 36, "行動要快喔！");
             break;
         case 10:
             playing.closing = true; // KillTimer, Post_0402: the show ends by itself
@@ -615,7 +615,7 @@ void MonthlyScreens::report_tick(Frame &frame, Playing &playing) {
             playing.state = 0xF;
             playing.counter = 19;
             playing.lined = false;
-            say(playing, 3, 190, 10, 0, 20, 108, "別灰心，再加油喔！");
+            say(playing, 3, 190, 10, 20, 0, 108, "別灰心，再加油喔！");
             break;
         case 0x10: // spotlight on the champion, name voice #0110+c
             playing.spotlight = figures.champion;
@@ -640,7 +640,7 @@ void MonthlyScreens::report_tick(Frame &frame, Playing &playing) {
         case 0x13:
             playing.state = 0x16;
             playing.counter = 10;
-            say(playing, 4, 213, 37, 0, 20, 122, "其他人還要\n更努力喔！");
+            say(playing, 4, 213, 37, 20, 0, 122, "其他人還要\n更努力喔！");
             break;
         case 0x16: // closes by itself after 1 s, or on a click
             if (--playing.counter <= 0 || playing.skip_wait)
