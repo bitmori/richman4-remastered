@@ -59,6 +59,12 @@ struct Audio {
 // Yes/no prompts (§2.2): buy/upgrade land or facility. Others keep their own dialogs.
 [[nodiscard]] bool is_yes_no(const GameDecision &decision);
 [[nodiscard]] std::string yes_no_question(const GameDecision &decision, const World &world);
+// The decision as the player sees it: options carrying a `subject` show the original name
+// (character, street/facility, company, special actor, placed tool) and the card yes/no
+// prompts get their original "%s" argument. Values and order are unchanged.
+[[nodiscard]] GameDecision localized(const GameDecision &decision, const World &world);
+// Original name of a card/tool target ("" when unknown).
+[[nodiscard]] std::string subject_name(const World &world, const CardTarget &subject);
 // Draws the question box plus the Data.mkf 440 strip; registers YES/NO hits by id.
 void draw_yes_no(Frame &frame, std::string_view question, int yes_id, std::function<void()> yes, int no_id,
                  std::function<void()> no);

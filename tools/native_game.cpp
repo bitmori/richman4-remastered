@@ -1358,7 +1358,8 @@ class Application {
             target_center_ = board::Point{option.location->x, option.location->y};
     }
     void draw_map_decision() {
-        const auto &decision = *session_->pending_decision();
+        // Original names for the targets (messages::localized); values and order are unchanged.
+        const auto decision = messages::localized(*session_->pending_decision(), session_->world());
         ui::fill(canvas_, {440, 0, 640, 480}, ui::paper);
         font_.draw(canvas_, decision.prompt, 449, 16, 16, ui::blue, 181);
         constexpr std::size_t page_size = 8;
@@ -1444,11 +1445,16 @@ class Application {
         }
         if (messages::is_yes_no(decision)) {
             // Original §2.2 question box + Data.mkf 440 strip; ids stay 210+option index.
-            const auto yes = yes_no_index(1), no = yes_no_index(0);
+            // Card prompts (free/frame card) list YES first; their values are not 1/0.
+            const bool card = decision.kind == DecisionKind::card_target;
+            const auto yes = card ? 0 : yes_no_index(1), no = card ? 1 : yes_no_index(0);
             messages::draw_yes_no(frame_, messages::yes_no_question(decision, session_->world()), 210 + int(yes),
                                   [this, yes] { respond(yes); }, 210 + int(no), [this, no] { respond(no); });
             return;
         }
+        return draw_choice_dialog(messages::localized(decision, session_->world()));
+    }
+    void draw_choice_dialog(const GameDecision &decision) {
         constexpr std::size_t page_size = 8;
         const bool multiple = decision.options.size() > 3;
         const int top = multiple ? 52 : 115, bottom = multiple ? 438 : 360;
