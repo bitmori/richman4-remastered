@@ -1,22 +1,23 @@
 # 大富翁 4：原生 C++ 移植
 
-目前已在这台 Apple Silicon Mac 上运行原版 v3.11，以及从 `mytbk/rich4` 重新编译的版本。
-可玩的完整程序目前使用 **Boxedwine 的 x86 模拟 + 32 位 Wine**。原生引擎正在逐模块迁移，尚不能原生完成一局，也还没有可玩的 Android APK。
+Mac ARM64 原生应用现已具备新开局、地图与角色、回合、买地/升级/地租、卡片、道具、股票、存读档和原始音频。包含主动操作的30天原生回放已经通过，Cocoa/Metal隐藏窗口检查也通过；长局结算、全部AI和复杂事件仍在扩大验证。
 
-新 `rich4_core` 使用 C++20，不依赖 Win32、x86 汇编、32 位进程或原版 EXE。已迁移资源、存档、图片绘制、地面 tile、日期、方向、卡片/道具库存、地租及原版随机数；原版机器码仅供独立测试工具生成对照结果。
+双击 **`Play Rich4 Native.command`** 构建并启动原生版本。原版 v3.11 的 Wine 环境保留作参考；Android当前仍是核心测试，没有可玩的APK。
+
+新 `rich4_core` 使用 C++20，不依赖 Win32、x86 汇编、32 位进程或原版 EXE。已迁移资源、世界/存档、场景、回合、事件、卡片/道具效果、股票、商店、拍卖、彩票、假日与原版随机数；原版机器码仅供独立测试工具生成对照结果。
 
 每个模块的来源、原地址、保持的行为、明确修正和验收证据见 [迁移记录](docs/migrations/README.md)。提交直接保存在本地 `main`，不推送、不创建 PR。
 
 ## 编译原生核心与 Mac 查看器
 
 ```sh
-brew install cmake sdl3
+brew install cmake sdl3 freetype fluid-synth
 cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Debug -DRICH4_SANITIZERS=ON
 cmake --build build/native --parallel
 ctest --test-dir build/native --output-on-failure
 ```
 
-没有 SDL3 的环境可加 `-DRICH4_BUILD_VIEWER=OFF`，核心与测试仍可单独编译。
+只编译核心的环境可加 `-DRICH4_BUILD_VIEWER=OFF -DRICH4_BUILD_GAME=OFF`，核心与测试仍可单独编译。
 Mac 资源查看器使用 SDL3，实际程序为 ARM64：
 
 ```sh
@@ -67,7 +68,14 @@ python3 scripts/run_playability.py --target wine --slot 1 --turns 3 --timeout 30
 
 测试在独立的游戏副本和无窗口 Wine 进程中运行，不操作桌面鼠标/键盘。它保留事件、游戏内存快照和原版存档，再用原生 C++ 逐字节回读并交叉核对状态。报告在 `artifacts/playability/`；原有游戏、存档和配置不会被覆盖。
 
-`--target native` 当前会明确返回 3（unavailable）：完整原生主循环尚未实现。此验证不覆盖全部规则或整局通关，详细方法和证据见 [玩法验证记录](docs/migrations/009-playability-hooks.md)。
+原生版本使用同一SDL按钮输入路径，无需桌面自动化：
+
+```sh
+python3 scripts/run_native_playability.py --turns 30 --seed 42
+# 或 python3 scripts/run_playability.py --target native --turns 30
+```
+
+它明确拒绝未实现事件、没有移动、存档/随机状态不一致等情况。前后画面、逐事件/输入记录和原文件保护校验位于 `artifacts/native-playability/`。详细范围见[原生应用记录](docs/migrations/018-native-app.md)；Wine检查见[原版玩法验证](docs/migrations/009-playability-hooks.md)。
 
 ## Android ARM64 核心验证
 
@@ -82,7 +90,9 @@ python3 scripts/test_android_core.py --serial emulator-5554 \
 
 ## 直接玩
 
-双击仓库里的 **`Play Rich4.command`**，运行原版。也可以在终端执行：
+原生版本双击 **`Play Rich4 Native.command`**，或执行 `./scripts/run_native_mac.sh`。新存档在 `~/Library/Application Support/Rich4Native/saves`，不会覆盖原版。空格/Enter掷骰，F5保存，F9读档；顶部按钮可用卡片、道具、股票等功能。
+
+原版参考程序仍可双击 **`Play Rich4.command`**。也可以在终端执行：
 
 ```sh
 ./scripts/run_mac.sh rich4.exe
@@ -147,7 +157,7 @@ Boxedwine 官方 Mac 应用启用了沙盒，因此游戏、字体、Wine 文件
 ## 后续原生化
 
 上游并非已完成的跨平台引擎：构建仍使用 101 个 x86 汇编文件（157,977 行）、16 个 C 文件（3,185 行），
-并依赖 Win32、DirectDraw、DirectSound、WinMM。新核心已经独立于这些依赖；完整游戏状态机、地图相机/物件层、AI、卡片效果、文字、音频和视频仍需继续迁移。
+并依赖 Win32、DirectDraw、DirectSound、WinMM。新核心与SDL3应用已经独立于这些依赖。迁移的规则、原地址、差分证据、保留的历史缺陷和未验证范围，逐项保存在 `docs/migrations/`；过场视频和Android应用层尚需后续完成。
 
 下一步以原版可重复输入和逐步状态快照驱动第一个完整原生回合，随后覆盖全部地图与规则。进一步路线与源码入口见 [移植调查](docs/porting.md)。
 
