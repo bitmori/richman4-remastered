@@ -105,6 +105,7 @@ struct Options {
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
     bool start_loaded = false;      // dev: open --load straight into play (no menu) in real time
+    std::optional<SaveDate> start_date; // --date YYYY-MM-DD for new games (replays default to 2026-10-05)
     int minigame = -1;              // MINIGAMES (dev): --minigame penguin|balloon|catch plays one directly
     unsigned auto_rounds = 0;
     unsigned map = 0;
@@ -169,6 +170,12 @@ Options arguments(int argc, char **argv) {
                 options.auto_rounds = static_cast<unsigned>(std::stoul(value));
             else if (argument == "--seed")
                 options.seed = static_cast<std::uint32_t>(std::stoul(value));
+            else if (argument == "--date") { // YYYY-MM-DD
+                const auto year = std::stoi(value.substr(0, 4)), month = std::stoi(value.substr(5, 2)),
+                           day = std::stoi(value.substr(8, 2));
+                options.start_date = SaveDate{static_cast<std::uint8_t>(day), static_cast<std::uint8_t>(month),
+                                              static_cast<std::uint16_t>(year)};
+            }
             else if (argument == "--map")
                 options.map = static_cast<unsigned>(std::stoul(value));
             else if (argument == "--exercise-card")
@@ -911,6 +918,12 @@ class Application {
         configuration.date = {static_cast<std::uint8_t>(local.tm_mday),
                               static_cast<std::uint8_t>(local.tm_mon + 1),
                               static_cast<std::uint16_t>(local.tm_year + 1900)};
+        // Holidays, monthly events and card coverage depend on the start date, so automated runs use
+        // a fixed one (--date, default 2026-10-05) to stay reproducible from day to day.
+        if (options_.start_date)
+            configuration.date = *options_.start_date;
+        else if (options_.auto_rounds)
+            configuration.date = {5, 10, 2026};
         selected_map_ = choice.map;
         selected_stage_ = choice.stage;
         audio_->select_music(1); // AUDIO: a new game starts the board playlist at RICH08 (rich4.asm:7259)
