@@ -20,6 +20,8 @@ endif()
 
 add_executable(rich4-tool tools/rich4_tool.cpp)
 target_link_libraries(rich4-tool PRIVATE rich4_core)
+add_executable(rich4-state-check tools/playability/native_state_check.cpp)
+target_link_libraries(rich4-state-check PRIVATE rich4_core)
 
 if(RICH4_BUILD_VIEWER)
   find_package(SDL3 3.2 CONFIG REQUIRED)
@@ -46,6 +48,9 @@ if(BUILD_TESTING)
   if(Python3_Interpreter_FOUND)
     add_test(NAME oracle_manifest_tests
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/oracle_manifest_tests.py)
+    add_test(NAME playability_state_tests
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/playability_state_tests.py
+        $<TARGET_FILE:rich4-state-check>)
   endif()
   if(RICH4_ORACLE_DIR)
     if(NOT Python3_Interpreter_FOUND)
