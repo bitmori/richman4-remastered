@@ -3,8 +3,11 @@
 #include "native_frame.hpp"
 #include "native_stock_names.hpp"
 #include "native_ui.hpp"
+#include "screens/finance.hpp"
+#include "screens/menus.hpp"
 #include "rich4/assets.hpp"
 #include "rich4/board_renderer.hpp"
+#include "rich4/calendar.hpp"
 #include "rich4/game.hpp"
 #include "rich4/services.hpp"
 #include "rich4/stocks.hpp"
@@ -36,6 +39,7 @@ using native::Artwork;
 using native::Button;
 using native::map_names;
 using native::names;
+namespace screens = native::screens;
 
 void require(bool success) {
     if (!success)
@@ -59,6 +63,7 @@ struct Options {
     fs::path assets, font, load, save_directory, output;
     bool headless = false, start_new = false, hidden_window = false, exercise_recovery = false;
     bool exercise_trading = false;
+    fs::path gallery; // dev: render every original-style screen to DIR and exit
     unsigned auto_rounds = 0;
     unsigned map = 0;
     unsigned exercise_card = 0, exercise_tool = 0;
@@ -112,6 +117,8 @@ Options arguments(int argc, char **argv) {
                 options.exercise_card = static_cast<unsigned>(std::stoul(value));
             else if (argument == "--exercise-tool")
                 options.exercise_tool = static_cast<unsigned>(std::stoul(value));
+            else if (argument == "--gallery")
+                options.gallery = value;
             else
                 throw std::invalid_argument("Unknown argument: " + argument);
         }
@@ -122,7 +129,11 @@ Options arguments(int argc, char **argv) {
         throw std::invalid_argument("Map must be 0..7");
     if (options.exercise_card > 30 || options.exercise_tool > 13)
         throw std::invalid_argument("Invalid requested interaction ID");
-    if (options.headless && options.output.empty())
+    if (!options.gallery.empty()) {
+        options.headless = true;
+        options.gallery = fs::absolute(options.gallery);
+    }
+    if (options.headless && options.output.empty() && options.gallery.empty())
         throw std::invalid_argument("Headless testing requires --output DIR");
     if (options.font.empty()) {
         const std::array candidates{
@@ -144,7 +155,8 @@ Options arguments(int argc, char **argv) {
     return options;
 }
 
-enum class Screen { menu, new_game, game, settings, wealth, cards, tools, stocks, trading };
+// Append only: the values are logged in inputs.jsonl and name the screen-N.ppm captures.
+enum class Screen { menu, new_game, game, settings, wealth, cards, tools, stocks, trading, load, save };
 
 class Application {
   public:
@@ -212,6 +224,8 @@ class Application {
     }
 
     int run() {
+        if (!options_.gallery.empty())
+            return gallery();
         auto last_tick = SDL_GetTicks();
         for (unsigned iteration = 0; running_; ++iteration) {
             draw();
@@ -242,6 +256,11 @@ class Application {
                     if (!motion)
                         frame_.pointer_down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
                 }
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_RIGHT &&
+                    cancellable()) {
+                    buttons_.clear();
+                    cancel_screen(); // The original's right-button-up means cancel/back on these screens.
+                }
                 if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
                     const int x = int(event.button.x), y = int(event.button.y);
                     for (const auto &button : buttons_)
@@ -252,7 +271,7 @@ class Application {
                                 inputs_ << "{\"button\":" << button.id << ",\"screen\":" << int(screen_)
                                         << ",\"day\":" << (session_ ? session_->completed_days() : 0)
                                         << "}\n";
-                            if (sound_effects_)
+                            if (sound_effects_ && button.click_sound)
                                 audio_->play_sound(9);
                             buttons_.clear(); // Remaining events cannot invoke controls from the previous
                                               // screen/decision.
@@ -266,6 +285,14 @@ class Application {
 #endif
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
                     buttons_.clear();
+                    if (pad_.active()) {
+                        pad_key(event.key.key);
+                        continue;
+                    }
+                    if (event.key.key == SDLK_ESCAPE && cancellable()) {
+                        cancel_screen();
+                        continue;
+                    }
                     if (editing_amount_) {
                         if (event.key.key == SDLK_BACKSPACE) {
                             if (!amount_text_.empty())
@@ -363,6 +390,172 @@ class Application {
     void dialog(graphics::Rect rect, std::string_view title) {
         frame_.dialog(rect, title);
     }
+    // ---- Original-style menu and finance screens (tools/screens) ----
+    screens::Host make_host() {
+        return {frame_,
+                [this](int effect) {
+                    if (sound_effects_ && effect >= 0)
+                        audio_->play_sound(std::size_t(effect));
+                },
+                [this](std::string_view message) {
+                    toast_ = message;
+                    toast_until_ = SDL_GetTicks() + 2200;
+                },
+                options_.auto_rounds != 0 || !options_.gallery.empty()};
+    }
+    void pad_key(SDL_Keycode key) {
+        auto host = make_host();
+        if (key == SDLK_ESCAPE)
+            pad_.cancel(host);
+        else if (key >= SDLK_0 && key <= SDLK_9)
+            pad_.key(host, char('0' + (key - SDLK_0)));
+        else if (key >= SDLK_KP_1 && key <= SDLK_KP_9)
+            pad_.key(host, char('1' + (key - SDLK_KP_1)));
+        else if (key == SDLK_KP_0)
+            pad_.key(host, '0');
+        else if (key == SDLK_BACKSPACE)
+            pad_.key(host, '\b');
+        else if (key == SDLK_RETURN || key == SDLK_KP_ENTER)
+            pad_.key(host, '\r');
+        else if (key == SDLK_M || key == SDLK_C || key == SDLK_H)
+            pad_.key(host, key == SDLK_M ? 'M' : key == SDLK_C ? 'C' : 'H');
+    }
+    bool bank_pending() const {
+        return session_ && session_->pending_decision() &&
+               session_->pending_decision()->kind == DecisionKind::bank;
+    }
+    // Screens where right-click / Escape / Android Back mean "cancel" in the original.
+    bool cancellable() const {
+        return pad_.active() || screen_ == Screen::new_game || screen_ == Screen::settings ||
+               screen_ == Screen::wealth || screen_ == Screen::stocks || screen_ == Screen::load ||
+               screen_ == Screen::save || (screen_ == Screen::game && bank_pending());
+    }
+    void cancel_screen() {
+        auto host = make_host();
+        if (pad_.active()) {
+            pad_.cancel(host);
+            return;
+        }
+        switch (screen_) {
+        case Screen::stocks:
+            stock_market_.cancel(host, stock_actions());
+            break;
+        case Screen::new_game:
+            setup_.cancel(host, [this] { screen_ = Screen::menu; });
+            break;
+        case Screen::settings:
+        case Screen::load:
+        case Screen::save:
+        case Screen::wealth:
+            host.sound(screens::cancel_sound);
+            screen_ = back_screen();
+            break;
+        case Screen::game:
+            if (bank_pending())
+                bank_screen_.cancel(host, *session_->pending_decision(), bank_actions());
+            break;
+        default:
+            break;
+        }
+    }
+    // Where settings / save / load / player info return to: the menu they came from, else the game.
+    Screen back_screen() const {
+        return session_ && previous_screen_ != Screen::menu ? Screen::game : Screen::menu;
+    }
+    // Answers the pending decision with the option whose value is `value`.
+    bool respond_value(std::int32_t value, std::int32_t amount) {
+        const auto &decision = session_->pending_decision();
+        if (!decision)
+            return false;
+        for (std::size_t index = 0; index < decision->options.size(); ++index)
+            if (decision->options[index].value == value) {
+                bank_amount_ = amount;
+                const bool success = session_->respond(index, amount);
+                observe();
+                return success;
+            }
+        return false;
+    }
+    screens::BankActions bank_actions() {
+        return {[this](std::int32_t value, std::int32_t amount) { return respond_value(value, amount); }};
+    }
+    screens::StockActions stock_actions() {
+        return {[this](std::size_t stock, std::int32_t quantity) {
+                    selected_stock_ = stock;
+                    return trade(true, quantity);
+                },
+                [this](std::size_t stock, std::int32_t quantity) {
+                    selected_stock_ = stock;
+                    return trade(false, quantity);
+                },
+                [this] { close_stocks(); }};
+    }
+    // Save slots: 0 is the automatic save (load only, shown as AUTO), 1..5 are manual.
+    fs::path slot_path(int slot) const {
+        return options_.save_directory / (slot == 0 ? std::string("Autosave.DAT") : "Save" + std::to_string(slot) + ".DAT");
+    }
+    std::array<screens::SaveSlot, 6> read_slots() const {
+        std::array<screens::SaveSlot, 6> slots{};
+        for (int slot = 0; slot < 6; ++slot) {
+            try {
+                if (!fs::exists(slot_path(slot)))
+                    continue;
+                const auto save = SaveFile::decode(ui::read_file(slot_path(slot)));
+                const auto header = save.header();
+                if (header.signature != 0x26)
+                    continue;
+                auto &entry = slots[std::size_t(slot)];
+                entry.valid = true;
+                entry.date = header.date;
+                entry.map = header.map_id;
+                entry.stage = header.stage_id;
+                for (std::size_t player = 0; player < std::min<std::uint32_t>(header.player_count, 4); ++player)
+                    entry.characters.push_back(save.player(player).character);
+            } catch (const std::exception &) {
+            }
+        }
+        return slots;
+    }
+    bool any_slot() const {
+        for (int slot = 0; slot < 6; ++slot)
+            if (fs::exists(slot_path(slot)))
+                return true;
+        return false;
+    }
+    void open_load() {
+        if (!options_.load.empty()) { // An imported DAT (or the replay's --load) loads directly.
+            load(options_.load);
+            return;
+        }
+        const auto slots = read_slots();
+        if (std::none_of(slots.begin(), slots.end(), [](const auto &slot) { return slot.valid; })) {
+            toast_ = "沒有存檔";
+            toast_until_ = SDL_GetTicks() + 2200;
+            return;
+        }
+        slots_.open(false, slots);
+        screen_ = Screen::load;
+    }
+    void open_save() {
+        if (!session_ || !session_->can_save())
+            return;
+        slots_.open(true, read_slots());
+        screen_ = Screen::save;
+    }
+    void choose_slot(int slot) {
+        if (slots_.saving()) {
+            write_save(slot_path(slot));
+            options_.load.clear();
+            ++saves_;
+            toast_ = "存檔完成";
+            toast_until_ = SDL_GetTicks() + 2200;
+            screen_ = Screen::game;
+            return;
+        }
+        const auto previous = back_screen();
+        if (!load(slot_path(slot)))
+            screen_ = previous;
+    }
     void notify_action(bool success, std::string_view failure = "目前無法使用") {
         if (!success) {
             toast_ = failure;
@@ -413,18 +606,29 @@ class Application {
     fs::path load_path() const {
         if (!options_.load.empty())
             return options_.load;
-        // Continue from whichever slot is newer: Android backgrounding writes only the autosave.
-        const auto automatic = options_.save_directory / "Autosave.DAT";
-        if (fs::exists(save_path()) && fs::exists(automatic))
-            return fs::last_write_time(automatic) > fs::last_write_time(save_path()) ? automatic : save_path();
-        return fs::exists(automatic) ? automatic : save_path();
+        // Continue from whichever slot is newest: Android backgrounding writes only the autosave.
+        auto newest = save_path();
+        for (int slot = 0; slot <= 5; ++slot) {
+            const auto candidate = slot_path(slot);
+            if (fs::exists(candidate) &&
+                (!fs::exists(newest) || fs::last_write_time(candidate) > fs::last_write_time(newest)))
+                newest = candidate;
+        }
+        return newest;
     }
     void rotate(unsigned increment) {
         rotation_ = (rotation_ + increment) % 8;
         if (session_)
             session_->set_camera_rotation(static_cast<std::uint8_t>(rotation_));
     }
-    void new_game() {
+    void open_setup(unsigned stage) {
+        setup_.open(stage, stage == selected_stage_ ? selected_map_ : 0, options_.seed);
+        screen_ = Screen::new_game;
+    }
+    // Picked characters are humans in click order, the auto-filled rest are computers
+    // (rich4_new_game.asm). The original picks computers with the gameplay rand(); the
+    // native setup uses its own generator seeded from --seed instead.
+    void new_game(const screens::NewGameChoice &choice) {
         options_.load.clear();
         NewGameOptions configuration;
         const auto time = std::time(nullptr);
@@ -432,20 +636,25 @@ class Application {
         configuration.date = {static_cast<std::uint8_t>(local.tm_mday),
                               static_cast<std::uint8_t>(local.tm_mon + 1),
                               static_cast<std::uint16_t>(local.tm_year + 1900)};
-        configuration.map_id = static_cast<std::uint16_t>(selected_map_);
-        configuration.stage_id = static_cast<std::uint16_t>(selected_stage_);
+        selected_map_ = choice.map;
+        selected_stage_ = choice.stage;
+        configuration.map_id = static_cast<std::uint16_t>(choice.map);
+        configuration.stage_id = static_cast<std::uint16_t>(choice.stage);
+        configuration.initial_fund = choice.fund;
+        configuration.lease_mode = choice.lease_mode;
         configuration.random_seed = options_.seed;
-        configuration.players[0].character = static_cast<std::uint8_t>(selected_character_);
-        unsigned candidate = 0;
-        for (std::size_t slot = 1; slot < configuration.players.size(); ++slot) {
-            while (candidate == selected_character_)
-                ++candidate;
-            configuration.players[slot].character = static_cast<std::uint8_t>(candidate++);
+        configuration.players = choice.players;
+        try {
+            install_session(World::from_map_resource(
+                                artwork_.archive('m').decode((choice.stage * 4 + choice.map) * 2 + 1), configuration),
+                            options_.seed);
+        } catch (const std::exception &error) {
+            std::cerr << "New game failed: " << error.what() << '\n';
+            toast_ = "無法開始新遊戲";
+            toast_until_ = SDL_GetTicks() + 3500;
+            screen_ = Screen::menu;
+            return;
         }
-        install_session(
-            World::from_map_resource(artwork_.archive('m').decode((selected_stage_ * 4 + selected_map_) * 2 + 1),
-                                     configuration),
-            options_.seed);
         ++new_games_;
     }
     void install_session(World world, std::uint32_t seed) {
@@ -563,74 +772,76 @@ class Application {
         buttons_.clear();
         canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
         frame_.ticks = SDL_GetTicks();
-        if (screen_ == Screen::menu || screen_ == Screen::new_game ||
-            (screen_ == Screen::settings && !session_)) {
-            picture(artwork_.frame('d', 1, 0), 0, 0);
-        } else if (session_)
+        if (screen_ != last_screen_) {
+            // Screens may be entered from anywhere (menu, toolbar, keys): (re)initialise on entry.
+            previous_screen_ = last_screen_;
+            last_screen_ = screen_;
+            pad_.close();
+            if (screen_ == Screen::settings)
+                options_screen_.open({speed_, audio_->music_enabled(), sound_effects_}, session_ != nullptr);
+            if (screen_ == Screen::wealth && session_)
+                info_.open(session_->world().header.current_player);
+        }
+        if (!bank_pending())
+            bank_screen_.reset();
+        auto host = make_host();
+        const bool menu_backdrop = screen_ == Screen::menu || ((screen_ == Screen::settings || screen_ == Screen::load) &&
+                                                               previous_screen_ == Screen::menu) ||
+                                   !session_;
+        if (menu_backdrop && screen_ != Screen::new_game) {
+            if (screen_ != Screen::menu)
+                picture(artwork_.frame('d', 1, 0), 0, 0);
+        } else if (session_ && screen_ != Screen::new_game)
             draw_board();
         if (screen_ == Screen::menu) {
-            hit(1, {125, 320, 255, 440}, [this] { screen_ = session_ ? Screen::game : Screen::new_game; });
-            hit(2, {270, 320, 400, 440}, [this] { load(load_path()); }, fs::exists(load_path()));
-            hit(3, {420, 320, 530, 440}, [this] { screen_ = Screen::settings; });
-            hit(4, {15, 325, 105, 440}, [this] { screen_ = Screen::new_game; });
+            main_menu_.draw(host, {[this] {
+                                       if (session_ && session_->phase() != GamePhase::finished)
+                                           screen_ = Screen::game;
+                                       else
+                                           open_setup(0);
+                                   },
+                                   [this] { open_load(); },
+                                   [this] { screen_ = Screen::settings; },
+                                   [this] { running_ = false; },
+                                   [this] { open_setup(1); },
+                                   fs::exists(load_path()) || any_slot()});
         } else if (screen_ == Screen::new_game) {
-            dialog({92, 65, 548, 417}, "開始新遊戲");
-            font_.draw(canvas_, "選擇角色", 116, 118, 16);
-            for (unsigned index = 0; index < 12; ++index) {
-                const int x = 114 + int(index % 4) * 104, y = 150 + int(index / 4) * 41;
-                button(10 + int(index), {x, y, x + 96, y + 33}, names[index],
-                       [this, index] { selected_character_ = index; });
-                if (index == selected_character_)
-                    ui::border(canvas_, {x + 2, y + 2, x + 94, y + 31}, ui::blue);
-            }
-            font_.draw(canvas_, "地圖", 116, 285);
-            for (unsigned index = 0; index < 4; ++index) {
-                const int x = 175 + int(index) * 83;
-                button(30 + int(index), {x, 280, x + 75, 312}, map_names[index],
-                       [this, index] { selected_map_ = index; });
-                if (index == selected_map_)
-                    ui::border(canvas_, {x + 2, 282, x + 73, 310}, ui::blue);
-            }
-            button(42, {114, 320, 522, 345}, selected_stage_ ? "地圖版本：第二組" : "地圖版本：第一組",
-                   [this] { selected_stage_ ^= 1; });
-            button(40, {160, 350, 290, 391}, "開始", [this] { new_game(); });
-            button(41, {345, 350, 475, 391}, "返回", [this] { screen_ = Screen::menu; });
+            setup_.draw(host, [this](const screens::NewGameChoice &choice) { new_game(choice); },
+                        [this] { screen_ = Screen::menu; });
         } else if (screen_ == Screen::settings) {
             buttons_.clear();
-            dialog({150, 85, 490, 415}, "設定");
-            font_.draw(canvas_, "遊戲速度", 175, 142);
-            button(50, {290, 132, 450, 169},
-                   speed_ == 1   ? "正常"
-                   : speed_ == 2 ? "快速"
-                                 : "最快",
-                   [this] { speed_ = speed_ == 4 ? 1 : speed_ * 2; });
-            button(53, {175, 190, 465, 227}, audio_->music_enabled() ? "背景音樂：開" : "背景音樂：關",
-                   [this] { audio_->set_music(!audio_->music_enabled()); });
-            button(54, {175, 241, 465, 278}, sound_effects_ ? "音效與語音：開" : "音效與語音：關",
-                   [this] { sound_effects_ = !sound_effects_; });
-            button(51, {195, 292, 445, 329}, "切換全螢幕", [this] {
-                fullscreen_ = !fullscreen_;
-                require(SDL_SetWindowFullscreen(window_.get(), fullscreen_));
-            });
-            button(52, {235, 355, 405, 395}, "返回",
-                   [this] { screen_ = session_ ? Screen::game : Screen::menu; });
+            options_screen_.draw(
+                host, {[this](const screens::OptionsState &state) {
+                           speed_ = state.speed;
+                           if (audio_->music_enabled() != state.music)
+                               audio_->set_music(state.music);
+                           sound_effects_ = state.sound;
+                       },
+                       [this] { screen_ = back_screen(); },
+                       [this](unsigned track) {
+                           if (!audio_->music_enabled())
+                               audio_->set_music(true);
+                           audio_->select_music(track);
+                       },
+                       audio_->music_enabled() ? audio_->music_track() : 0,
+                       [this] { open_setup(selected_stage_); },
+                       [this] { running_ = false; }});
+        } else if (screen_ == Screen::load || screen_ == Screen::save) {
+            buttons_.clear();
+            slots_.draw(host, [this](int slot) { choose_slot(slot); }, [this] { screen_ = back_screen(); });
         } else if (screen_ == Screen::wealth) {
             buttons_.clear();
-            dialog({65, 75, 575, 425}, "玩家財產");
-            int y = 128;
-            for (const auto &player : session_->world().players) {
-                font_.draw(canvas_, names.at(player.state.character), 90, y, 18);
-                font_.draw(canvas_, "現金 " + ui::money(player.state.cash), 235, y, 16);
-                font_.draw(canvas_, "存款 " + ui::money(player.state.bank_balance), 235, y + 23, 16);
-                y += 58;
-            }
-            button(60, {230, 375, 410, 407}, "返回", [this] { screen_ = Screen::game; });
+            info_.draw(host, session_->world(), [this] { screen_ = Screen::game; });
         } else if (screen_ == Screen::cards || screen_ == Screen::tools) {
             draw_inventory();
         } else if (screen_ == Screen::stocks) {
             draw_stocks();
         } else if (screen_ == Screen::trading) {
             draw_trading();
+        }
+        if (pad_.active()) { // The number pad is modal over every screen.
+            buttons_.clear();
+            pad_.draw(host);
         }
         if (!toast_.empty() && SDL_GetTicks() < toast_until_) {
             ui::fill(canvas_, {210, 439, 430, 474}, ui::paper);
@@ -648,7 +859,11 @@ class Application {
             auto key = "screen-" + std::to_string(static_cast<int>(screen_));
             if (screen_ == Screen::game && session_ && session_->pending_decision())
                 key = "decision-" + std::to_string(static_cast<int>(session_->pending_decision()->kind)) +
-                      (selected_target_ ? "-selected" : "");
+                      (selected_target_ ? "-selected" : "") +
+                      (bank_pending() ? bank_screen_.at_atm() ? "-atm" : bank_screen_.at_desk() ? "-desk" : "-director"
+                                      : "");
+            if (pad_.active())
+                key += "-pad";
             if (captured_frames_.insert(key).second)
                 graphics::write_ppm(canvas_, options_.output / (key + ".ppm"));
         }
@@ -744,8 +959,8 @@ class Application {
             const std::array labels{"選單", "存檔", "讀檔", "左轉", "右轉", "財產",
                                     "設定", "卡片", "道具", "股票", "買賣"};
             const std::array<std::function<void()>, 11> actions{[this] { screen_ = Screen::menu; },
-                                                                [this] { save(); },
-                                                                [this] { load(load_path()); },
+                                                                [this] { open_save(); },
+                                                                [this] { open_load(); },
                                                                 [this] { rotate(7); },
                                                                 [this] { rotate(1); },
                                                                 [this] { screen_ = Screen::wealth; },
@@ -871,55 +1086,17 @@ class Application {
     }
     void draw_stocks() {
         buttons_.clear();
-        const auto &world = session_->world();
-        const auto &player = world.active_player();
-        const auto name_offset = std::size_t(world.header.stage_id * 4 + world.header.map_id) * 12;
-        dialog({35, 45, 605, 474}, "股票");
-        font_.draw(canvas_, "存款 " + ui::money(player.state.bank_balance), 320, 64, 16);
-        font_.draw(canvas_, "公司                    現價          漲跌          持有", 60, 99, 14);
-        for (std::size_t index = 0; index < world.stocks.size(); ++index) {
-            const int y = 124 + int(index) * 20;
-            const auto &stock = world.stocks[index];
-            const float price = std::bit_cast<float>(stock.float_bits[2]);
-            const float movement = std::bit_cast<float>(stock.float_bits[4]);
-            std::ostringstream quote, change;
-            quote << std::fixed << std::setprecision(2) << price;
-            change << std::showpos << std::fixed << std::setprecision(1) << movement << '%';
-            if (selected_stock_ == index)
-                ui::fill(canvas_, {52, y - 2, 587, y + 18}, ui::color(226, 206, 154));
-            font_.draw(canvas_, native_stock_names.at(name_offset + index), 62, y, 14);
-            font_.draw(canvas_, quote.str(), 268, y, 14);
-            font_.draw(canvas_, stock.suspension_days ? "停牌" : change.str(), 385, y, 14,
-                       movement > 0   ? ui::color(175, 35, 20)
-                       : movement < 0 ? ui::color(20, 113, 50)
-                                      : ui::ink);
-            font_.draw(canvas_, std::to_string(player.stocks[index].amount), 505, y, 14);
-            hit(400 + int(index), {52, y - 2, 587, y + 18}, [this, index] {
-                end_amount_edit();
-                selected_stock_ = index;
-            });
-        }
-        font_.draw(canvas_, "股數", 58, 378, 14);
-        const auto &selected = world.stocks.at(selected_stock_);
-        const float quote = std::bit_cast<float>(selected.float_bits[2]);
-        const auto buy_max = std::min<std::int32_t>(
-            selected.flags_10, quote > 0 ? static_cast<std::int32_t>(std::min<double>(
-                                               INT32_MAX, player.state.bank_balance / double(quote)))
-                                         : 0);
-        const auto sell_max = player.stocks.at(selected_stock_).amount;
-        amount_control(stock_amount_, std::max(buy_max, sell_max), 100, 370);
-        button(430, {55, 420, 153, 456}, "買入", [this] { trade(true, stock_amount_); });
-        button(431, {163, 420, 261, 456}, "賣出", [this] { trade(false, stock_amount_); });
-        button(432, {271, 420, 369, 456}, "全買", [this, buy_max] { trade(true, buy_max); });
-        button(433, {379, 420, 477, 456}, "全賣", [this, sell_max] { trade(false, sell_max); });
-        button(60, {487, 420, 585, 456}, "返回", [this] { close_stocks(); });
+        auto host = make_host();
+        stock_market_.draw(host, session_->world(), session_->world().header.current_player, pad_, stock_actions());
     }
     void close_stocks() {
         end_amount_edit();
+        pad_.close();
+        stock_market_.reset();
         screen_ = Screen::game;
         notify_action(session_->close_stock_market(), "目前無法完成股市結算");
     }
-    void trade(bool buy, std::int32_t quantity) {
+    bool trade(bool buy, std::int32_t quantity) {
         end_amount_edit();
         const bool success = buy ? session_->buy_stock(selected_stock_, quantity)
                                  : session_->sell_stock(selected_stock_, quantity);
@@ -930,6 +1107,7 @@ class Application {
                 ++stocks_sold_;
         }
         notify_action(success, "休市、限價或可交易數量不足");
+        return success;
     }
     std::string offer_name(OfferKind kind, std::uint16_t item) const {
         const auto &world = session_->world();
@@ -1058,6 +1236,7 @@ class Application {
         if (decision_key_ == key)
             return;
         end_amount_edit();
+        pad_.close(); // a number pad never outlives the decision it was opened for
         decision_key_ = std::move(key);
         decision_page_ = 0;
         selected_target_.reset();
@@ -1143,6 +1322,16 @@ class Application {
     void draw_decision() {
         buttons_.clear(); // A modal must never activate covered board controls.
         const auto &decision = *session_->pending_decision();
+        if (decision.kind == DecisionKind::bank) {
+            auto host = make_host();
+            bank_screen_.draw(host, session_->world(), decision, pad_, bank_actions());
+            return;
+        }
+        if (decision.kind == DecisionKind::primary_stock) {
+            auto host = make_host();
+            screens::draw_primary_stock(host, decision, pad_, bank_actions());
+            return;
+        }
         if (map_decision()) {
             draw_map_decision();
             return;
@@ -1150,25 +1339,9 @@ class Application {
         constexpr std::size_t page_size = 8;
         const bool multiple = decision.options.size() > 3;
         const int top = multiple ? 52 : 115, bottom = multiple ? 438 : 360;
-        dialog({72, top, 570, bottom}, decision.kind == DecisionKind::bank ? "銀行" : "請選擇");
+        dialog({72, top, 570, bottom}, "請選擇");
         font_.draw(canvas_, decision.prompt, 97, top + 50, 18, ui::ink, 448);
-        if (decision.kind == DecisionKind::bank || decision.kind == DecisionKind::primary_stock) {
-            const bool primary = decision.kind == DecisionKind::primary_stock;
-            const auto &player = session_->world().players.at(decision.player).state;
-            const auto maximum = primary ? decision.max_amount
-                                         : std::max({player.cash, player.bank_balance, player.loan, 1000000});
-            amount_control(bank_amount_, maximum, primary ? 100 : 1000, multiple ? 160 : 220, primary);
-            if (!primary && multiple) {
-                button(207, {93, 346, 313, 378}, "填入全部現金", [this, amount = player.cash] {
-                    end_amount_edit();
-                    bank_amount_ = amount;
-                });
-                button(208, {325, 346, 545, 378}, "填入全部存款", [this, amount = player.bank_balance] {
-                    end_amount_edit();
-                    bank_amount_ = amount;
-                });
-            }
-        } else if (decision.kind == DecisionKind::shop || decision.kind == DecisionKind::rescue)
+        if (decision.kind == DecisionKind::shop || decision.kind == DecisionKind::rescue)
             font_.draw(canvas_,
                        "可用點數 " +
                            std::to_string(session_->world().players.at(decision.player).state.points),
@@ -1232,12 +1405,27 @@ class Application {
     }
     void drive_test() {
         if (test_stage_ == 0) {
-            push_button(options_.start_new || options_.load.empty() ? 1 : 2);
+            push_button(options_.start_new || options_.load.empty()
+                            ? (selected_stage_ ? screens::ids::menu_new_stage : screens::ids::menu_start)
+                            : screens::ids::menu_load);
             test_stage_ = 1;
             return;
         }
         if (screen_ == Screen::new_game) {
-            push_button(40);
+            if (setup_.map() != selected_map_)
+                push_button(screens::ids::setup_map + int(selected_map_));
+            else if (setup_.picks().empty())
+                push_button(screens::ids::setup_character + int(selected_character_));
+            else
+                push_button(screens::ids::setup_ok);
+            return;
+        }
+        if (screen_ == Screen::save) {
+            push_button(screens::ids::save_slot + 1);
+            return;
+        }
+        if (screen_ == Screen::load) {
+            push_button(screens::ids::load_slot + 1);
             return;
         }
         if (!session_) {
@@ -1273,13 +1461,22 @@ class Application {
             test_progress_.clear();
             test_unchanged_frames_ = 0;
         }
+        if (pad_.active()) {
+            // Type the amount on the number pad, one key per frame, then Enter.
+            std::int32_t target = 1;
+            if (const auto &decision = session_->pending_decision())
+                target = decision->kind == DecisionKind::primary_stock ? std::min(100, decision->max_amount) : 1000;
+            push_button(pad_.next_key_towards(target));
+            return;
+        }
         if (screen_ == Screen::cards || screen_ == Screen::tools) {
             push_button(300 + int(test_inventory_id_));
             return;
         }
         if (screen_ == Screen::stocks) {
-            stock_amount_ = 1;
-            if (test_stock_stage_ == 1) {
+            if (screens::market_closed(session_->world()))
+                push_button(screens::ids::stock_exit);
+            else if (test_stock_stage_ == 1) {
                 push_button(430);
                 ++test_stock_stage_;
             } else if (test_stock_stage_ == 2) {
@@ -1420,7 +1617,7 @@ class Application {
                 return;
             }
             if (test_stock_stage_ == 0) {
-                selected_stock_ = 7;
+                stock_market_.selected = 7;
                 test_stock_stage_ = 1;
                 push_button(79);
                 return;
@@ -1471,19 +1668,24 @@ class Application {
         } else if (const auto &decision = session_->pending_decision()) {
             std::size_t choice = 0;
             if (decision->kind == DecisionKind::bank) {
-                if (bank_done_for_visit_) {
-                    for (std::size_t index = 0; index < decision->options.size(); ++index)
-                        if (!decision->options[index].value)
-                            choice = index;
-                } else {
-                    bank_amount_ = 1000;
-                    const auto &player = session_->world().active_player().state;
-                    if (player.cash < bank_amount_)
-                        for (std::size_t index = 0; index < decision->options.size(); ++index)
-                            if (decision->options[index].value == 0)
-                                choice = index;
-                    bank_done_for_visit_ = true;
-                }
+                // ATM: deposit 1000 once per visit by typing on the ATM keys, then the loan desk's EXIT.
+                const auto &player = session_->world().active_player().state;
+                if (bank_screen_.at_atm()) {
+                    if (bank_done_for_visit_ || player.cash < 1000) {
+                        bank_done_for_visit_ = true;
+                        push_button(screens::ids::atm_exit);
+                    } else if (bank_screen_.atm_mode() != 1)
+                        push_button(screens::ids::atm_deposit);
+                    else if (const auto &digits = bank_screen_.atm_digits(); digits == "1000") {
+                        bank_done_for_visit_ = true;
+                        push_button(screens::ids::atm_enter);
+                    } else
+                        push_button(digits == "0"                      ? screens::ids::atm_digit(1)
+                                    : std::string("1000").starts_with(digits) ? screens::ids::atm_digit(0)
+                                                                              : screens::ids::atm_clear);
+                } else
+                    push_button(bank_screen_.at_director() ? screens::ids::director_exit : screens::ids::desk_exit);
+                return;
             } else if (decision->kind == DecisionKind::shop) {
                 const auto &player = session_->world().players.at(decision->player).state;
                 for (std::size_t i = 0; i < decision->options.size(); ++i)
@@ -1536,6 +1738,164 @@ class Application {
             }
         } else if (session_->phase() == GamePhase::finished)
             throw std::runtime_error("Match ended before the requested replay duration");
+    }
+    // Dev tool (--gallery DIR): renders each original-style menu/finance screen, including
+    // decisions that only occur mid-game (bank, primary shares), for visual review.
+    bool press(int id, const std::function<void()> &redraw = {}) {
+        if (redraw)
+            redraw();
+        else
+            draw();
+        for (const auto &button : buttons_)
+            if (button.id == id && button.enabled) {
+                auto action = button.action;
+                buttons_.clear();
+                action();
+                return true;
+            }
+        return false;
+    }
+    int gallery() {
+        fs::create_directories(options_.gallery);
+        options_.save_directory = options_.gallery / "saves";
+        fs::create_directories(options_.save_directory);
+        const auto shot = [this](const std::string &name) {
+            draw();
+            graphics::write_ppm(canvas_, options_.gallery / (name + ".ppm"));
+        };
+        const auto point = [this](int x, int y, bool down = false) {
+            frame_.pointer_x = x;
+            frame_.pointer_y = y;
+            frame_.pointer_down = down;
+        };
+        point(190, 380);
+        shot("menu");
+        point(-1, -1);
+        press(screens::ids::menu_start);
+        shot("new-game");
+        press(screens::ids::setup_character + 10);
+        press(screens::ids::setup_character + 3);
+        point(200, 50);
+        shot("new-game-picked");
+        point(-1, -1);
+        press(screens::ids::setup_dropdown + 1);
+        point(580, 336);
+        shot("new-game-dropdown");
+        point(-1, -1);
+        press(screens::ids::setup_dropdown_close);
+        press(screens::ids::setup_ok);
+        if (!session_)
+            throw std::runtime_error("Gallery could not start a game");
+        shot("board");
+        write_save(slot_path(0));
+        write_save(slot_path(2));
+        screen_ = Screen::settings;
+        shot("options-in-game");
+        open_save();
+        point(300, 200);
+        shot("save");
+        point(-1, -1);
+        screen_ = Screen::game;
+        draw();
+        open_load();
+        point(300, 100);
+        shot("load");
+        point(-1, -1);
+        screen_ = Screen::wealth;
+        shot("info-assets");
+        press(screens::ids::info_page + 1);
+        shot("info-properties");
+        press(screens::ids::info_page + 2);
+        shot("info-stocks");
+        screen_ = Screen::stocks;
+        stock_market_.selected = 3;
+        shot("stocks-prices");
+        press(screens::ids::stock_page);
+        shot("stocks-holdings");
+        press(screens::ids::stock_page);
+        stock_market_.info_open = true;
+        shot("stocks-info");
+        stock_market_.info_open = false;
+        draw();
+        if (press(screens::ids::stock_buy)) {
+            press(screens::ids::pad_digit(5));
+            shot("stocks-pad");
+        }
+        pad_.close();
+        stock_market_.reset();
+        screen_ = Screen::game;
+        // Synthetic decisions: the real session never pauses here on demand.
+        const auto slot = session_->world().header.current_player;
+        const auto render = [&](const World &world, const GameDecision &decision) {
+            buttons_.clear();
+            canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
+            frame_.ticks = SDL_GetTicks();
+            draw_board();
+            buttons_.clear();
+            auto host = make_host();
+            const screens::BankActions none{[](std::int32_t, std::int32_t) { return false; }};
+            if (decision.kind == DecisionKind::bank)
+                bank_screen_.draw(host, world, decision, pad_, none);
+            else
+                screens::draw_primary_stock(host, decision, pad_, none);
+            if (pad_.active()) {
+                buttons_.clear();
+                pad_.draw(host);
+            }
+        };
+        const auto decision_shot = [&](const World &world, const GameDecision &decision, const std::string &name) {
+            render(world, decision);
+            graphics::write_ppm(canvas_, options_.gallery / (name + ".ppm"));
+        };
+        GameDecision bank{DecisionKind::bank, slot, 0, 0, "", {{"存款", 1}, {"提款", 2}, {"贷款", 3}, {"离开", 0}}};
+        const auto &world = session_->world();
+        const std::function<void()> redraw_bank = [&] { render(session_->world(), bank); };
+        decision_shot(world, bank, "bank-atm");
+        press(screens::ids::atm_deposit, redraw_bank);
+        press(screens::ids::atm_digit(3), redraw_bank);
+        press(screens::ids::atm_digit(0), redraw_bank);
+        press(screens::ids::atm_digit(0), redraw_bank);
+        press(screens::ids::atm_digit(0), redraw_bank);
+        point(260, 343, true); // holding MAX
+        decision_shot(world, bank, "bank-atm-typed");
+        point(-1, -1);
+        press(screens::ids::atm_exit, redraw_bank);
+        decision_shot(world, bank, "bank-desk");
+        press(screens::ids::desk_loan, redraw_bank);
+        press(screens::ids::pad_digit(2), redraw_bank);
+        press(screens::ids::pad_digit(0), redraw_bank);
+        decision_shot(world, bank, "bank-desk-pad");
+        pad_.close();
+        // Director's office: make the active player the owner of a bank building.
+        World owner = world;
+        auto &player = owner.players.at(slot).state;
+        for (std::size_t node = 1; node < owner.nodes.size(); ++node) {
+            const auto code = owner.nodes[node].type_and_index;
+            if (code > 6000 && code < 8000 && std::size_t(code - 6000) < owner.commercials.size()) {
+                player.node_id = static_cast<std::uint16_t>(node);
+                owner.commercials[code - 6000].owner_code = static_cast<std::uint8_t>(slot + 1);
+                break;
+            }
+        }
+        player.loan = 50000;
+        owner.players.at(slot).status.loan_due_date = calendar::pack(calendar::add_days(
+            {owner.header.date.year, owner.header.date.month, owner.header.date.day}, 40));
+        bank.options = {{"存款", 1}, {"提款", 2}, {"贷款", 3}, {"还贷", 4}, {"银行融资", 5}, {"离开", 0}};
+        bank_screen_.reset();
+        press(screens::ids::atm_exit, [&] { render(owner, bank); });
+        const std::function<void()> redraw_owner = [&] { render(owner, bank); };
+        decision_shot(owner, bank, "bank-desk-owner");
+        press(screens::ids::desk_window, redraw_owner);
+        decision_shot(owner, bank, "bank-director");
+        bank_screen_.reset();
+        GameDecision primary{DecisionKind::primary_stock, slot, 1, 52, "", {{"认购", 1}, {"放弃", 0}}, 380};
+        decision_shot(world, primary, "primary-stock");
+        pad_.close();
+        session_.reset();
+        screen_ = Screen::settings;
+        shot("options-menu");
+        std::cout << "Gallery written to " << options_.gallery << '\n';
+        return 0;
     }
     void finish_test() {
         const bool passed =
@@ -1624,12 +1984,20 @@ class Application {
     graphics::Image canvas_;
     std::vector<Button> buttons_;
     native::Frame frame_{canvas_, artwork_, font_, buttons_};
-    Screen screen_ = Screen::menu;
+    Screen screen_ = Screen::menu, last_screen_ = Screen::menu, previous_screen_ = Screen::menu;
+    screens::NumberPad pad_;
+    screens::BankScreen bank_screen_;
+    screens::StockMarket stock_market_;
+    screens::MainMenu main_menu_;
+    screens::NewGameSetup setup_;
+    screens::SaveLoadScreen slots_;
+    screens::OptionsScreen options_screen_;
+    screens::PlayerInfo info_;
     unsigned selected_character_ = 10, selected_map_ = 0, selected_stage_ = 0, rotation_ = 0, speed_ = 1;
-    bool running_ = true, fullscreen_ = false, bank_done_for_visit_ = false, shop_done_for_visit_ = false,
+    bool running_ = true, bank_done_for_visit_ = false, shop_done_for_visit_ = false,
          sound_effects_ = true;
     std::int32_t bank_amount_ = 1000;
-    std::int32_t stock_amount_ = 100, amount_limit_ = 0;
+    std::int32_t amount_limit_ = 0;
     std::int32_t *editing_amount_ = nullptr;
     std::string amount_text_;
     std::size_t selected_stock_ = 0;

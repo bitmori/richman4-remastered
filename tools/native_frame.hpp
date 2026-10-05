@@ -74,6 +74,7 @@ struct Button {
     graphics::Rect rectangle;
     bool enabled;
     std::function<void()> action;
+    bool click_sound = true; // false: the action plays its own original UI effect
 };
 
 // Per-frame drawing context. `pointer` is the logical mouse/touch position (or -1)
