@@ -51,6 +51,8 @@ if(BUILD_TESTING)
     add_test(NAME playability_state_tests
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/playability_state_tests.py
         $<TARGET_FILE:rich4-state-check>)
+    add_test(NAME playability_runner_tests
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/playability_runner_tests.py)
   endif()
   if(RICH4_ORACLE_DIR)
     if(NOT Python3_Interpreter_FOUND)

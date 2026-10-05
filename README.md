@@ -57,6 +57,18 @@ python3 scripts/run_asset_oracle.py --native-tool build/native/rich4-tool --reus
 金标不进入 Git；没有商业素材时仍可运行合成输入的普通单元测试。
 详细范围与局限见 [验收记录](docs/migrations/validation.md)。
 
+## 不占用桌面的玩法验证
+
+已经配置 Wine 基准环境并编译原生工具后，可以自动测试真实原版的读档、掷骰、走格、电脑回合和回到玩家操作状态：
+
+```sh
+python3 scripts/run_playability.py --target wine --slot 1 --turns 3 --timeout 300
+```
+
+测试在独立的游戏副本和无窗口 Wine 进程中运行，不操作桌面鼠标/键盘。它保留事件、游戏内存快照和原版存档，再用原生 C++ 逐字节回读并交叉核对状态。报告在 `artifacts/playability/`；原有游戏、存档和配置不会被覆盖。
+
+`--target native` 当前会明确返回 3（unavailable）：完整原生主循环尚未实现。此验证不覆盖全部规则或整局通关，详细方法和证据见 [玩法验证记录](docs/migrations/009-playability-hooks.md)。
+
 ## Android ARM64 核心验证
 
 使用本机已有 Android SDK/NDK 和已启动的 ARM64 模拟器。以下命令交叉编译同一 C++ 核心，实际在 Android 上运行测试及全部资源比较：

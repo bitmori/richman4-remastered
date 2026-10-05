@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -141,7 +142,7 @@ class StateReadbackTests(unittest.TestCase):
 
     def test_output_cannot_overwrite_either_input_or_a_hardlink_alias(self):
         alias = self.directory / "save-hardlink.DAT"
-        alias.hardlink_to(self.before)
+        os.link(self.before, alias)
         for target in (self.before, self.after, alias):
             with self.subTest(target=target):
                 result = self.invoke("--output", target)
