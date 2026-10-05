@@ -413,9 +413,10 @@ class Application {
     fs::path load_path() const {
         if (!options_.load.empty())
             return options_.load;
-        if (fs::exists(save_path()))
-            return save_path();
+        // Continue from whichever slot is newer: Android backgrounding writes only the autosave.
         const auto automatic = options_.save_directory / "Autosave.DAT";
+        if (fs::exists(save_path()) && fs::exists(automatic))
+            return fs::last_write_time(automatic) > fs::last_write_time(save_path()) ? automatic : save_path();
         return fs::exists(automatic) ? automatic : save_path();
     }
     void rotate(unsigned increment) {
