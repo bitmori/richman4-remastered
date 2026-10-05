@@ -97,7 +97,9 @@ and dice always play.
 ## 1. Dice roll (every turn)
 
 `fcn_00419572` (rich4.asm:12275) is called from the movement state machine
-`fcn_0040d7c4` (rich4_player_utils.asm:712).
+`fcn_0040d7c4` (rich4_player_utils.asm:712). That happens only after the roller's
+**toss pose** (movement state 2, 9 frames at one per 80 ms game tick) has played on
+the board; see main-screen.md §6.2.
 
 - **Order:** the values are drawn **before** the animation: `rand()%6+1` for each die.
   With the remote dice, the chosen value is used and the count is forced to 1. The
@@ -127,7 +129,10 @@ and dice always play.
     `(84,−98)`, `(−11,−103)`, `(−68,−99)`. Sizes: 35×41, 30×36, 34×40.
   - Then there is a **500 ms** hold (`fcn_0045285e(0x1f4)`). The faces stay until
     the board is next redrawn.
-- **Native today:** session `roll_duration` plus `play_sound(10)` on `dice_rolled`.
+- **Native:** `MainScreen` (tools/screens/main_screen.cpp) plays toss → FLC → faces
+  hold on `dice_rolled`, holding the game clock through `dice_busy()`. The toss
+  draws via `board::PlayerSprite::tossing`. Sound 10 plays at FLC frame 30.
+  Headless replays skip the toss unless `--play-effects` is given.
 
 ## 2. Buying land and building or upgrading
 

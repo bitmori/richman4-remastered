@@ -210,6 +210,7 @@ class Application {
         audio_ = std::make_unique<audio::Audio>(options_.assets);
         effects_.set_skip(options_.auto_rounds && !options_.play_effects); // EFFECTS: replays stay zero-duration
         messages_.set_instant(options_.auto_rounds != 0); // Headless replay never waits on a bubble.
+        main_screen_.set_skip_toss(options_.auto_rounds && !options_.play_effects); // replays stay fast
         if (!audio_->music_available())
             std::cerr << audio_->music_diagnostic() << '\n';
     }
@@ -355,7 +356,11 @@ class Application {
             }
             const auto now = SDL_GetTicks();
             const unsigned elapsed =
-                options_.auto_rounds ? 500
+                options_.auto_rounds
+                    ? (options_.play_effects && session_ && // dev: real-time toss/dice frame strips
+                               (main_screen_.dice_busy() || session_->phase() == GamePhase::rolling)
+                           ? 40
+                           : 500)
                                      : static_cast<unsigned>(std::min<Uint64>(now - last_tick, 100)) * speed_;
             last_tick = now;
             if (session_ && screen_ == Screen::game) {
@@ -585,10 +590,7 @@ class Application {
             messages_.push(std::move(*item)); // Voices play when their bubble appears.
         if (!sound_effects_)
             return;
-        switch (event.kind) {
-        case GameEventKind::dice_rolled:
-            audio_->play_sound(10);
-            break;
+        switch (event.kind) { // the dice sound fires at frame 30 of the dice FLC (MainScreen)
         case GameEventKind::land_purchased:
             audio_->play_sound(49);
             break;
@@ -814,6 +816,10 @@ class Application {
                  static_cast<std::uint16_t>(state.color), state.slot, state.slot == active.slot, moving,
                  state.node_id < world.nodes.size() && (world.nodes[state.node_id].flags & 0x80000000U) != 0,
                  player.status.days_sleep_walking != 0, (state.controller_flags & 0x40U) != 0});
+            if (const auto toss = main_screen_.toss_frame(state.slot)) { // pre-roll toss pose
+                players.back().tossing = true;
+                players.back().animation_frame = *toss;
+            }
         }
         std::vector<board::PropertyState> lands, facilities;
         for (std::size_t index = 1; index < world.lands.size(); ++index) {

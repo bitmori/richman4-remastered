@@ -131,6 +131,50 @@ void asset_tests(const std::filesystem::path &assets, const std::filesystem::pat
                 require(rendered.pixels == reference.pixels, "special player state chose wrong artwork");
             }
         }
+        // Pre-roll toss pose (movement state 2): entry +2 per traffic method, +15 on water,
+        // foot toss +2 while sleepwalking; frame = facing * frames_per_direction + counter.
+        for (unsigned character = 0; character < 12; ++character) {
+            for (unsigned traffic = 0; traffic < 5; ++traffic) {
+                board::PlayerSprite sprite{};
+                sprite.character = static_cast<std::uint8_t>(character);
+                sprite.traffic_method = static_cast<std::uint8_t>(traffic & 3U);
+                sprite.on_water = traffic == 4;
+                sprite.tossing = true;
+                const auto expected = 0x80U + character * 21U + (traffic == 4 ? 15U : traffic * 3U + 2U);
+                require(board::player_resource(sprite) == expected, "toss pose chose the wrong resource");
+                const auto count = assets::parse_graphics(data.decode(expected)).entries.size();
+                require(count >= 8 && count % 8 == 0, "toss art lacks eight direction groups");
+            }
+        }
+        {
+            board::PlayerSprite sprite{};
+            sprite.character = 3;
+            sprite.sleepwalking = true;
+            sprite.tossing = true;
+            require(board::player_resource(sprite) == 0x80U + 3U * 21U + 2U, "sleepwalker toss is the foot toss");
+            sprite.injured = true;
+            require(board::player_resource(sprite) == 0x80U + 3U * 21U + 18U, "injured pose has no toss");
+        }
+        {
+            const auto bytes = data.decode(0x80U + 10U * 21U + 2U);
+            const auto per_direction = assets::parse_graphics(bytes).entries.size() / 8;
+            for (unsigned view : {0U, 5U}) {
+                const board::Camera rotated{camera.center, static_cast<std::uint8_t>(view)};
+                std::array<board::PlayerSprite, 1> actors{};
+                actors[0].position = camera.center;
+                actors[0].character = 10;
+                actors[0].direction = 2;
+                actors[0].animation_frame = 4;
+                actors[0].tossing = true;
+                const auto frame = ((2U + 8U - view) & 7U) * per_direction + 4U;
+                auto reference = graphics::make_canvas(640, 480, 0x1234);
+                renderer.render(reference, {}, rotated);
+                graphics::blit(reference, graphics::decode_frame(bytes, frame), 220, 260, rotated.viewport);
+                auto rendered = graphics::make_canvas(640, 480, 0x1234);
+                renderer.render(rendered, {actors, {}, {}, {}}, rotated);
+                require(rendered.pixels == reference.pixels, "toss frame, direction, or anchor mismatch");
+            }
+        }
         // Every original special actor pose and view must select an existing
         // frame, including the robot's separate resources 0x209/0x20a.
         for (unsigned slot = 4; slot <= 8; ++slot) {

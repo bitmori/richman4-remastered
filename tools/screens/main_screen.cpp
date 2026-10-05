@@ -158,6 +158,16 @@ MainScreen::MainScreen(std::string_view preset) {
     }
 }
 
+namespace {
+// Dice FLC frame time (original: [5,3,2][game_speed] x 10 ms) and the 500 ms faces hold.
+constexpr unsigned dice_frame_ms = 28, dice_hold_ms = 500;
+// Movement state machine tick at the default game speed 1: the 20 ms multimedia timer
+// (rich4_mouse_utils.asm:299) sets the tick flag every [6,4,2][game_speed] = 4 periods.
+constexpr unsigned toss_frame_ms = 80;
+// The dice sound (Effect 10, preset ref_0048235a) is armed to fire at FLC frame 30.
+constexpr unsigned dice_sound_frame = 30, dice_sound = 10;
+} // namespace
+
 void MainScreen::on_event(const GameEvent &event, const GameSession &session, Artwork &artwork) {
     if (event.kind == GameEventKind::turn_started)
         free_scroll_.reset();
@@ -182,17 +192,45 @@ void MainScreen::on_event(const GameEvent &event, const GameSession &session, Ar
         }
     }
     dice_frames_ = frames.empty() ? 12U : unsigned(frames.size());
-    dice_direction_ = session.world().players[event.player].state.direction;
+    const auto &world = session.world();
+    const auto &player = world.players[event.player];
+    dice_direction_ = player.state.direction;
     dice_elapsed_ = 0;
+    dice_sound_played_ = false;
     dice_active_ = true;
-}
-
-namespace {
-constexpr unsigned dice_frame_ms = 28, dice_hold_ms = 500;
+    // §6.1 toss: fcn_0040dd1f puts the roller in movement state 2 and fcn_0040d7c4 advances one
+    // frame of the pose graph [0x498ec4 + slot*0x34 + anim*4] per game tick; the dice roll
+    // (fcn_00419572) starts on the tick its counter reaches the frames per direction.
+    board::PlayerSprite pose{};
+    pose.character = player.state.character;
+    pose.traffic_method = static_cast<std::uint8_t>(player.state.traffic_method & 3U);
+    pose.on_water = player.state.node_id < world.nodes.size() &&
+                    (world.nodes[player.state.node_id].flags & 0x80000000U) != 0;
+    pose.sleepwalking = player.status.days_sleep_walking != 0;
+    pose.injured = (player.state.controller_flags & 0x40U) != 0;
+    pose.tossing = true;
+    toss_slot_ = event.player;
+    toss_frames_ = 0;
+    if (!pose.injured && pose.character < 12) {
+        try {
+            toss_frames_ = unsigned(artwork.frame_count('d', board::player_resource(pose)) / 8);
+        } catch (const std::exception &) {
+            toss_frames_ = 0; // no toss art: straight to the dice
+        }
+    }
+    toss_ms_ = skip_toss_ ? 0U : toss_frames_ * toss_frame_ms;
 }
 
 bool MainScreen::dice_busy() const {
-    return dice_active_ && dice_elapsed_ < dice_frames_ * dice_frame_ms + dice_hold_ms;
+    return dice_active_ && dice_elapsed_ < toss_ms_ + dice_frames_ * dice_frame_ms + dice_hold_ms;
+}
+
+std::optional<std::uint8_t> MainScreen::toss_frame(std::size_t slot) const {
+    if (!dice_busy() || slot != toss_slot_ || toss_frames_ == 0)
+        return std::nullopt;
+    if (dice_elapsed_ >= toss_ms_)
+        return static_cast<std::uint8_t>(toss_frames_ - 1);
+    return static_cast<std::uint8_t>(std::min(dice_elapsed_ / toss_frame_ms, toss_frames_ - 1));
 }
 
 void MainScreen::advance(unsigned elapsed_ms) {
@@ -239,7 +277,7 @@ std::uint8_t MainScreen::go_mask(Frame &frame, int x, int y) {
 
 void MainScreen::draw(Frame &frame, const GameSession &session, unsigned rotation, const MainScreenActions &actions) {
     const auto &world = session.world();
-    draw_dice(frame, session, rotation);
+    draw_dice(frame, session, rotation, actions);
     if (session.phase() == GamePhase::human_ready)
         draw_go(frame, session, actions);
     else {
@@ -550,21 +588,30 @@ void MainScreen::draw_go(Frame &frame, const GameSession &session, const MainScr
 }
 
 // §6.2
-void MainScreen::draw_dice(Frame &frame, const GameSession &session, unsigned rotation) {
+void MainScreen::draw_dice(Frame &frame, const GameSession &session, unsigned rotation,
+                           const MainScreenActions &actions) {
     if (!dice_active_)
         return;
     const unsigned total = dice_frames_ * dice_frame_ms;
-    if (dice_elapsed_ >= total + dice_hold_ms && session.phase() != GamePhase::rolling) {
+    if (dice_elapsed_ >= toss_ms_ + total + dice_hold_ms && session.phase() != GamePhase::rolling) {
         dice_active_ = false;
         return;
+    }
+    if (dice_elapsed_ < toss_ms_)
+        return; // the character is still tossing (toss_frame)
+    const unsigned dice_elapsed = dice_elapsed_ - toss_ms_;
+    if (!dice_sound_played_ && dice_elapsed / dice_frame_ms >= std::min(dice_sound_frame, dice_frames_ - 1)) {
+        dice_sound_played_ = true;
+        if (actions.sound)
+            actions.sound(dice_sound);
     }
     static constexpr std::array<int, 8> dx{4, 12, 8, -4, -12, -24, -20, -12};
     static constexpr std::array<int, 8> dy{12, 12, 6, -6, -12, -12, -6, 6};
     const auto facing = std::size_t((8 - rotation + dice_direction_) & 7U);
     const int ax = 136 + dx[facing], ay = 48 + dy[facing];
     const auto &animation = dice_animations_[dice_faces_.size()];
-    if (dice_elapsed_ < total) {
-        const auto index = std::min<std::size_t>(dice_elapsed_ / dice_frame_ms, dice_frames_ - 1);
+    if (dice_elapsed < total) {
+        const auto index = std::min<std::size_t>(dice_elapsed / dice_frame_ms, dice_frames_ - 1);
         if (!animation.empty()) {
             graphics::blit(frame.canvas, animation[index], ax, ay, board_area);
             return;

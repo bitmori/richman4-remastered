@@ -365,6 +365,38 @@ The button is drawn by `fcn_00417191` (9310); the drawing is also decompiled in
 
 ### 6.2 Roll animation
 
+**Toss pose first.** GO (or the AI) calls `fcn_0040dd1f`
+(rich4_player_utils.asm:994). For a regular player it sets the per-player
+movement state byte `[0x498ea2 + slot*0x34]` to **2 (toss)** and its frame counter
+`[0x498ea3 + slot*0x34]` to 0, except:
+
+- `controller_flags & 0x30` or `days_tortoise_walking`: state 1, one step, no
+  toss and no dice;
+- `days_stopping`: state 0, no roll.
+- Special actors (slots 4–7, robot 8) never toss.
+
+The movement state machine `fcn_0040d7c4` (state 2 = `loc_0040d975`, line 695)
+runs once per game tick: the 20 ms multimedia timer (`fcn_00401f98`,
+rich4_mouse_utils.asm:141) raises the tick every `{6,4,2}[game_speed]` periods
+(0x46cb20), so **120/80/40 ms**, 80 ms at the default speed 1. Each tick increments
+the counter and redraws the board. When the counter reaches the pose graph's frames
+per direction (`[graph+4] >> 3`), it calls the roll `fcn_00419572` below. Then it
+starts the looped walk sound preset `0xb + (traffic & 3)` (Effects 44/45/46/53),
+or preset `0xf` (Effect 47) on water, and switches to state 1 (walk).
+
+- **Pose graph:** `[0x498eb4 + slot*0x34 + state*8 + anim*4]`, loaded by
+  `_rich4_update_player_sprite` (rich4.asm:5297) from `Data.mkf`, base
+  `0x80 + character*21`:
+  - on land: `+traffic*3 + {0 stand, 1 walk, 2 toss}`;
+  - on water (node flag `0x80` at +0x27, anim 1): `+13/+14/+15`;
+  - sleepwalking: `+16/+17`, and the foot toss `+2`.
+  - Each toss graph has 8 directions × 9 frames.
+- **Board frame:** `facing * frames_per_direction + counter`, where
+  `facing = (direction + 8 - rotation) & 7` (rich4.asm:1418–1430). Frames 0–8 show the
+  wind-up with a die in hand; frame 8 is the follow-through with empty hands.
+- The roll FLC is an overlay played synchronously. So the last toss frame stays
+  under the dice and the 500 ms faces hold, until the walk redraws.
+
 The roll is `fcn_00419572` (12275).
 
 1. Draw `n = dice_count` values with `rand()%6+1`. When forced, `n = 1` with the

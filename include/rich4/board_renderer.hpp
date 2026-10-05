@@ -34,7 +34,16 @@ struct PlayerSprite {
     bool active{};                 // Original depth tie-break: active player is in front.
     bool walking{};
     bool on_water{}, sleepwalking{}, injured{};
+    // Pre-roll toss pose (original movement state 2, rich4_player_utils.asm fcn_0040d7c4):
+    // animation_frame then indexes the toss frames of the facing direction.
+    bool tossing{};
 };
+
+// DATA.MKF entry the original loads for this player's current pose
+// (_rich4_update_player_sprite, rich4.asm ~5350): 0x80 + character * 21 + pose, where pose is
+// traffic * 3 + {0 stand, 1 walk, 2 toss}, 13/14/15 boat stand/walk/toss, 16/17 sleepwalk
+// (tossing on foot, +2), 18 injured.
+[[nodiscard]] std::size_t player_resource(const PlayerSprite &player);
 
 struct ObjectSprite {
     Point position;
