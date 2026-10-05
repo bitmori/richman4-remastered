@@ -3,6 +3,7 @@
 #include "native_frame.hpp"
 #include "native_stock_names.hpp"
 #include "native_ui.hpp"
+#include "screens/main_screen.hpp"
 #include "rich4/assets.hpp"
 #include "rich4/board_renderer.hpp"
 #include "rich4/game.hpp"
@@ -59,6 +60,8 @@ struct Options {
     fs::path assets, font, load, save_directory, output;
     bool headless = false, start_new = false, hidden_window = false, exercise_recovery = false;
     bool exercise_trading = false;
+    std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
+    unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
     unsigned auto_rounds = 0;
     unsigned map = 0;
     unsigned exercise_card = 0, exercise_tool = 0;
@@ -110,6 +113,10 @@ Options arguments(int argc, char **argv) {
                 options.map = static_cast<unsigned>(std::stoul(value));
             else if (argument == "--exercise-card")
                 options.exercise_card = static_cast<unsigned>(std::stoul(value));
+            else if (argument == "--ui-preset")
+                options.ui_preset = value;
+            else if (argument == "--capture-every")
+                options.capture_every = static_cast<unsigned>(std::stoul(value));
             else if (argument == "--exercise-tool")
                 options.exercise_tool = static_cast<unsigned>(std::stoul(value));
             else
@@ -241,6 +248,14 @@ class Application {
                     frame_.pointer_y = int(motion ? event.motion.y : event.button.y);
                     if (!motion)
                         frame_.pointer_down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                    if (screen_ == Screen::game && session_) {
+                        if (motion)
+                            main_screen_.pointer_motion(frame_.pointer_x, frame_.pointer_y,
+                                                        (event.motion.state & SDL_BUTTON_LMASK) != 0);
+                        else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP)
+                            main_screen_.pointer_up(frame_.pointer_x, frame_.pointer_y,
+                                                    event.button.button == SDL_BUTTON_RIGHT);
+                    }
                 }
                 if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
                     const int x = int(event.button.x), y = int(event.button.y);
@@ -302,6 +317,8 @@ class Application {
                         rotate(7);
                     if (event.key.key == SDLK_RIGHT && screen_ == Screen::game)
                         rotate(1);
+                    if (event.key.key == SDLK_V && screen_ == Screen::game)
+                        main_screen_.cycle_view_mode();
                     if (event.key.key == SDLK_F5 && session_ && session_->can_save())
                         save();
                     if (event.key.key == SDLK_F9 && fs::exists(load_path()))
@@ -314,7 +331,10 @@ class Application {
                                      : static_cast<unsigned>(std::min<Uint64>(now - last_tick, 100)) * speed_;
             last_tick = now;
             if (session_ && screen_ == Screen::game) {
-                session_->tick(elapsed);
+                observe(); // a GO press emits the roll before the clock advances
+                main_screen_.advance(elapsed);
+                if (!main_screen_.dice_busy()) // the original roll animation is synchronous
+                    session_->tick(elapsed);
                 observe();
                 if (session_->can_save() && last_autosaved_day_ != session_->completed_days()) {
                     write_save(options_.save_directory / "Autosave.DAT");
@@ -503,6 +523,7 @@ class Application {
     }
     void observe() {
         for (const auto &event : session_->drain_events()) {
+            main_screen_.on_event(event, *session_, artwork_);
             ++event_counts_[event.kind];
             if (event.kind == GameEventKind::dice_rolled && event.player < dice_by_player_.size())
                 ++dice_by_player_[event.player];
@@ -644,6 +665,11 @@ class Application {
         require(SDL_RenderTexture(renderer_.get(), texture_.get(), nullptr, nullptr));
         require(SDL_RenderPresent(renderer_.get()));
         ++rendered_frames_;
+        if (options_.capture_every && !options_.output.empty() && rendered_frames_ % options_.capture_every == 0) {
+            std::ostringstream name;
+            name << "frame-" << std::setw(6) << std::setfill('0') << rendered_frames_ << ".ppm";
+            graphics::write_ppm(canvas_, options_.output / name.str());
+        }
         if (options_.auto_rounds && !options_.output.empty()) {
             auto key = "screen-" + std::to_string(static_cast<int>(screen_));
             if (screen_ == Screen::game && session_ && session_->pending_decision())
@@ -694,6 +720,7 @@ class Application {
         for (const auto &player : players)
             if (player.active)
                 center = player.position;
+        center = main_screen_.camera_center(center);
         if (target_center_ && session_->pending_decision())
             center = *target_center_;
         board::Camera camera{center, static_cast<std::uint8_t>(rotation_)};
@@ -739,82 +766,38 @@ class Application {
             if (company.id)
                 companies.push_back({company.id, company.owner_code, 0, 0});
         board_->render(canvas_, {players, objects, lands, facilities, special_players, companies}, camera);
-        for (int index = 0; index < 11; ++index) {
-            const int x = index * 40;
-            const std::array labels{"選單", "存檔", "讀檔", "左轉", "右轉", "財產",
-                                    "設定", "卡片", "道具", "股票", "買賣"};
-            const std::array<std::function<void()>, 11> actions{[this] { screen_ = Screen::menu; },
-                                                                [this] { save(); },
-                                                                [this] { load(load_path()); },
-                                                                [this] { rotate(7); },
-                                                                [this] { rotate(1); },
-                                                                [this] { screen_ = Screen::wealth; },
-                                                                [this] { screen_ = Screen::settings; },
-                                                                [this] { screen_ = Screen::cards; },
-                                                                [this] { screen_ = Screen::tools; },
-                                                                [this] { screen_ = Screen::stocks; },
-                                                                [this] {
-                                                                    if (session_->open_trading()) {
-                                                                        screen_ = Screen::trading;
-                                                                        trading_mode_ = 0;
-                                                                        trading_page_ = 0;
-                                                                    }
-                                                                }};
-            const bool enabled = index == 1   ? session_->can_save()
-                                 : index == 2 ? fs::exists(load_path())
-                                 : index >= 7 ? session_->phase() == GamePhase::human_ready
-                                              : true;
-            button(70 + index, {x, 0, x + 40, 39}, labels[index], actions[index], enabled);
-        }
-        picture(artwork_.frame('p', 0, 0), 440, 0);
-        const auto &portrait = artwork_.frame('m', 27 + active.character, 0);
-        graphics::blit(canvas_, portrait, 480, 38);
-        font_.draw(canvas_, names.at(active.character), 520, 27, 16);
-        font_.draw(canvas_, "現 金", 452, 79, 12);
-        font_.draw(canvas_, ui::money(active.cash), 492, 102, 20);
-        font_.draw(canvas_, "存 款", 452, 142, 12);
-        font_.draw(canvas_, ui::money(active.bank_balance), 492, 165, 20);
-        font_.draw(canvas_, "總資產", 452, 205, 12);
-        font_.draw(canvas_, ui::money(stocks::player_wealth(world, active.slot)), 480, 228, 20);
-        font_.draw(canvas_, "物價指數 " + std::to_string(world.header.price_index), 450, 260, 12);
-        ui::fill(canvas_, {440, 282, 640, 480}, ui::paper);
-        const auto &date = world.header.date;
-        font_.draw(canvas_,
-                   std::to_string(date.year) + "/" + std::to_string(date.month) + "/" +
-                       std::to_string(date.day),
-                   453, 293, 18, ui::blue);
-        font_.draw(canvas_, "點數 " + std::to_string(active.points), 453, 321);
-        const auto traffic = active.traffic_method & 3U;
-        const unsigned maximum_dice = traffic == 1 ? 2U : traffic == 2 ? 3U : 1U;
-        button(
-            101, {541, 315, 632, 342}, std::to_string(active.dice_count) + " 顆骰子",
-            [this, maximum_dice] {
-                const auto next = session_->world().active_player().state.dice_count % maximum_dice + 1;
-                const bool success = session_->set_dice_count(next);
-                if (success)
-                    ++dice_selections_;
-                notify_action(success);
-            },
-            maximum_dice > 1 && session_->phase() == GamePhase::human_ready);
-        int y = 350;
-        const std::size_t first = recent_.size() > 3 ? recent_.size() - 3 : 0;
-        for (std::size_t index = first; index < recent_.size(); ++index) {
-            font_.draw(canvas_, recent_[index], 452, y, 12, ui::ink, 174);
-            y += 37;
-        }
-        if (session_->phase() == GamePhase::human_ready || session_->phase() == GamePhase::rolling) {
-            const auto count = session_->phase() == GamePhase::rolling
-                                   ? std::max<std::size_t>(1, session_->dice().size())
-                                   : 1;
-            for (std::size_t i = 0; i < count; ++i) {
-                const int face = session_->dice().empty() ? 0 : session_->dice().at(i) - 1;
-                picture(artwork_.frame('p', 7, static_cast<std::size_t>(std::clamp(face, 0, 5))),
-                        220 - int(count) * 36 + int(i) * 72, 128);
+        native::MainScreenActions actions;
+        actions.help = [this] { notify_action(false, "說明功能尚未提供"); };
+        actions.options = [this] { screen_ = Screen::settings; };
+        actions.ai = [this] { notify_action(false, "託管功能尚未提供"); };
+        actions.load = [this] { load(load_path()); };
+        actions.save = [this] { save(); };
+        actions.query = [this] { screen_ = Screen::wealth; };
+        actions.tools = [this] { screen_ = Screen::tools; };
+        actions.cards = [this] { screen_ = Screen::cards; };
+        actions.trading = [this] {
+            if (session_->open_trading()) {
+                screen_ = Screen::trading;
+                trading_mode_ = 0;
+                trading_page_ = 0;
             }
-            hit(
-                100, {184, 128, 256, 195}, [this] { session_->roll_dice(); },
-                session_->phase() == GamePhase::human_ready);
-        }
+        };
+        actions.stocks = [this] { screen_ = Screen::stocks; };
+        actions.rotate = [this](unsigned increment) { rotate(increment); };
+        actions.roll = [this] { session_->roll_dice(); };
+        actions.dice_count = [this](unsigned count) {
+            const bool success = session_->set_dice_count(count);
+            if (success)
+                ++dice_selections_;
+            notify_action(success);
+        };
+        actions.sound = [this](unsigned id) {
+            if (sound_effects_)
+                audio_->play_sound(id);
+        };
+        actions.can_save = session_->can_save();
+        actions.can_load = fs::exists(load_path());
+        main_screen_.draw(frame_, *session_, rotation_, actions);
         if (screen_ == Screen::game && session_->pending_decision())
             draw_decision();
         if (session_->phase() == GamePhase::finished) {
@@ -1624,6 +1607,7 @@ class Application {
     graphics::Image canvas_;
     std::vector<Button> buttons_;
     native::Frame frame_{canvas_, artwork_, font_, buttons_};
+    native::MainScreen main_screen_{options_.ui_preset};
     Screen screen_ = Screen::menu;
     unsigned selected_character_ = 10, selected_map_ = 0, selected_stage_ = 0, rotation_ = 0, speed_ = 1;
     bool running_ = true, fullscreen_ = false, bank_done_for_visit_ = false, shop_done_for_visit_ = false,
