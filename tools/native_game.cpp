@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "native_audio.hpp"
+#include "native_frame.hpp"
 #include "native_stock_names.hpp"
 #include "native_ui.hpp"
 #include "rich4/assets.hpp"
@@ -28,9 +29,10 @@
 namespace {
 using namespace rich4;
 namespace fs = std::filesystem;
-constexpr std::array<const char *, 12> names{"約翰喬",   "沙隆巴斯", "忍太郎", "錢夫人", "阿土伯", "莎拉公主",
-                                             "宮本寶藏", "糖糖",     "烏咪",   "孫小美", "小丹尼", "金貝貝"};
-constexpr std::array<const char *, 4> map_names{"台灣", "中國", "日本", "美國"};
+using native::Artwork;
+using native::Button;
+using native::map_names;
+using native::names;
 
 void require(bool success) {
     if (!success)
@@ -133,31 +135,7 @@ Options arguments(int argc, char **argv) {
     return options;
 }
 
-class Artwork {
-  public:
-    explicit Artwork(const fs::path &directory)
-        : data(ui::asset_path(directory, "Data.mkf")), panel(ui::asset_path(directory, "Panel.mkf")),
-          maps(ui::asset_path(directory, "Map.mkf")) {}
-    const graphics::Image &frame(char archive, std::size_t entry, std::size_t frame_index) {
-        const auto key = std::tuple(archive, entry, frame_index);
-        if (const auto found = images.find(key); found != images.end())
-            return found->second;
-        auto &source = archive == 'd' ? data : archive == 'p' ? panel : maps;
-        return images.emplace(key, graphics::decode_frame(source.decode(entry), frame_index)).first->second;
-    }
-    assets::Archive data, panel, maps;
-
-  private:
-    std::map<std::tuple<char, std::size_t, std::size_t>, graphics::Image> images;
-};
-
 enum class Screen { menu, new_game, game, settings, wealth, cards, tools, stocks, trading };
-struct Button {
-    int id;
-    graphics::Rect rectangle;
-    bool enabled;
-    std::function<void()> action;
-};
 
 class Application {
   public:
@@ -242,8 +220,16 @@ class Application {
                             amount_text_ += *ch;
                     update_amount();
                 }
-                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+                if (event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+                    event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                     require(SDL_ConvertEventToRenderCoordinates(renderer_.get(), &event));
+                    const bool motion = event.type == SDL_EVENT_MOUSE_MOTION;
+                    frame_.pointer_x = int(motion ? event.motion.x : event.button.x);
+                    frame_.pointer_y = int(motion ? event.motion.y : event.button.y);
+                    if (!motion)
+                        frame_.pointer_down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                }
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
                     const int x = int(event.button.x), y = int(event.button.y);
                     for (const auto &button : buttons_)
                         if (button.enabled && ui::contains(button.rectangle, x, y)) {
@@ -331,29 +317,17 @@ class Application {
 
   private:
     void picture(const graphics::Image &image, int x, int y) {
-        graphics::blit(canvas_, image, x + image.origin_x, y + image.origin_y);
+        frame_.picture(image, x, y);
     }
     void button(int id, graphics::Rect rect, std::string_view label, std::function<void()> action,
                 bool enabled = true) {
-        buttons_.push_back({id, rect, enabled, std::move(action)});
-        ui::fill(canvas_, rect, enabled ? ui::paper : ui::color(190, 183, 158));
-        ui::border(canvas_, rect, ui::color(106, 72, 28));
-        int size = 16;
-        while (size > 12 && font_.measure(label, size) > rect.right - rect.left - 8)
-            size -= 2;
-        font_.draw(canvas_, label, rect.left + (rect.right - rect.left - font_.measure(label, size)) / 2,
-                   rect.top + (rect.bottom - rect.top - size - 3) / 2, size,
-                   enabled ? ui::ink : ui::color(115, 110, 90));
+        frame_.button(id, rect, label, std::move(action), enabled);
     }
     void hit(int id, graphics::Rect rect, std::function<void()> action, bool enabled = true) {
-        buttons_.push_back({id, rect, enabled, std::move(action)});
+        frame_.hit(id, rect, std::move(action), enabled);
     }
     void dialog(graphics::Rect rect, std::string_view title) {
-        ui::fill(canvas_, rect, ui::paper);
-        ui::border(canvas_, rect, ui::color(110, 74, 26));
-        ui::border(canvas_, {rect.left + 3, rect.top + 3, rect.right - 3, rect.bottom - 3},
-                   ui::color(190, 146, 69));
-        font_.draw(canvas_, title, rect.left + 18, rect.top + 15, 20, ui::blue);
+        frame_.dialog(rect, title);
     }
     void notify_action(bool success, std::string_view failure = "目前無法使用") {
         if (!success) {
@@ -434,7 +408,7 @@ class Application {
             configuration.players[slot].character = static_cast<std::uint8_t>(candidate++);
         }
         install_session(
-            World::from_map_resource(artwork_.maps.decode((selected_stage_ * 4 + selected_map_) * 2 + 1),
+            World::from_map_resource(artwork_.archive('m').decode((selected_stage_ * 4 + selected_map_) * 2 + 1),
                                      configuration),
             options_.seed);
         ++new_games_;
@@ -553,6 +527,7 @@ class Application {
     void draw() {
         buttons_.clear();
         canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
+        frame_.ticks = SDL_GetTicks();
         if (screen_ == Screen::menu || screen_ == Screen::new_game ||
             (screen_ == Screen::settings && !session_)) {
             picture(artwork_.frame('d', 1, 0), 0, 0);
@@ -1613,6 +1588,7 @@ class Application {
     std::unique_ptr<audio::Audio> audio_;
     graphics::Image canvas_;
     std::vector<Button> buttons_;
+    native::Frame frame_{canvas_, artwork_, font_, buttons_};
     Screen screen_ = Screen::menu;
     unsigned selected_character_ = 10, selected_map_ = 0, selected_stage_ = 0, rotation_ = 0, speed_ = 1;
     bool running_ = true, fullscreen_ = false, bank_done_for_visit_ = false, shop_done_for_visit_ = false,
