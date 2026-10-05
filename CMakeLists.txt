@@ -8,7 +8,7 @@ option(RICH4_BUILD_VIEWER "Build the SDL3 resource inspection application" ON)
 option(RICH4_SANITIZERS "Check memory safety and undefined behavior" OFF)
 
 add_library(rich4_core src/assets.cpp src/graphics.cpp src/save.cpp src/calendar.cpp src/direction.cpp
-  src/inventory.cpp src/economy.cpp)
+  src/inventory.cpp src/economy.cpp src/random.cpp)
 target_include_directories(rich4_core PUBLIC include)
 target_compile_options(rich4_core PRIVATE
   $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wsign-conversion>)
@@ -34,7 +34,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(module assets graphics save calendar direction inventory economy)
+  foreach(module assets graphics save calendar direction inventory economy random)
     add_executable(${module}_tests tests/${module}_tests.cpp)
     target_link_libraries(${module}_tests PRIVATE rich4_core)
     add_test(NAME ${module} COMMAND ${module}_tests)
