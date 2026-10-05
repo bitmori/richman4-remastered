@@ -27,6 +27,7 @@ struct AuctionDecision {
     std::size_t player = 0;
     std::int32_t price = 0;
     std::vector<AuctionAction> actions;
+    std::uint8_t inactive = 0; // player slot bits that can no longer bid (presentation only)
 };
 
 struct AuctionResult {
@@ -90,6 +91,7 @@ class AuctionSession {
     std::array<Bidder, 4> bidders_{};
     std::size_t current_ = 0;
     std::size_t original_eligible_count_ = 0;
+    std::size_t original_records_ = 0; // active player records, for AuctionDecision::inactive
     std::optional<std::size_t> last_bidder_;
     std::int32_t initial_price_ = 0;
     std::int32_t price_ = 0;

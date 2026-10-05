@@ -967,6 +967,73 @@ void explicit_unsupported_and_save_guard() {
     require(explicit_gap, "unported compulsory event must never silently pass");
 }
 } // namespace
+void ai_settings_autopilot() {
+    // 託管AI: the core switches a human player to the computer and back via controller bit 0x04.
+    rich4::GameSession game(world(), 3), untouched(world(), 3);
+    const auto settings = game.ai_settings(0);
+    require(settings && !settings->autopilot, "human AI settings missing");
+    require(!game.ai_settings(1), "computer players have no AI settings");
+    require(!game.set_ai_settings(1, {}), "AI settings accepted for a computer slot");
+    auto invalid = *settings;
+    invalid.personality = 3;
+    require(!game.set_ai_settings(0, invalid), "out-of-range personality accepted");
+    // Unchanged settings while idle: no rule, no randomness.
+    require(game.set_ai_settings(0, *settings), "idle AI settings rejected");
+    require(game.random_state() == untouched.random_state() &&
+                game.phase() == rich4::GamePhase::human_ready &&
+                game.world().export_save() == untouched.world().export_save(),
+            "rewriting unchanged AI settings changed the game");
+    // Idle hand-over: the waiting turn is played by the computer at once.
+    auto autopilot = *settings;
+    autopilot.autopilot = true;
+    autopilot.personality = 2;
+    autopilot.card_strategy = 3;
+    require(game.set_ai_settings(0, autopilot), "autopilot rejected");
+    require(game.world().players[0].state.controller_flags == 5, "託管 bit not set");
+    require(game.world().players[0].status.rescue_strategy == 2 &&
+                game.world().players[0].status.card_strategy == 3,
+            "AI profile bytes not written");
+    require(game.phase() != rich4::GamePhase::human_ready, "autopilot did not start a computer turn");
+    for (unsigned i = 0;
+         i < 200000 && game.completed_days() < 6 && game.phase() != rich4::GamePhase::finished; ++i) {
+        while (game.pending_decision() && game.phase() == rich4::GamePhase::awaiting_decision)
+            require(game.respond(0), "computer-time decision rejected");
+        require(game.phase() != rich4::GamePhase::human_ready, "autopilot player waited for human input");
+        game.tick(50);
+    }
+    require(game.completed_days() >= 6, "autopilot game did not advance");
+    auto saved = game.world().export_save();
+    require(rich4::World::from_save(rich4::SaveFile::decode(saved)).players[0].state.controller_flags == 5,
+            "託管 bit lost in the save");
+    // Mid-turn release: pending until the turn boundary, then the human gets the turn back.
+    autopilot.autopilot = false;
+    require(game.set_ai_settings(0, autopilot), "autopilot release rejected");
+    require(game.ai_settings(0) && !game.ai_settings(0)->autopilot, "pending release not reported");
+    for (unsigned i = 0; i < 200000 && game.phase() != rich4::GamePhase::human_ready &&
+                         game.phase() != rich4::GamePhase::finished;
+         ++i) {
+        while (game.pending_decision() && game.phase() == rich4::GamePhase::awaiting_decision)
+            require(game.respond(0), "computer-time decision rejected");
+        game.tick(50);
+    }
+    require(game.phase() == rich4::GamePhase::human_ready && game.world().header.current_player == 0 &&
+                game.world().players[0].state.controller_flags == 1,
+            "human did not get the turn back");
+    // Mid-turn hand-over waits for the boundary too.
+    rich4::GameSession rolling(world(), 5);
+    require(rolling.roll_dice(), "human roll rejected");
+    auto on = *rolling.ai_settings(0);
+    on.autopilot = true;
+    require(rolling.set_ai_settings(0, on), "mid-turn autopilot rejected");
+    require(rolling.world().players[0].state.controller_flags == 1, "mid-turn autopilot applied too early");
+    until(rolling, [&] {
+        if (rolling.pending_decision())
+            (void)rolling.respond(0);
+        return rolling.world().header.current_player != 0;
+    });
+    require(rolling.world().players[0].state.controller_flags == 5,
+            "autopilot not applied at the turn boundary");
+}
 int main() {
     try {
         dice_and_paths();
@@ -987,6 +1054,7 @@ int main() {
         flight_and_confinement_objects();
         direct_trading();
         lifecycle_and_finished_saves();
+        ai_settings_autopilot();
         explicit_unsupported_and_save_guard();
         std::cout << "native game rule tests passed\n";
         return 0;

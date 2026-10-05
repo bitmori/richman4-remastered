@@ -168,6 +168,7 @@ AuctionSession::AuctionSession(World &world, Random &random, std::uint16_t code,
         ++original_eligible_count_;
         current_ = record - 1; // 0x43af13 retains the last eligible record.
     }
+    original_records_ = record;
     if (!original_eligible_count_)
         settle();
 }
@@ -200,6 +201,9 @@ std::optional<AuctionDecision> AuctionSession::decision() const {
         if (legal(action))
             value.actions.push_back(action);
     }
+    for (std::size_t record = 0; record < original_records_; ++record)
+        if (!bidders_[record].present)
+            value.inactive |= static_cast<std::uint8_t>(1U << bidders_[record].player);
     return value;
 }
 

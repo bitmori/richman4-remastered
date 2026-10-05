@@ -36,6 +36,7 @@ int atm_digit(int digit);
 inline constexpr int atm_clear = 933, atm_back = 935, atm_keypad = 938;
 inline constexpr int desk_exit = 940, desk_loan = 941, desk_repay = 942, desk_window = 943, director_finance = 944,
                      director_return = 945, director_exit = 946, bank_skip = 947;
+inline constexpr int auction_skip = 1650; // tap ending the auction sold sequence
 inline constexpr int stock_page = 434, stock_buy = 430, stock_sell = 431, stock_info = 435, stock_exit = 60,
                      stock_info_close = 436, stock_row = 400;
 } // namespace ids
@@ -227,7 +228,47 @@ void draw_lottery(Host &host, const World &world, const GameDecision &decision,
                   const std::function<void(std::size_t)> &respond);
 // DecisionKind::auction: Panel 26 room. Options are the legal AuctionAction values 0..6;
 // all seven original buttons are shown and illegal ones are ignored, as in the original.
-void draw_auction(Host &host, const World &world, const GameDecision &decision,
-                  const std::function<void(std::size_t)> &respond);
+// Bidders show the original poses: 27+3c (bidding; frames 1..4,0 with the 26:1 starburst for about
+// 1 s after the human's bid, then the answer is sent), 28+3c for those who cannot bid
+// (GameDecision::inactive_players) and 29+3c for the buyer in the sold sequence.
+class AuctionRoom {
+  public:
+    void draw(Host &host, const World &world, const GameDecision &decision,
+              const std::function<void(std::size_t)> &respond);
+    // Sold sequence (gavel 26:21, "%d元成交", buyer's 29+3c celebration, congratulations; sound 63),
+    // started from the core's 拍卖成交 notice. Presentation only; a tap (ids::auction_skip) ends it.
+    void start_sold(std::size_t winner, std::int32_t price, std::uint16_t property);
+    [[nodiscard]] bool sold_active() const noexcept { return sold_.has_value(); }
+    void draw_sold(Host &host, const World &world);
+    // Gallery: freeze a bid animation started at `started` ms (action 0..6, new price).
+    void preview_bid(const GameDecision &decision, std::size_t index, int action, std::int32_t price,
+                     std::uint64_t started) {
+        bid_ = Bid{std::to_string(decision.land_id) + ':' + std::to_string(decision.player) + ':' +
+                       std::to_string(decision.amount),
+                   index, action, price, started};
+    }
+    void reset() {
+        bid_.reset();
+        sold_.reset();
+    }
+
+  private:
+    struct Bid {
+        std::string key; // land:bidder:price of the decision it answers
+        std::size_t index = 0;
+        int action = 0;
+        std::int32_t price = 0;
+        std::uint64_t started = 0; // 0 = stamped on the next frame
+    };
+    struct Sold {
+        std::size_t winner = 0;
+        std::int32_t price = 0;
+        std::uint16_t property = 0;
+        std::uint64_t started = 0;
+        bool sounded = false;
+    };
+    std::optional<Bid> bid_;
+    std::optional<Sold> sold_;
+};
 
 } // namespace rich4::native::screens

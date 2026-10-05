@@ -20,6 +20,7 @@
 #include "screens/effects.hpp" // EFFECTS: original board animations
 #include "screens/intro.hpp"   // new-game airplane / parachute intro
 #include "screens/spinners.hpp" // SPINNERS: god slot machine / cupid wheels
+#include "screens/ai_settings.hpp" // 託管AI window
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -186,7 +187,20 @@ Options arguments(int argc, char **argv) {
 }
 
 // Append only: the values are logged in inputs.jsonl and name the screen-N.ppm captures.
-enum class Screen { menu, new_game, game, settings, wealth, cards, tools, stocks, trading, load, save };
+enum class Screen {
+    menu,
+    new_game,
+    game,
+    settings,
+    wealth,
+    cards,
+    tools,
+    stocks,
+    trading,
+    load,
+    save,
+    ai_settings
+};
 
 class Application {
   public:
@@ -546,7 +560,7 @@ class Application {
     bool cancellable() const {
         return pad_.active() || screen_ == Screen::new_game || screen_ == Screen::settings ||
                screen_ == Screen::wealth || screen_ == Screen::stocks || screen_ == Screen::load ||
-               screen_ == Screen::trading ||
+               screen_ == Screen::trading || screen_ == Screen::ai_settings ||
                screen_ == Screen::save || (screen_ == Screen::game && bank_pending());
     }
     void cancel_screen() {
@@ -561,6 +575,9 @@ class Application {
             break;
         case Screen::trading:
             trading_board_.cancel(host, trading_actions());
+            break;
+        case Screen::ai_settings:
+            ai_settings_.cancel(host, ai_settings_actions());
             break;
         case Screen::new_game:
             setup_.cancel(host, [this] { screen_ = Screen::menu; });
@@ -774,6 +791,7 @@ class Application {
         presentation_.clear();
         presented_player_.reset();
         items_.reset();
+        auction_room_.reset();
         intro_.skip();
         if (intro && !(options_.auto_rounds && !options_.play_effects)) { // replays keep their timing
             std::vector<std::uint8_t> characters;
@@ -833,7 +851,7 @@ class Application {
     };
     bool presenting() const {
         return intro_.active() || main_screen_.dice_busy() || effects_.active() || messages_.active() ||
-               spinners_.active();
+               spinners_.active() || auction_room_.sold_active() || items_.magic_cast_active();
     }
     void pump_presentation() {
         while (session_ && !presentation_.empty() && !presenting()) {
@@ -853,6 +871,12 @@ class Application {
         main_screen_.on_event(event, *session_, artwork_);
         if (auto item = messages::from_event(event, session_->world()))
             messages_.push(std::move(*item)); // Voices play when their bubble appears.
+        if (event.kind == GameEventKind::notice && event.message == "拍卖成交" && event.subject >= 0 &&
+            !(options_.auto_rounds && !options_.play_effects)) // AUCTION: sold sequence (replays stay fast)
+            auction_room_.start_sold(std::size_t(event.subject), event.amount, event.property);
+        if (event.kind == GameEventKind::notice && event.message == "魔法屋施法" && // MAGIC: computer cast
+            !(options_.auto_rounds && !options_.play_effects))
+            items_.start_magic_cast(event.second_subject, event.value);
         if (!sound_effects_)
             return;
         switch (event.kind) { // the dice sound fires at frame 30 of the dice FLC (MainScreen)
@@ -933,6 +957,9 @@ class Application {
                 options_screen_.open({speed_, audio_->music_enabled(), sound_effects_}, session_ != nullptr);
             if (screen_ == Screen::wealth && session_)
                 info_.open(session_->world().header.current_player);
+            if (screen_ == Screen::ai_settings &&
+                (!session_ || !ai_settings_.open(*session_, presented_player())))
+                screen_ = last_screen_ = Screen::game; // nobody to hand over (all-computer game)
         }
         if (!bank_pending())
             bank_screen_.reset();
@@ -1004,6 +1031,9 @@ class Application {
             draw_stocks();
         } else if (screen_ == Screen::trading) {
             draw_trading();
+        } else if (screen_ == Screen::ai_settings && session_) {
+            buttons_.clear();
+            ai_settings_.draw(host, session_->world(), ai_settings_actions());
         }
         std::string overlay_key;
         if (screen_ == Screen::game && session_ && messages_.active()) {
@@ -1012,6 +1042,14 @@ class Application {
                 static constexpr std::array<const char *, 5> kinds{"bubble", "box", "news", "fortune", "god"};
                 overlay_key = std::string("overlay-") + kinds.at(static_cast<std::size_t>(kind));
             }
+        }
+        if (screen_ == Screen::game && session_ && items_.magic_cast_active() && !messages_.active()) {
+            buttons_.clear(); // MAGIC: a computer's magic-house cast and Panel 20 movie
+            items_.draw_magic_cast(frame_);
+        }
+        if (screen_ == Screen::game && session_ && auction_room_.sold_active() && !messages_.active()) {
+            buttons_.clear(); // AUCTION: the sold sequence covers the board until it ends or is tapped
+            auction_room_.draw_sold(host, session_->world());
         }
         if (items_.popup_active() && session_ &&
             (screen_ == Screen::game || screen_ == Screen::cards || screen_ == Screen::tools)) {
@@ -1202,7 +1240,7 @@ class Application {
         native::MainScreenActions actions;
         actions.help = [this] { notify_action(false, "說明功能尚未提供"); };
         actions.options = [this] { screen_ = Screen::settings; };
-        actions.ai = [this] { notify_action(false, "託管功能尚未提供"); };
+        actions.ai = [this] { screen_ = Screen::ai_settings; };
         actions.load = [this] { open_load(); };
         actions.save = [this] { open_save(); };
         actions.query = [this] { screen_ = Screen::wealth; };
@@ -1246,6 +1284,20 @@ class Application {
             button(71, {125, 280, 275, 322}, "存檔", [this] { save(); });
             button(110, {295, 280, 515, 322}, "返回主選單", [this] { screen_ = Screen::menu; });
         }
+    }
+    // 託管AI: the player whose turn is shown is preselected in the window.
+    std::size_t presented_player() const {
+        return presented_player_.value_or(session_ ? session_->world().header.current_player : 0);
+    }
+    screens::AiSettingsActions ai_settings_actions() {
+        return {[this](std::size_t slot, const AiSettings &settings) {
+                    const bool waits = session_->phase() != GamePhase::human_ready &&
+                                       session_->phase() != GamePhase::finished;
+                    if (session_->set_ai_settings(slot, settings) && waits)
+                        notify_action(false, "設定將於本回合結束後生效");
+                    observe(); // an idle hand-over starts the computer turn at once
+                },
+                [this] { screen_ = Screen::game; }};
     }
     native::items::Host item_host() {
         return {[this] { screen_ = Screen::game; },
@@ -1429,7 +1481,7 @@ class Application {
             if (decision.kind == DecisionKind::lottery)
                 screens::draw_lottery(host, session_->world(), decision, answer);
             else
-                screens::draw_auction(host, session_->world(), decision, answer);
+                auction_room_.draw(host, session_->world(), decision, answer);
             return;
         }
         if (map_decision()) {
@@ -1561,6 +1613,8 @@ class Application {
         }
         if (screen_ == Screen::game && messages_.active())
             return; // An overlay is showing for exactly this frame (instant mode); controls are covered.
+        if (auction_room_.sold_active() || items_.magic_cast_active())
+            return; // --play-effects: the sold sequence / computer magic cast covers the controls
         if (session_->pending_decision() && (!presentation_.empty() || presenting()))
             return; // The decision is not shown until its preceding presentation has played.
         if (options_.play_effects && session_->pending_decision() && // dev strips: let the reels spin
@@ -2041,7 +2095,7 @@ class Application {
             else if (decision.kind == DecisionKind::lottery)
                 screens::draw_lottery(host, world, decision, [](std::size_t) {});
             else if (decision.kind == DecisionKind::auction)
-                screens::draw_auction(host, world, decision, [](std::size_t) {});
+                auction_room_.draw(host, world, decision, [](std::size_t) {});
             else
                 screens::draw_primary_stock(host, world, decision, pad_, none);
             if (pad_.active()) {
@@ -2111,6 +2165,42 @@ class Application {
         point(406, 229, true);
         decision_shot(world, auction, "auction");
         point(-1, -1);
+        // AUCTION poses: one bidder cannot bid (28+3c); the human's +1000 bid animating (27+3c, starburst).
+        auction.inactive_players = static_cast<std::uint8_t>(1U << ((slot + 1) % world.players.size()));
+        auction_room_.preview_bid(auction, 3, 3, auction.amount + 1000, SDL_GetTicks() - 450);
+        decision_shot(world, auction, "auction-bid");
+        auction_room_.reset();
+        for (const unsigned at : {300U, 2500U}) { // sold sequence: gavel + price, then congratulations
+            auction_room_.start_sold((slot + 2) % world.players.size(), 3500, 2001);
+            buttons_.clear();
+            canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
+            frame_.ticks = SDL_GetTicks();
+            draw_board();
+            auto host = make_host();
+            auction_room_.draw_sold(host, world); // stamps the start
+            frame_.ticks += at;
+            auction_room_.draw_sold(host, world);
+            graphics::write_ppm(canvas_, options_.gallery / ("auction-sold-" + std::to_string(at) + ".ppm"));
+            auction_room_.reset();
+        }
+        // 託管AI window: the human selected with 託管 on, cards on, 大老奸, 70% cash / 30% stock.
+        if (ai_settings_.open(*session_, slot) && ai_settings_.edited(slot)) {
+            auto edited = *ai_settings_.edited(slot);
+            screen_ = Screen::ai_settings;
+            last_screen_ = Screen::ai_settings;
+            press(screens::ids::ai_tab + int(slot)); // the selected tab toggles 託管
+            press(screens::ids::ai_tools);
+            press(screens::ids::ai_personality + 2);
+            for (int i = edited.cash_ratio; i < 70; i += 10)
+                press(screens::ids::ai_cash_up);
+            for (int i = edited.stock_ratio; i < 30; i += 10)
+                press(screens::ids::ai_stock_up);
+            shot("ai-settings");
+            point(499, 187, true); // holding 確定
+            shot("ai-settings-pressed");
+            point(-1, -1);
+            screen_ = Screen::game;
+        }
         session_.reset();
         screen_ = Screen::settings;
         shot("options-menu");
@@ -2319,6 +2409,8 @@ class Application {
     screens::OptionsScreen options_screen_;
     screens::PlayerInfo info_;
     screens::TradingBoard trading_board_;
+    screens::AuctionRoom auction_room_;     // AUCTION: bid poses and the sold sequence
+    screens::AiSettingsScreen ai_settings_; // 託管AI window (toolbar icon 2)
     native::items::Screens items_;
     unsigned selected_character_ = 10, selected_map_ = 0, selected_stage_ = 0, rotation_ = 0, speed_ = 1;
     bool running_ = true, bank_done_for_visit_ = false, shop_done_for_visit_ = false,

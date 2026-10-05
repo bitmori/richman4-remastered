@@ -96,6 +96,8 @@ struct GameSession::Impl {
     unsigned spinner_elapsed = 0;
     CardAiMemory card_ai_memory{};
     bool property_pending = false, purchased_property = false;
+    // AI settings (託管) requested mid-turn; applied at the next turn boundary (next_turn).
+    std::array<std::optional<AiSettings>, 4> pending_ai_settings;
 
     explicit Impl(World value, std::uint32_t seed)
         : world(std::move(value)),
@@ -1936,6 +1938,7 @@ struct GameSession::Impl {
                     for (auto action : bidder->actions)
                         prompt.options.push_back(
                             {labels[static_cast<unsigned>(action)], static_cast<std::int32_t>(action)});
+                    prompt.inactive_players = bidder->inactive; // presentation: "cannot bid" poses
                     throw NeedChoice{std::move(prompt), key};
                 }
                 if (!auction_session.bid(static_cast<AuctionAction>(answer->second)))
@@ -1943,9 +1946,12 @@ struct GameSession::Impl {
             } else if (!auction_session.tick())
                 throw std::logic_error("auction made no progress");
         }
-        if (auction_session.result().winner)
+        if (auction_session.result().winner) {
             emit(GameEventKind::notice, "拍卖成交", auction_session.result().price);
-        else
+            // Presentation: the buyer and lot for the original sold sequence (gavel, winner pose 29+3c).
+            events.back().subject = static_cast<std::int32_t>(*auction_session.result().winner);
+            events.back().property = property_code;
+        } else
             emit(GameEventKind::notice, "地产拍卖流拍");
         return auction_session.result();
     }
@@ -2838,6 +2844,11 @@ struct GameSession::Impl {
     void magic_effect(unsigned effect) {
         const auto category = magic_category;
         run_rule([this, category, effect] {
+            if (!human()) { // presentation only: the computer's cast (group, effect, Panel 20 movie) first
+                emit(GameEventKind::notice, "魔法屋施法");
+                events.back().value = static_cast<std::int32_t>(effect);
+                events.back().second_subject = static_cast<std::int32_t>(category);
+            }
             const auto targets = services::magic_targets(world, category);
             if (!services::apply_magic(world, random, actor(), targets, effect, magic_callbacks()))
                 throw UnsupportedRule{"这项魔法的效果尚未完成"};
@@ -3224,7 +3235,23 @@ struct GameSession::Impl {
             }
         }
     }
+    void apply_ai_settings(std::size_t slot, const AiSettings &settings) {
+        auto &entry = world.players.at(slot);
+        if (!(entry.state.controller_flags & 1U))
+            return; // went bankrupt meanwhile
+        entry.state.controller_flags = static_cast<std::uint8_t>((entry.state.controller_flags & ~4U) |
+                                                                 (settings.autopilot ? 4U : 0U));
+        entry.status.card_strategy = settings.card_strategy;
+        entry.status.rescue_strategy = settings.personality;
+        entry.status.init_cash_ratio = settings.cash_ratio;
+        entry.status.stock_investment_ratio = settings.stock_ratio;
+    }
     void next_turn() {
+        for (std::size_t slot = 0; slot < pending_ai_settings.size(); ++slot) // 託管 turn boundary
+            if (auto &pending = pending_ai_settings[slot]) {
+                apply_ai_settings(slot, *pending);
+                pending.reset();
+            }
         const auto previous = actor();
         std::size_t next = previous;
         bool wrapped = false;
@@ -3734,6 +3761,38 @@ std::vector<EffectEvent> GameSession::drain_effects() {
     auto output = std::move(impl_->effects);
     impl_->effects.clear();
     return output;
+}
+std::optional<AiSettings> GameSession::ai_settings(std::size_t slot) const {
+    if (slot >= impl_->world.players.size() || !(impl_->world.players[slot].state.controller_flags & 1U))
+        return std::nullopt;
+    if (slot < impl_->pending_ai_settings.size() && impl_->pending_ai_settings[slot])
+        return impl_->pending_ai_settings[slot];
+    const auto &entry = impl_->world.players[slot];
+    return AiSettings{(entry.state.controller_flags & 4U) != 0, entry.status.card_strategy,
+                      entry.status.rescue_strategy, entry.status.init_cash_ratio,
+                      entry.status.stock_investment_ratio};
+}
+bool GameSession::set_ai_settings(std::size_t slot, const AiSettings &settings) {
+    auto &game = *impl_;
+    if (slot >= game.world.players.size() || slot >= game.pending_ai_settings.size() ||
+        !(game.world.players[slot].state.controller_flags & 1U) || settings.card_strategy > 3 ||
+        settings.personality > 2 || settings.cash_ratio > 100 || settings.stock_ratio > 100)
+        return false;
+    if (game.phase != GamePhase::human_ready && game.phase != GamePhase::finished) {
+        game.pending_ai_settings[slot] = settings; // mid-turn: wait for the turn boundary
+        return true;
+    }
+    game.pending_ai_settings[slot].reset();
+    game.apply_ai_settings(slot, settings);
+    // The waiting human was handed to the computer: play this turn as a computer turn now
+    // (enter_turn's computer branch).
+    if (game.phase == GamePhase::human_ready && slot == game.actor() && !game.human()) {
+        if (game.player().controller_flags & 0x30U)
+            game.begin_roll();
+        else
+            game.begin_ai_turn();
+    }
+    return true;
 }
 bool GameSession::can_save() const noexcept {
     return impl_->phase == GamePhase::human_ready || impl_->phase == GamePhase::finished;

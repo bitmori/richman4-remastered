@@ -97,6 +97,21 @@ struct GameDecision {
     std::vector<DecisionOption> options;
     std::int32_t max_amount = 0;
     std::optional<SpinnerState> spinner = std::nullopt; // money_spinner / roulette only
+    // Auction only (presentation): player slots that can no longer bid in this auction (ineligible
+    // at the start, or withdrew), for the original "cannot bid" pose Panel 28+3c.
+    std::uint8_t inactive_players = 0;
+};
+
+// AI settings (託管AI, _rich4_ui_ai_settings_entry; docs/ui/finance-menus.md §11): a human
+// player's original profile bytes +22..+26 and the 託管 bit 0x04 of controller_flags (+21).
+// With the bit set the core plays that player exactly like a computer player.
+struct AiSettings {
+    bool autopilot = false;         // controller_flags bit 0x04 (託管)
+    std::uint8_t card_strategy = 0; // +22: bit0 use cards, bit1 use tools
+    std::uint8_t personality = 0;   // +23: 0 乖寶寶, 1 普通人, 2 大老奸 (PlayerStatus::rescue_strategy)
+    std::uint8_t cash_ratio = 50;   // +25: cash vs deposit, 0..100 (init_cash_ratio)
+    std::uint8_t stock_ratio = 0;   // +26: stock vs funds, 0..100 (stock_investment_ratio)
+    bool operator==(const AiSettings &) const = default;
 };
 
 // Original on-screen announcements (docs/ui/messages.md). Presentation only: emitting
@@ -228,6 +243,14 @@ class GameSession {
     bool buy_offer(std::size_t seller, std::size_t index);
     bool close_trading();
     bool respond(std::size_t option, std::int32_t amount = 0);
+    // AI settings for a human player slot (controller bit0); nullopt for computer or empty slots.
+    // Reports a change that is still waiting for the turn boundary.
+    [[nodiscard]] std::optional<AiSettings> ai_settings(std::size_t slot) const;
+    // Applies at once while the game is idle (human_ready / finished); handing the waiting player
+    // to the AI then starts its computer turn immediately. Mid-turn (rolling, moving, a decision)
+    // the change waits for the next turn boundary. Consumes no randomness by itself; returns
+    // false for non-human slots or out-of-range values.
+    bool set_ai_settings(std::size_t slot, const AiSettings &settings);
     void tick(unsigned elapsed_ms);
     [[nodiscard]] std::vector<GameEvent> drain_events();
     // Additive presentation queue, in emission order (see EffectEvent).

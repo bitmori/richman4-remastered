@@ -43,6 +43,7 @@ void start_price_and_eligibility() {
     rich4::AuctionSession session(value, random, 2001);
     require(session.initial_price() == 5004, "auction initial value must truncate before indexing");
     require(session.decision()->player == 3, "initial auction cash/status eligibility");
+    require(session.decision()->inactive == 0b0111, "ineligible bidders not reported as inactive");
     require(random.state() == 47, "human-only setup consumes no economic random draws");
     require(session.bid(rich4::AuctionAction::raise_100), "single human can raise");
     require(session.finished() && session.result().winner == 3,
@@ -64,6 +65,7 @@ void pass_raise_withdraw_and_settlement() {
     require(session.bid(rich4::AuctionAction::withdraw), "permanent withdrawal accepted");
     require(!session.finished() && session.decision()->player == 2,
             "a raise must clear prior passes and let that player return");
+    require(session.decision()->inactive == 0b0010, "withdrawn bidder not reported as inactive");
     require(session.bid(rich4::AuctionAction::pass), "second pass accepted");
     require(session.finished() && session.result().winner == 0, "last bidder wins");
     require(value.players[0].state.cash == 97900 && value.players[0].state.bank_balance == 50000,
