@@ -61,6 +61,7 @@ struct Options {
     fs::path assets, font, load, save_directory, output;
     bool headless = false, start_new = false, hidden_window = false, exercise_recovery = false;
     bool exercise_trading = false;
+    bool play_effects = false; // EFFECTS (dev): play effects in replays and dump effect-NNN.ppm frames
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
     unsigned auto_rounds = 0;
@@ -90,6 +91,8 @@ Options arguments(int argc, char **argv) {
             options.exercise_recovery = true;
         else if (argument == "--exercise-trading")
             options.exercise_trading = true;
+        else if (argument == "--play-effects")
+            options.play_effects = true;
         else if (argument == "--start-new")
             options.start_new = true;
         else {
@@ -197,7 +200,7 @@ class Application {
             inputs_.open(options_.output / "inputs.jsonl");
         }
         audio_ = std::make_unique<audio::Audio>(options_.assets);
-        effects_.set_skip(options_.auto_rounds != 0); // EFFECTS: replays stay zero-duration
+        effects_.set_skip(options_.auto_rounds && !options_.play_effects); // EFFECTS: replays stay zero-duration
         if (!audio_->music_available())
             std::cerr << audio_->music_diagnostic() << '\n';
     }
@@ -224,7 +227,7 @@ class Application {
         auto last_tick = SDL_GetTicks();
         for (unsigned iteration = 0; running_; ++iteration) {
             draw();
-            if (options_.auto_rounds)
+            if (options_.auto_rounds && !effects_.active()) // EFFECTS: replay input waits for effects
                 drive_test();
             SDL_Event event{};
             while (SDL_PollEvent(&event)) {
@@ -703,6 +706,10 @@ class Application {
                       });
         if (effects_.active())
             buttons_.clear(); // input is blocked while an effect plays, as in the original
+        if (options_.play_effects && !options_.output.empty() && now >= effect_capture_ && effect_frames_ < 200) {
+            graphics::write_ppm(canvas_, options_.output / ("effect-" + std::to_string(effect_frames_++) + ".ppm"));
+            effect_capture_ = now + 300;
+        }
     }
     void draw_board() {
         const auto &world = session_->world();
@@ -1630,6 +1637,8 @@ class Application {
     std::unique_ptr<audio::Audio> audio_;
     native::EffectPlayer effects_{artwork_}; // EFFECTS
     Uint64 effect_ticks_ = 0;                // EFFECTS: last draw_effects() time
+    Uint64 effect_capture_ = 0;              // EFFECTS (--play-effects): next frame dump time
+    unsigned effect_frames_ = 0;
     graphics::Image canvas_;
     std::vector<Button> buttons_;
     native::Frame frame_{canvas_, artwork_, font_, buttons_};
