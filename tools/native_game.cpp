@@ -1597,8 +1597,10 @@ class Application {
                 }
                 if (const auto pending = items_.shop_pending_value()) // confirm the item tapped once
                     for (std::size_t i = 0; i < decision->options.size(); ++i)
-                        if (decision->options[i].value == *pending)
-                            choice = i;
+                        if (decision->options[i].value == *pending) {
+                            choice = i; // duplicate shelf rows all answer with the first option
+                            break;
+                        }
             } else if (decision->kind == DecisionKind::magic_effect) {
                 const auto desired = static_cast<int>((options_.seed + session_->completed_days()) % 12);
                 for (std::size_t i = 0; i < decision->options.size(); ++i)
