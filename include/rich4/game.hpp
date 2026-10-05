@@ -40,7 +40,8 @@ enum class DecisionKind {
     property_target,
     action_target,
     notice,
-    money_spinner
+    money_spinner,
+    mini_game // interactive 企鵝挖寶 / 七彩氣球 / 喜從天降; answer with submit_mini_game()
 };
 enum class GameEventKind {
     turn_started,
@@ -88,6 +89,16 @@ struct SpinnerState {
     bool operator==(const SpinnerState &) const = default;
 };
 
+// A pending interactive mini-game (docs/ui/mini-games.md). The app plays it on a Random seeded
+// with `seed` (the core's stream at landing time, exactly what the original's shared rand() would
+// continue from) and reports the score and how many rand() calls the game made.
+struct MiniGameState {
+    std::uint8_t game = 0;      // minigames::Game: 0 企鵝挖寶 (node kind 6), 1 七彩氣球 (7), 2 喜從天降 (8)
+    std::uint8_t character = 0; // the lander's character (喜從天降 catcher sprite Panel 100+character)
+    std::uint32_t seed = 0;     // core random state when the game starts
+    bool operator==(const MiniGameState &) const = default;
+};
+
 struct GameDecision {
     DecisionKind kind;
     std::size_t player;
@@ -97,6 +108,7 @@ struct GameDecision {
     std::vector<DecisionOption> options;
     std::int32_t max_amount = 0;
     std::optional<SpinnerState> spinner = std::nullopt; // money_spinner / roulette only
+    std::optional<MiniGameState> mini_game = std::nullopt; // mini_game only
 };
 
 // Original on-screen announcements (docs/ui/messages.md). Presentation only: emitting
@@ -262,6 +274,17 @@ class GameSession {
     bool buy_offer(std::size_t seller, std::size_t index);
     bool close_trading();
     bool respond(std::size_t option, std::int32_t amount = 0);
+    // Original Options "動畫過程" (RICH4.CFG[1]). Off (the default, and the headless replay
+    // harness) keeps the closed mode: a human on a mini-game tile gets rand()%20+50 points like a
+    // computer. On: a human gets a DecisionKind::mini_game decision instead and no random number
+    // is drawn until submit_mini_game.
+    void set_interactive_mini_games(bool enabled) noexcept;
+    [[nodiscard]] bool interactive_mini_games() const noexcept;
+    // Ends a pending mini_game decision: advances the random stream by `random_draws` calls (the
+    // game's own rand() calls in the shared original stream), adds `score` to the player's points
+    // as the original 16-bit word, and finishes the turn. Returns false when no mini-game is
+    // pending or the input is out of range (score < 0, draws > 10,000,000).
+    bool submit_mini_game(std::int32_t score, std::uint32_t random_draws);
     void tick(unsigned elapsed_ms);
     [[nodiscard]] std::vector<GameEvent> drain_events();
     // Additive presentation queue, in emission order (see EffectEvent).

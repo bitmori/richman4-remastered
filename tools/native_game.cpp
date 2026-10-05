@@ -23,6 +23,7 @@
 #include "screens/monthly.hpp"  // MONTHLY: dividend table, lottery draw, month-end report
 #include "screens/endgame.hpp"  // END SCREENS: PLAY AGAIN / stage clear
 #include "screens/help.hpp"     // HELP: the original Help window
+#include "screens/minigames.hpp" // MINIGAMES: 企鵝挖寶 / 七彩氣球 / 喜從天降
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -47,6 +48,7 @@ using namespace rich4;
 namespace fs = std::filesystem;
 namespace messages = native::messages;
 namespace spinners = native::spinners;
+namespace minigames = native::minigames;
 using native::Artwork;
 using native::Button;
 using native::map_names;
@@ -83,6 +85,7 @@ struct Options {
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
     bool start_loaded = false;      // dev: open --load straight into play (no menu) in real time
+    int minigame = -1;              // MINIGAMES (dev): --minigame penguin|balloon|catch plays one directly
     unsigned auto_rounds = 0;
     unsigned map = 0;
     unsigned exercise_card = 0, exercise_tool = 0;
@@ -155,6 +158,8 @@ Options arguments(int argc, char **argv) {
                 options.exercise_tool = static_cast<unsigned>(std::stoul(value));
             else if (argument == "--gallery")
                 options.gallery = value;
+            else if (argument == "--minigame") // MINIGAMES (dev)
+                options.minigame = value == "penguin" ? 0 : value == "balloon" ? 1 : value == "catch" ? 2 : -1;
             else
                 throw std::invalid_argument("Unknown argument: " + argument);
         }
@@ -308,7 +313,8 @@ class Application {
         auto last_tick = SDL_GetTicks();
         for (unsigned iteration = 0; running_; ++iteration) {
             draw();
-            if (options_.auto_rounds && !effects_.active() && !intro_.active()) // replay input waits for movies
+            if (options_.auto_rounds && !effects_.active() && !intro_.active() &&
+                options_.minigame < 0) // replay input waits for movies; MINIGAMES dev runs alone
                 drive_test();
             SDL_Event event{};
             while (SDL_PollEvent(&event)) {
@@ -803,6 +809,8 @@ class Application {
         messages_.clear();
         spinners_.clear();
         monthly_.clear(); // MONTHLY
+        minigames_.clear(); // MINIGAMES: the replay harness keeps the original closed mode
+        session_->set_interactive_mini_games(interactive_minigames_ && !options_.auto_rounds);
         presentation_.clear();
         presented_player_.reset();
         items_.reset();
@@ -964,7 +972,8 @@ class Application {
             last_screen_ = screen_;
             pad_.close();
             if (screen_ == Screen::settings)
-                options_screen_.open({speed_, audio_->music_enabled(), sound_effects_}, session_ != nullptr);
+                options_screen_.open({speed_, audio_->music_enabled(), sound_effects_, interactive_minigames_},
+                                     session_ != nullptr);
             if (screen_ == Screen::wealth && session_)
                 info_.open(session_->world().header.current_player);
         }
@@ -995,7 +1004,9 @@ class Application {
             draw_monthly(); // MONTHLY: full screen, modal
         if (session_ && screen_ == Screen::game)
             draw_intro();
-        if (screen_ == Screen::menu) {
+        if (options_.minigame >= 0 && screen_ == Screen::menu) {
+            draw_dev_minigame(); // MINIGAMES (dev): one game alone, replayed with the next seed
+        } else if (screen_ == Screen::menu) {
             cleared_maps_ = 0; // END SCREENS: the main menu ends a campaign (loc_00401c8c)
             main_menu_.draw(host, {[this] {
                                        if (session_ && session_->phase() != GamePhase::finished)
@@ -1019,6 +1030,9 @@ class Application {
                            if (audio_->music_enabled() != state.music)
                                audio_->set_music(state.music);
                            sound_effects_ = state.sound;
+                           interactive_minigames_ = state.animation; // MINIGAMES: 動畫過程 (cfg+1)
+                           if (session_)
+                               session_->set_interactive_mini_games(state.animation && !options_.auto_rounds);
                        },
                        [this] { screen_ = back_screen(); },
                        [this](unsigned track) {
@@ -1148,6 +1162,24 @@ class Application {
         const auto elapsed = monthly_ticks_ ? static_cast<unsigned>(std::min<Uint64>(now - monthly_ticks_, 100)) : 0U;
         monthly_ticks_ = now;
         monthly_.draw(frame_, session_->world(), options_.auto_rounds ? 40U : elapsed * speed_);
+    }
+    // MINIGAMES (dev): --minigame plays one game standalone; headless autoplays it and writes frames.
+    void draw_dev_minigame() {
+        buttons_.clear();
+        if (!minigames_.active()) {
+            if (dev_minigame_rounds_++ && options_.headless) {
+                running_ = false;
+                return;
+            }
+            minigames_.set_fixed_step(options_.headless ? 40 : 0);
+            minigames_.start(static_cast<minigames::core::Game>(options_.minigame),
+                             options_.seed + dev_minigame_rounds_, 0, frame_, options_.headless,
+                             options_.headless ? options_.output : fs::path{});
+        }
+        if (const auto result = minigames_.draw(frame_)) {
+            std::cerr << "mini-game score " << result->score << ", rand() calls " << result->draws << '\n';
+            minigames_.clear();
+        }
     }
     unsigned spinner_elapsed() { // SPINNERS: real time between frames (replays: 40 ms per frame)
         const auto now = SDL_GetTicks();
@@ -1536,6 +1568,11 @@ class Application {
         }
         if (items_.draw_decision(frame_, *session_, item_host()))
             return;
+        if (minigames::handles(decision)) { // MINIGAMES: full-screen game; its window closing submits
+            if (const auto result = minigames_.draw_decision(frame_, decision))
+                session_->submit_mini_game(result->score, result->draws); // `decision` is gone now
+            return;
+        }
         if (spinners::handles(decision)) { // SPINNERS: slot machine / cupid wheel; STOP keeps id 210
             spinners_.draw_decision(frame_, session_->world(), decision, 210, [this] { respond(0); });
             return;
@@ -1590,7 +1627,7 @@ class Application {
     }
     bool respond(std::size_t index) {
         const auto &decision = session_->pending_decision();
-        if (!decision)
+        if (!decision || minigames::handles(*decision)) // MINIGAMES: only the game's end submits
             return false;
         end_amount_edit();
         const auto amount =
@@ -2494,6 +2531,17 @@ class Application {
                                       [this](std::size_t entry) {
                                           return sound_effects_ ? audio_->play_speech(entry) : 0U;
                                       }}};
+    minigames::MiniGames minigames_{{[this](std::size_t id) { // MINIGAMES
+                                         if (sound_effects_)
+                                             audio_->play_sound(id);
+                                     },
+                                     [this](std::size_t id) {
+                                         if (sound_effects_)
+                                             audio_->play_loop(id);
+                                     },
+                                     [this] { audio_->stop_loop(); }}};
+    bool interactive_minigames_ = true; // MINIGAMES: Options 動畫過程 (RICH4.CFG[1]), on by default
+    unsigned dev_minigame_rounds_ = 0;  // MINIGAMES (dev)
     unsigned test_spinner_frames_ = 0; // SPINNERS (--play-effects): frames shown before the replay STOP
     std::deque<PresentationStep> presentation_; // see observe()
     std::optional<std::size_t> presented_player_;

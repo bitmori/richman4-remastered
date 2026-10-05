@@ -96,6 +96,7 @@ struct GameSession::Impl {
     unsigned spinner_elapsed = 0;
     CardAiMemory card_ai_memory{};
     bool property_pending = false, purchased_property = false;
+    bool interactive_mini_games = false; // RICH4.CFG[1]; off = closed mode (replay harness)
 
     explicit Impl(World value, std::uint32_t seed)
         : world(std::move(value)),
@@ -3125,7 +3126,14 @@ struct GameSession::Impl {
             open_shop(node.type_and_index);
         else if (kind == 16)
             open_magic();
-        else if (kind >= 6 && kind <= 8) {
+        else if (kind >= 6 && kind <= 8 && interactive_mini_games && human()) {
+            // RICH4.CFG[1] != 0 and a human (small_games.asm:4229): the interactive game. Nothing
+            // is drawn here; submit_mini_game advances the stream by the game's own rand() calls.
+            GameDecision prompt{DecisionKind::mini_game, actor(), 0, 0, "小遊戲", {}};
+            prompt.mini_game = MiniGameState{static_cast<std::uint8_t>(kind - 6), player().character, random.state()};
+            decision = std::move(prompt);
+            set_phase(GamePhase::awaiting_decision);
+        } else if (kind >= 6 && kind <= 8) {
             // Original RICH4.CFG[1] == 0 mode: built-in auto result for each
             // minigame, including humans. Keep both reward and speech RNG draws.
             const auto reward = static_cast<std::uint16_t>(random.next() % 20 + 50);
@@ -3788,6 +3796,26 @@ bool GameSession::respond(std::size_t option, std::int32_t amount) {
         impl_->set_phase(GamePhase::human_ready);
     else
         impl_->finish_turn();
+    return true;
+}
+void GameSession::set_interactive_mini_games(bool enabled) noexcept {
+    impl_->interactive_mini_games = enabled;
+}
+bool GameSession::interactive_mini_games() const noexcept {
+    return impl_->interactive_mini_games;
+}
+bool GameSession::submit_mini_game(std::int32_t score, std::uint32_t random_draws) {
+    if (impl_->phase != GamePhase::awaiting_decision || !impl_->decision ||
+        impl_->decision->kind != DecisionKind::mini_game || score < 0 || random_draws > 10'000'000U)
+        return false;
+    impl_->decision.reset();
+    for (std::uint32_t i = 0; i < random_draws; ++i)
+        (void)impl_->random.next(); // the game's rand() calls in the original's shared stream
+    auto &player = impl_->player();
+    // core_actions:2371 `add word [player+48], ax`: the original adds the low 16 bits.
+    player.points = static_cast<std::uint16_t>(player.points + static_cast<std::uint32_t>(score));
+    impl_->emit(GameEventKind::points_received, "小游戏获得" + std::to_string(score) + "点", score);
+    impl_->finish_turn();
     return true;
 }
 void GameSession::tick(unsigned elapsed_ms) {
