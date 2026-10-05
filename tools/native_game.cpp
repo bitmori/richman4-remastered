@@ -20,6 +20,7 @@
 #include "screens/effects.hpp" // EFFECTS: original board animations
 #include "screens/intro.hpp"   // new-game airplane / parachute intro
 #include "screens/spinners.hpp" // SPINNERS: god slot machine / cupid wheels
+#include "screens/tile_popup.hpp" // map-tile info popup (main-screen.md §7)
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -361,6 +362,8 @@ class Application {
                     const int x = int(event.button.x), y = int(event.button.y);
                     for (const auto &button : buttons_)
                         if (button.enabled && ui::contains(button.rectangle, x, y)) {
+                            if (button.id != native::tile_popup::hit_id)
+                                tile_popup_.reset(); // a tap elsewhere dismisses the tile popup
                             auto action = button.action;
                             ++input_events_;
                             if (inputs_)
@@ -1229,7 +1232,19 @@ class Application {
         };
         actions.can_save = session_->can_save();
         actions.can_load = fs::exists(load_path());
+        // Map-tile popup (main-screen.md §7): only while GO waits and nothing else is shown; GO,
+        // target picking and the minimap keep priority (their hits are registered first).
+        const bool board_idle = screen_ == Screen::game && session_->phase() == GamePhase::human_ready &&
+                                !session_->pending_decision() && !messages_.active() && presentation_.empty() &&
+                                !presenting() && !main_screen_.dice_busy();
+        if (!board_idle)
+            tile_popup_.reset();
+        else if (tile_popup_)
+            native::tile_popup::draw(frame_, world, *tile_popup_);
         main_screen_.draw(frame_, *session_, rotation_, actions);
+        if (board_idle)
+            buttons_.push_back({native::tile_popup::hit_id, current_camera_.viewport, true,
+                                [this] { toggle_tile_popup(frame_.pointer_x, frame_.pointer_y); }, false});
         // A decision appears only after everything emitted before it (e.g. a god's entrance movie and
         // caption before its spinner) has been shown, as the original blocks until then.
         if (screen_ == Screen::game && session_->pending_decision() && !messages_.active() &&
@@ -1246,6 +1261,19 @@ class Application {
             button(71, {125, 280, 275, 322}, "存檔", [this] { save(); });
             button(110, {295, 280, 515, 322}, "返回主選單", [this] { screen_ = Screen::menu; });
         }
+    }
+    // Touch: a tap on the board shows the popup; the next tap anywhere dismisses it.
+    void toggle_tile_popup(int x, int y) {
+        if (tile_popup_) {
+            tile_popup_.reset();
+            return;
+        }
+        const auto code = native::tile_popup::instance_at(session_->world(), current_camera_, x, y);
+        if (!code || native::tile_popup::lines(session_->world(), code).empty())
+            return;
+        tile_popup_ = native::tile_popup::Popup{x, y, code};
+        if (sound_effects_)
+            audio_->play_sound(1); // ref_00482322, as fcn_00417559
     }
     native::items::Host item_host() {
         return {[this] { screen_ = Screen::game; },
@@ -1357,9 +1385,9 @@ class Application {
         if (option.location)
             target_center_ = board::Point{option.location->x, option.location->y};
     }
-    void draw_map_decision() {
+    void draw_map_decision(const GameDecision &pending) {
         // Original names for the targets (messages::localized); values and order are unchanged.
-        const auto decision = messages::localized(*session_->pending_decision(), session_->world());
+        const auto decision = messages::localized(pending, session_->world());
         ui::fill(canvas_, {440, 0, 640, 480}, ui::paper);
         font_.draw(canvas_, decision.prompt, 449, 16, 16, ui::blue, 181);
         constexpr std::size_t page_size = 8;
@@ -1434,7 +1462,7 @@ class Application {
             return;
         }
         if (map_decision()) {
-            draw_map_decision();
+            draw_map_decision(decision);
             return;
         }
         if (items_.draw_decision(frame_, *session_, item_host()))
@@ -2199,8 +2227,139 @@ class Application {
             frame_.pointer_x = frame_.pointer_y = -1;
             graphics::write_ppm(canvas_, options_.output / ("gallery-yesno-" + std::to_string(hover) + ".ppm"));
         }
+        dump_rules_text_gallery(land);
         buttons_.clear();
         draw();
+    }
+    // Review shots for the Traditional prompts and the map-tile popup (gallery-rules-*.ppm).
+    void dump_rules_text_gallery(std::uint16_t land) {
+        const auto &world = session_->world();
+        const auto base = [this] {
+            messages_.clear();
+            gallery_ = true;
+            draw();
+            gallery_ = false;
+            buttons_.clear();
+        };
+        const auto save = [this](const std::string &name) {
+            graphics::write_ppm(canvas_, options_.output / ("gallery-rules-" + name + ".ppm"));
+        };
+        const auto slot = world.header.current_player;
+        GameDecision free_card{DecisionKind::card_target, slot, 0, 1200, "是否使用免費卡？",
+                               {{"使用免費卡", 1}, {"保留卡片", 0}}};
+        base();
+        messages::draw_yes_no(frame_, messages::yes_no_question(free_card, world), 210, [] {}, 211, [] {});
+        save("free-card");
+        const auto other = (slot + 1) % world.players.size();
+        GameDecision frame_card{DecisionKind::card_target, slot, 0, 0, "", {}};
+        frame_card.options.push_back({"", std::int32_t(other), std::nullopt,
+                                      CardTarget{CardTargetKind::actor, static_cast<std::uint16_t>(other)}});
+        frame_card.options.push_back({"保留卡片", -1});
+        base();
+        messages::draw_yes_no(frame_, messages::yes_no_question(frame_card, world), 210, [] {}, 211, [] {});
+        save("frame-card-one");
+        frame_card.prompt = "請選擇嫁禍對象...";
+        frame_card.options.insert(frame_card.options.begin() + 1,
+                                  {"", std::int32_t((slot + 2) % world.players.size()), std::nullopt,
+                                   CardTarget{CardTargetKind::actor,
+                                              static_cast<std::uint16_t>((slot + 2) % world.players.size())}});
+        base();
+        draw_choice_dialog(messages::localized(frame_card, world));
+        save("frame-card-several");
+        base();
+        draw_choice_dialog(GameDecision{DecisionKind::construct_facility, slot, 1, 0, "請選擇設施類別",
+                                        {{"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}});
+        save("facility-type");
+        base();
+        draw_choice_dialog(GameDecision{DecisionKind::action_target, slot, 0, 0, "選擇點數",
+                                        {{"1點", 1}, {"2點", 2}, {"3點", 3}, {"4點", 4}, {"5點", 5}, {"6點", 6},
+                                         {"取消", 0}}});
+        save("remote-dice");
+        base();
+        draw_choice_dialog(GameDecision{DecisionKind::notice, slot, 0, 0, "本次事件略過。", {{"繼續", 0}}});
+        save("notice");
+        GameDecision red{DecisionKind::action_target, slot, 0, 0, "紅卡：選擇目標", {}};
+        for (std::uint16_t stock = 0; stock < 6; ++stock)
+            red.options.push_back({"股票" + std::to_string(stock + 1), stock, std::nullopt,
+                                   CardTarget{CardTargetKind::stock, stock}});
+        red.options.push_back({"取消", -1});
+        base();
+        draw_choice_dialog(messages::localized(red, world));
+        save("red-card");
+        // Construction company target panel: real street/facility names, 取消 button.
+        GameDecision build{DecisionKind::property_target, slot, 0, 0, "請選擇欲加蓋地點", {}};
+        for (std::size_t i = 1; i < world.lands.size() && build.options.size() < 12; ++i)
+            build.options.push_back({"房產" + std::to_string(i), std::int32_t(2000 + i),
+                                     DecisionLocation{world.lands[i].x, world.lands[i].y},
+                                     CardTarget{CardTargetKind::property, static_cast<std::uint16_t>(2000 + i)}});
+        build.options.push_back({"取消", 0});
+        base();
+        selected_target_.reset();
+        draw_map_decision(build);
+        save("construction-targets");
+        buttons_.clear();
+        // Map-tile popups: tap points are the projected anchors, hit-tested through instance_at.
+        const auto shoot_popup = [&](const std::string &name, const World &shown, std::uint16_t code, int dy) {
+            board::Point world_point{};
+            if (code > 2000 && code < 4000)
+                world_point = {shown.lands[code - 2000].x, shown.lands[code - 2000].y};
+            else if (code > 4000 && code < 6000)
+                world_point = {shown.facilities[code - 4000].x, shown.facilities[code - 4000].y};
+            else if (code > 6000 && code < 8000)
+                world_point = {shown.commercials[code - 6000].x, shown.commercials[code - 6000].y};
+            else if (code & 0x8000U)
+                world_point = {shown.players[std::size_t(std::countr_zero(unsigned(code & 0xffU)))].state.x,
+                               shown.players[std::size_t(std::countr_zero(unsigned(code & 0xffU)))].state.y};
+            else
+                world_point = {shown.nodes[code].x, shown.nodes[code].y};
+            base();
+            const auto at = board::project(world_point, current_camera_);
+            if (!at)
+                return;
+            const int x = at->x, y = at->y + dy;
+            const auto hit = native::tile_popup::instance_at(shown, current_camera_, x, y);
+            native::tile_popup::draw(frame_, shown, {x, y, hit ? hit : code});
+            if (hit != code)
+                std::cerr << "tile popup " << name << ": tap hit " << hit << " instead of " << code << '\n';
+            save("popup-" + name);
+        };
+        // Pick properties near the current camera so the shots show them on screen.
+        const auto visible = [&](int wx, int wy) {
+            const auto p = board::project({wx, wy}, current_camera_);
+            return p && p->x > 30 && p->x < 410 && p->y > 80 && p->y < 450;
+        };
+        auto shown = world;
+        std::vector<std::uint16_t> lands;
+        for (std::size_t i = 1; i < shown.lands.size(); ++i)
+            if (visible(shown.lands[i].x, shown.lands[i].y))
+                lands.push_back(static_cast<std::uint16_t>(i));
+        if (lands.empty())
+            lands.push_back(land);
+        shoot_popup("land-unowned", shown, static_cast<std::uint16_t>(2000 + lands[0]), 0);
+        auto &owned = shown.lands[lands[0]].economy;
+        owned.owner_code = 1;
+        owned.level = 3;
+        shoot_popup("land-owned-level3", shown, static_cast<std::uint16_t>(2000 + lands[0]), -20);
+        owned.chain_store = 1;
+        owned.level = 1;
+        shoot_popup("land-chain", shown, static_cast<std::uint16_t>(2000 + lands[0]), -10);
+        for (std::size_t i = 1; i < shown.facilities.size(); ++i)
+            if (visible(shown.facilities[i].x, shown.facilities[i].y)) {
+                shoot_popup("facility", shown, static_cast<std::uint16_t>(4000 + i), 0);
+                break;
+            }
+        for (std::size_t i = 1; i < shown.commercials.size(); ++i)
+            if (visible(shown.commercials[i].x, shown.commercials[i].y)) {
+                shoot_popup("company", shown, static_cast<std::uint16_t>(6000 + i), -20);
+                break;
+            }
+        shoot_popup("player", shown, static_cast<std::uint16_t>(0x8000U | (1U << slot)), -20);
+        for (std::size_t i = 1; i < shown.nodes.size(); ++i)
+            if (!shown.nodes[i].name.empty() && visible(shown.nodes[i].x, shown.nodes[i].y) &&
+                !(shown.nodes[i].flags & 0x00ffff00U)) {
+                shoot_popup("node", shown, static_cast<std::uint16_t>(i), 0);
+                break;
+            }
     }
     void finish_test() {
         const bool passed =
@@ -2339,6 +2498,7 @@ class Application {
     bool test_trade_acted_ = false;
     std::optional<std::uint32_t> initial_random_state_;
     board::Camera current_camera_{};
+    std::optional<native::tile_popup::Popup> tile_popup_; // shown until the next tap
     std::optional<board::Point> target_center_;
     std::optional<std::size_t> selected_target_;
     std::uint64_t last_autosaved_day_ = UINT64_MAX;

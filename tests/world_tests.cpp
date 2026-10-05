@@ -79,6 +79,9 @@ Bytes synthetic_map() {
     put16(result, commerce + 32, 19);
     put16(result, commerce + 34, 5100);
     const auto landscape = u32(result, 36) + 28;
+    result[landscape + 4] = 'L';
+    result[commerce + 4] = 'C';
+    result[40 + 2 * 40 + 4] = 'N'; // node 2
     result[landscape + 24] = 6;
     put16(result, landscape + 26, 444);
     return result;
@@ -260,6 +263,9 @@ void fresh_world() {
     NewGameOptions options;
     options.random_seed = 0;
     auto world = World::from_map_resource(map, options);
+    require(world.nodes[2].name == "N" && world.nodes[1].name.empty() && world.commercials[1].name == "C" &&
+                world.landscapes[1].name == "L",
+            "Node/company/landscape names (+4) decode for the map-tile popup");
     require(world.players.size() == 4 && world.header.human_player_count == 1 &&
                 world.active_player().state.character == 10,
             "Default new game has chosen human and three opponents");

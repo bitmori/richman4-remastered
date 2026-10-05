@@ -112,6 +112,7 @@ struct MapNode {
     std::uint16_t type_and_index = 0;         // Original event/property code, not an enum guess.
     std::uint16_t ground_sprite = 0;
     std::uint32_t flags = 0;
+    std::string name{}; // Original Big5 bytes at +4 (map-tile popup only; read-only, never saved).
 };
 
 struct Land {
@@ -165,6 +166,7 @@ struct Commercial {
     std::int32_t shares_remaining = 0;               // +0x30.
     std::array<std::uint8_t, 4> shareholder_order{}; // +0x1c, stable original rank order.
     std::int32_t valuation = 0;                      // +0x24.
+    std::string name{}; // Original Big5 bytes at +4 (map-tile popup only; read-only, never saved).
 };
 
 // Fifth map table. Only rendering placement fields are interpreted; all other
@@ -175,6 +177,7 @@ struct Landscape {
     std::uint16_t y = 0;
     std::uint8_t direction = 0;
     std::uint16_t sprite_index = 0;
+    std::string name{}; // Original Big5 bytes at +4 (map-tile popup only; read-only, never saved).
 };
 
 struct NewGamePlayer {

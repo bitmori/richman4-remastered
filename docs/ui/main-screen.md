@@ -429,7 +429,15 @@ is a partial decode of `fcn_00417559` (9646).
   - Land: owner name, level/type name, and toll or "×%d" chain count.
   - Node name for nodes.
 - The popup is restored on mouse up or move (`fcn_00417c67`, 10303).
-- Fully specifying it is out of scope here.
+- Text base is `y+42` (frame below the pointer) or `y-96` (above), centred at
+  `x ± (w/2+9)`. Land: owner @+0, level name (`空  地`/`連鎖店`/0x475138) @+18,
+  `N級` (0x475164) @+36, `$toll` / `$2000·index×chains` / unowned `$toll_by_level[level]` @+54.
+  Facility: owner, then `空  地` or type name (0x475150) and, for hotel/mall, `N級` and
+  `×(toll_by_level[level]·index)`; gas station `×1000`. Company: owner, name @+27,
+  `餘股:%d` @+54. Node/landscape name @+27; player/special actor/object name @+25.
+- Native: `tools/screens/tile_popup.cpp`. Touch shows it on a tap and hides it on the
+  next tap; hit-testing uses sprite boxes around projected anchors plus
+  `board::unproject` for named road tiles instead of the original ID buffer.
 
 ## 8. Text rendering
 

@@ -198,6 +198,31 @@ std::optional<Point> project(Point world, const Camera &camera) {
                  center.y + cell.y + camera_fraction.y - world_fraction.y};
 }
 
+std::optional<Point> unproject(Point screen, const Camera &camera) {
+    validate_camera(camera);
+    const auto &viewport = camera.viewport;
+    if (screen.x < viewport.left || screen.x >= viewport.right || screen.y < viewport.top ||
+        screen.y >= viewport.bottom)
+        return std::nullopt;
+    const int base_x = floor_divide_32(camera.center.x), base_y = floor_divide_32(camera.center.y);
+    std::optional<Point> best;
+    std::int64_t best_distance = 0;
+    for (int dy = -14; dy <= 14; ++dy)
+        for (int dx = -14; dx <= 14; ++dx) {
+            const Point world{(base_x + dx) * 32 + 16, (base_y + dy) * 32 + 16};
+            const auto projected = project(world, camera);
+            if (!projected)
+                continue;
+            const std::int64_t ex = projected->x - screen.x, ey = projected->y - screen.y;
+            const auto distance = ex * ex + ey * ey;
+            if (!best || distance < best_distance) {
+                best = world;
+                best_distance = distance;
+            }
+        }
+    return best;
+}
+
 struct Renderer::Impl {
     std::uint8_t map_id;
     assets::Archive map_archive;

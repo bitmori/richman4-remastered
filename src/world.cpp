@@ -275,6 +275,7 @@ World World::from_save(const SaveFile &save) {
         node.type_and_index = u16(bytes, offset + 32);
         node.ground_sprite = u16(bytes, offset + 34);
         node.flags = u32(bytes, offset + 36);
+        node.name = name_at(bytes, offset + 4);
         world.nodes.push_back(node);
     }
     for (std::uint32_t id = 0; id <= world.map_.lands.count; ++id) {
@@ -330,11 +331,13 @@ World World::from_save(const SaveFile &save) {
         std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(offset + 28), 4,
                     commercial.shareholder_order.begin());
         commercial.valuation = std::bit_cast<std::int32_t>(u32(bytes, offset + 36));
+        commercial.name = name_at(bytes, offset + 4);
     }
     for (std::uint32_t id = 0; id <= world.map_.raw_reserved_table_4.count; ++id) {
         const auto offset = record_offset(world.map_.raw_reserved_table_4, id);
         world.landscapes.push_back(
-            {id, u16(bytes, offset), u16(bytes, offset + 2), bytes[offset + 24], u16(bytes, offset + 26)});
+            {id, u16(bytes, offset), u16(bytes, offset + 2), bytes[offset + 24], u16(bytes, offset + 26),
+             name_at(bytes, offset + 4)});
     }
     return world;
 }

@@ -52,6 +52,28 @@ void projection_tests() {
                     "active player does not remain at camera center");
         }
     }
+    // unproject: every visible tile centre maps back to its own tile, in all eight views, and a
+    // point inside a tile (not just its centre) finds that tile.
+    for (int view = 0; view < 8; ++view) {
+        camera.rotation = static_cast<std::uint8_t>(view);
+        camera.center = {1000, 2010};
+        std::size_t checked = 0;
+        for (int dy = -14; dy <= 14; ++dy)
+            for (int dx = -14; dx <= 14; ++dx) {
+                const Point tile{(1000 / 32 + dx) * 32 + 16, (2010 / 32 + dy) * 32 + 16};
+                const auto screen = project(tile, camera);
+                if (!screen || screen->x < 0 || screen->x >= 440 || screen->y < 40 || screen->y >= 480)
+                    continue;
+                ++checked;
+                require(unproject(*screen, camera) == tile, "unproject misses a tile centre");
+                const auto inside = project({tile.x + 5, tile.y - 4}, camera);
+                if (inside && inside->x >= 0 && inside->x < 440 && inside->y >= 40 && inside->y < 480)
+                    require(unproject(*inside, camera) == tile, "unproject misses a point inside a tile");
+            }
+        require(checked > 100, "too few visible tiles for the unproject check");
+    }
+    require(!unproject({440, 200}, camera) && !unproject({100, 39}, camera),
+            "unproject accepts a point outside the board viewport");
     camera.rotation = 8;
     requires_error([&] { (void)project({0, 0}, camera); });
     requires_error([] { Renderer renderer("does-not-exist", 8); });
