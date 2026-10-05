@@ -243,11 +243,15 @@ def main():
                         [f'quantity{i}' for i in range(12)] + [f'price_bits{i}' for i in range(12)])
         writer.writerows(wealth_rows)
     outputs['wealth.csv'] = {'rows': len(wealth_rows), 'sha256': hashlib.sha256(wealth.read_bytes()).hexdigest()}
-    manifest = {'schema': 'original-stocks-precision-v1', 'exe_sha256': EXPECTED_EXE,
+    from capture_stock_market import capture
+    outputs.update(capture(oracle, output, bits))
+    manifest = {'schema': 'original-stocks-precision-v2', 'exe_sha256': EXPECTED_EXE,
                 'engine': 'Unicorn ' + unicorn.__version__, 'x87_control_word': '0x037f',
                 'fprem_exact_instruction_emulation_count': oracle.fprem_count,
                 'fprem_fix': 'Exact binary integer quotient/remainder replaces emulator FPREM at 0x458425 only',
                 'ui_stub': '0x40a4e1 minimap redraw returns without drawing',
+                'market_adapters': ['CRT thread state returns private guest storage',
+                                    'calendar holiday predicate returns fixture Boolean'],
                 'differences_from_boxedwine': differences, 'outputs': outputs}
     (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     latest = ROOT / '.local/stocks-oracle/precision-latest'

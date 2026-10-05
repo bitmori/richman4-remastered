@@ -3,6 +3,7 @@
 // 0x428ec5, 0x429040 and 0x4294d5. No Windows ABI or host pointer fields.
 #include "rich4/stocks.hpp"
 #include "rich4/world.hpp"
+#include "rich4/random.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -12,6 +13,9 @@
 
 namespace rich4::stocks {
 namespace {
+
+static_assert(sizeof(float) == 4 && sizeof(double) == 8 &&
+              std::numeric_limits<float>::is_iec559 && std::numeric_limits<double>::is_iec559);
 
 // Finite x87 arithmetic, rounded to its 64-bit significand after every
 // operation. ARM long double is only binary64, so it cannot preserve the
@@ -142,6 +146,11 @@ std::int32_t add_wrap(std::int32_t first, std::int32_t second) {
                                        std::bit_cast<std::uint32_t>(second));
 }
 
+std::int32_t subtract_wrap(std::int32_t first, std::int32_t second) {
+    return std::bit_cast<std::int32_t>(std::bit_cast<std::uint32_t>(first) -
+                                       std::bit_cast<std::uint32_t>(second));
+}
+
 // Exact positive binary32 price times signed32 nonnegative share count, then
 // x87 FISTP's truncation to int32. Integer arithmetic avoids host FP precision
 // differences. An overflowing conversion returns x87's integer-indefinite.
@@ -234,7 +243,8 @@ float adjusted_price(float previous, float percent) {
     // to the previous quote, not the absolute quote to a decimal grid.
     const float candidate = ((Extended::from(100) + Extended::from(percent)) /
                              Extended::from(100) * Extended::from(previous)).single();
-    const float change = percent > 0 ? candidate - previous : previous - candidate;
+    const float change = (percent > 0 ? Extended::from(candidate) - Extended::from(previous)
+                                     : Extended::from(previous) - Extended::from(candidate)).single();
     const double tick = candidate < 5 ? 0.01 : candidate < 15 ? 0.05 :
                         candidate < 50 ? 0.1 : candidate < 150 ? 0.5 : 1.0;
     const auto delta = Extended::from(change);
@@ -244,6 +254,65 @@ float adjusted_price(float previous, float percent) {
     const float rounded = (percent > 0 ? Extended::from(candidate) - remainder
                                       : Extended::from(candidate) + remainder).single();
     return std::clamp(rounded, 1.0F, 9999.0F);
+}
+
+PriceTrend trend(const World& world, std::size_t stock) {
+    const auto& value = world.stocks.at(stock);
+    const auto previous = std::bit_cast<float>(value.float_bits[1]);
+    const auto current = std::bit_cast<float>(value.float_bits[2]);
+    if (current > previous) {
+        return current >= adjusted_price(previous, 10) ? PriceTrend::limit_up : PriceTrend::rising;
+    }
+    if (current < previous) {
+        return current <= adjusted_price(previous, -10) ? PriceTrend::limit_down : PriceTrend::falling;
+    }
+    return PriceTrend::unchanged;
+}
+
+PurchaseResult buy_stock(World& world, std::size_t player, std::size_t stock,
+                         std::int32_t amount, bool from_market) {
+    if (world.players.size() > 4 || player >= world.players.size() || stock >= world.stocks.size()) {
+        throw std::out_of_range("stock purchase player or stock index out of range");
+    }
+    auto& account = world.players[player];
+    auto& holding = account.stocks[stock];
+    auto& company = world.stocks[stock];
+    auto* commercial = linked_commercial(world, stock);
+    if (amount <= 0 || holding.amount < 0 || amount > INT32_MAX - holding.amount) {
+        throw std::invalid_argument("stock purchase requires a positive nonoverflowing quantity");
+    }
+    std::int32_t cost;
+    if (from_market) {
+        cost = sale_proceeds(std::bit_cast<float>(company.float_bits[2]), amount);
+        if (cost < 0 || cost > account.state.bank_balance || amount > company.shares_available ||
+            amount > company.flags_10) {
+            throw std::invalid_argument("stock purchase exceeds market shares or bank balance");
+        }
+    } else {
+        if (!commercial || commercial->valuation < 0 || amount > commercial->shares_remaining) {
+            throw std::invalid_argument("company purchase exceeds primary shares");
+        }
+        const auto value = std::int64_t(commercial->valuation / 10000) * amount;
+        if (value > account.state.cash || value > INT32_MAX) {
+            throw std::invalid_argument("company purchase exceeds cash balance");
+        }
+        cost = static_cast<std::int32_t>(value);
+    }
+    const auto previous_cost = sale_proceeds(std::bit_cast<float>(holding.raw_cost_basis), holding.amount);
+    const auto total_cost = add_wrap(previous_cost, cost);
+    const auto new_quantity = holding.amount + amount;
+    const auto basis = (Extended::from(total_cost) / Extended::from(new_quantity)).single();
+    if (from_market) {
+        company.shares_available = static_cast<std::uint16_t>(company.shares_available - amount);
+        company.flags_10 = static_cast<std::uint16_t>(company.flags_10 - amount);
+        account.state.bank_balance = subtract_wrap(account.state.bank_balance, cost);
+    } else {
+        commercial->shares_remaining -= amount;
+        account.state.cash = subtract_wrap(account.state.cash, cost);
+    }
+    holding.amount = new_quantity;
+    holding.raw_cost_basis = std::bit_cast<std::uint32_t>(basis);
+    return {cost, update_commercial_owner(world, commercial, player, stock)};
 }
 
 SaleResult sell_stock(World& world, std::size_t player, std::size_t stock,
@@ -317,7 +386,7 @@ std::int32_t player_wealth(const World& world, std::size_t player) {
         }
         // In the original FILD total / FSTP float loses low integer bits before
         // each stock addition, even for a zero holding. Preserve that sequence.
-        const auto rounded_total = static_cast<std::int64_t>(static_cast<float>(total));
+        const auto rounded_total = static_cast<std::int64_t>(Extended::from(total).single());
         const auto raw = std::bit_cast<std::uint32_t>(quote);
         const auto exponent = (raw >> 23) & 255U;
         const auto significand = (raw & 0x7fffffU) | (exponent == 0 ? 0 : 0x800000U);
@@ -348,6 +417,82 @@ std::int32_t player_wealth(const World& world, std::size_t player) {
         }
     }
     return total;
+}
+
+void refresh_trade_limits(World& world, Random& random) {
+    for (auto& stock : world.stocks) {
+        if (stock.shares_available <= 1000) {
+            stock.flags_10 = stock.shares_available;
+        } else {
+            const auto fraction = Extended::from(random.next() % 2000 + 1000) / Extended::from(10000);
+            stock.flags_10 = static_cast<std::uint16_t>((fraction * Extended::from(stock.shares_available)).integer());
+        }
+    }
+}
+
+bool daily_update(World& world, Random& random, bool calendar_holiday) {
+    if (calendar_holiday || world.news_effect_days != 0) {
+        return false;
+    }
+    if (world.stock_history_cursor < 0 || world.stock_history_cursor >= 144) {
+        throw std::out_of_range("daily stock history cursor out of range");
+    }
+    // Explicit binary32 stores match the original globals and stock fields.
+    const auto market = (Extended::from(int(random.next()) - 16384) / Extended::from(4097)).single();
+    world.stock_market_movement_bits = std::bit_cast<std::uint32_t>(market);
+    float total = 0;
+    for (std::size_t index = 0; index < world.stocks.size(); ++index) {
+        auto& stock = world.stocks[index];
+        stock.float_bits[1] = stock.float_bits[2];
+        const auto previous = std::bit_cast<float>(stock.float_bits[1]);
+        float movement;
+        if (stock.suspension_days != 0) {
+            movement = 0;
+        } else if (stock.news_movement != 0) {
+            movement = (stock.news_movement & 0xf0U) != 0 ? 10.0F : -10.0F;
+        } else {
+            const auto impulse = Extended::from(int(random.next()) - 16384) / Extended::from(1171);
+            stock.raw_32 = std::bit_cast<std::uint32_t>(impulse.single());
+            movement = (impulse * Extended::from(std::bit_cast<float>(stock.float_bits[3])) +
+                        Extended::from(std::bit_cast<float>(stock.float_bits[4]))).single();
+            movement = (Extended::from(movement) + Extended::from(market)).single();
+            // Excessive prices damp positive moves and amplify negative moves;
+            // undervalued prices do the opposite. Thresholds differ for linked
+            // companies and standalone stocks, exactly as in 0x4291d6.
+            float reference;
+            float upper_multiple;
+            double lower_multiple;
+            if (const auto* commercial = linked_commercial(world, index)) {
+                reference = (Extended::from(commercial->valuation) / Extended::from(10000)).single();
+                upper_multiple = 3;
+                lower_multiple = 0.85; // The original constant is binary64.
+            } else {
+                reference = std::bit_cast<float>(stock.float_bits[0]);
+                upper_multiple = 8;
+                lower_multiple = 0.5;
+            }
+            if (previous > reference) {
+                const auto upper = (Extended::from(reference) * Extended::from(upper_multiple)).single();
+                if (previous > upper) {
+                    movement = (Extended::from(movement) * Extended::from(movement > 0 ? 0.5 : 2)).single();
+                }
+            } else {
+                const auto lower = (Extended::from(reference) * Extended::from(lower_multiple)).single();
+                if (previous < lower) {
+                    movement = (Extended::from(movement) * Extended::from(movement > 0 ? 2 : 0.5)).single();
+                }
+            }
+            movement = std::clamp(movement, -10.0F, 10.0F);
+        }
+        stock.float_bits[4] = std::bit_cast<std::uint32_t>(movement);
+        const auto current = adjusted_price(previous, movement);
+        stock.float_bits[2] = std::bit_cast<std::uint32_t>(current);
+        world.stock_history_bits[index][static_cast<std::size_t>(world.stock_history_cursor)] = stock.float_bits[2];
+        total = (Extended::from(total) + Extended::from(current)).single();
+    }
+    world.stock_history_cursor = (world.stock_history_cursor + 1) % 144;
+    world.stock_market_index = (Extended::from(total) * Extended::from(10)).integer();
+    return true;
 }
 
 } // namespace rich4::stocks

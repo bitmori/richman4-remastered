@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "rich4/stocks.hpp"
 #include "rich4/world.hpp"
+#include "rich4/random.hpp"
 
 #include <bit>
 #include <filesystem>
@@ -118,6 +119,23 @@ void unit_tests() {
     check(world.stocks[0].news_movement == 0x11, "forced update preserves news flags");
     check(rich4::stocks::adjusted_price(1.0F, -10.0F) == 1.0F, "lower price clamp");
     check(rich4::stocks::adjusted_price(9999.0F, 10.0F) == 9999.0F, "upper price clamp");
+
+    world = fixture();
+    const auto purchase = rich4::stocks::buy_stock(world, 3, 0, 500, true);
+    check(purchase.cost == 7775 && purchase.commercial_owner_changed, "market purchase changes controlling shareholder");
+    check(world.players[3].state.bank_balance == 2225 && world.players[3].state.cash == 20000, "market purchase uses bank");
+    check(world.players[3].stocks[0].amount == 1200 && world.commercials[1].owner_code == 4, "market purchase quantity and owner");
+    world = fixture();
+    world.commercials[1].valuation = 155599;
+    world.commercials[1].shares_remaining = 5000;
+    const auto primary = rich4::stocks::buy_stock(world, 3, 0, 500, false);
+    check(primary.cost == 7500, "primary purchase truncates unit valuation before multiplying");
+    check(world.players[3].state.cash == 12500 && world.players[3].state.bank_balance == 10000, "primary purchase uses cash");
+    check(world.commercials[1].shares_remaining == 4500 && world.stocks[0].shares_available == 6600, "primary purchase preserves market shares");
+    rich4::Random random(123);
+    check(!rich4::stocks::daily_update(world, random, true) && random.state() == 123, "holiday preserves random stream");
+    world.news_effect_days = 0x80;
+    check(!rich4::stocks::daily_update(world, random, false) && random.state() == 123, "news freeze preserves random stream");
 }
 
 void compare_oracle(const std::filesystem::path& directory) {
@@ -221,6 +239,109 @@ void compare_oracle(const std::filesystem::path& directory) {
             }
         }
         std::cout << "Original wealth cases: " << wealth.size() << '\n';
+    }
+    if (std::filesystem::exists(directory / "limits.csv")) {
+        const auto limits = read_csv(directory / "limits.csv", 6);
+        check(limits.size() % 12 == 0, "truncated quota group");
+        for (std::size_t group = 0; group < limits.size(); group += 12) {
+            auto world = fixture();
+            rich4::Random random(limits[group][1]);
+            for (std::size_t index = 0; index < 12; ++index) {
+                check(limits[group + index][2] == index, "quota index order");
+                world.stocks[index].shares_available = static_cast<std::uint16_t>(limits[group + index][3]);
+            }
+            rich4::stocks::refresh_trade_limits(world, random);
+            for (std::size_t index = 0; index < 12; ++index) {
+                check(world.stocks[index].flags_10 == limits[group + index][4], "original quota differs");
+                check(random.state() == limits[group + index][5], "original quota RNG differs");
+            }
+        }
+        std::cout << "Original trade-limit records: " << limits.size() << '\n';
+    }
+    if (std::filesystem::exists(directory / "daily.csv")) {
+        const auto daily = read_csv(directory / "daily.csv", 24);
+        check(daily.size() % 12 == 0, "truncated daily group");
+        for (std::size_t group = 0; group < daily.size(); group += 12) {
+            auto world = fixture();
+            world.commercials.resize(13);
+            rich4::Random random(daily[group][1]);
+            world.news_effect_days = static_cast<std::int32_t>(daily[group][2]);
+            const auto holiday = daily[group][3] != 0;
+            world.stock_history_cursor = static_cast<std::int32_t>(daily[group][4]);
+            world.stock_market_index = 12345;
+            world.stock_market_movement_bits = bits(2.25F);
+            for (std::size_t index = 0; index < 12; ++index) {
+                const auto& row = daily[group + index];
+                check(row[5] == index && row[0] == daily[group][0], "daily index order");
+                auto& stock = world.stocks[index];
+                stock.flags_4 = static_cast<std::uint16_t>(row[6]);
+                stock.suspension_days = static_cast<std::uint8_t>(row[7]);
+                stock.news_movement = static_cast<std::uint8_t>(row[8]);
+                stock.float_bits = {row[9], bits(99.0F), row[10], row[11], row[12]};
+                stock.raw_32 = row[13];
+                world.commercials[stock.flags_4].valuation = static_cast<std::int32_t>(row[14]);
+            }
+            check(rich4::stocks::daily_update(world, random, holiday) == (!holiday && world.news_effect_days == 0),
+                  "daily closed/open result differs");
+            for (std::size_t index = 0; index < 12; ++index) {
+                const auto& row = daily[group + index];
+                const auto& stock = world.stocks[index];
+                const std::array<std::uint32_t, 9> actual{
+                    stock.float_bits[1], stock.float_bits[2], stock.float_bits[4], stock.raw_32,
+                    world.stock_history_bits[index][row[4]], std::bit_cast<std::uint32_t>(world.stock_market_index),
+                    world.stock_market_movement_bits, std::uint32_t(world.stock_history_cursor), random.state()};
+                for (std::size_t field = 0; field < actual.size(); ++field) {
+                    if (actual[field] != row[15 + field]) {
+                        std::cerr << "daily case " << row[0] << " stock " << index << " field " << field
+                                  << " expected " << row[15 + field] << " actual " << actual[field] << '\n';
+                        throw std::runtime_error("original daily state differs");
+                    }
+                }
+                check(stock.suspension_days == row[7] && stock.news_movement == row[8], "daily changes caller-owned counters");
+            }
+        }
+        std::cout << "Original daily records: " << daily.size() << '\n';
+    }
+    if (std::filesystem::exists(directory / "purchases.csv")) {
+        const auto purchases = read_csv(directory / "purchases.csv", 16);
+        for (const auto& row : purchases) {
+            auto world = fixture();
+            const auto player = row[1];
+            for (auto& account : world.players) {
+                account.state.cash = account.state.bank_balance = 100000000;
+                account.stocks[0].raw_cost_basis = row[5];
+            }
+            world.stocks[0].float_bits[2] = row[4];
+            world.stocks[0].shares_available = world.stocks[0].flags_10 = 5000;
+            world.commercials[1].valuation = static_cast<std::int32_t>(row[6]);
+            world.commercials[1].shares_remaining = 5000;
+            const auto result = rich4::stocks::buy_stock(world, player, 0, static_cast<std::int32_t>(row[2]), row[3] != 0);
+            const auto& account = world.players[player];
+            const std::array<std::uint32_t, 9> actual{
+                std::uint32_t(account.stocks[0].amount), account.stocks[0].raw_cost_basis,
+                world.stocks[0].shares_available, world.stocks[0].flags_10,
+                std::bit_cast<std::uint32_t>(account.state.cash), std::bit_cast<std::uint32_t>(account.state.bank_balance),
+                std::uint32_t(world.commercials[1].shares_remaining), packed_order(world.commercials[1]), world.commercials[1].owner_code};
+            for (std::size_t field = 0; field < actual.size(); ++field) {
+                if (actual[field] != row[7 + field]) {
+                    std::cerr << "purchase case " << row[0] << " field " << field
+                              << " expected " << row[7 + field] << " actual " << actual[field] << '\n';
+                    throw std::runtime_error("original purchase state differs");
+                }
+            }
+            check(result.cost == 100000000 - static_cast<std::int32_t>(row[row[3] ? 12 : 11]), "purchase cost differs");
+        }
+        std::cout << "Original purchase cases: " << purchases.size() << '\n';
+    }
+    if (std::filesystem::exists(directory / "trends.csv")) {
+        const auto trends = read_csv(directory / "trends.csv", 3);
+        auto world = fixture();
+        for (const auto& row : trends) {
+            world.stocks[0].float_bits[1] = row[0];
+            world.stocks[0].float_bits[2] = row[1];
+            check(static_cast<std::uint8_t>(rich4::stocks::trend(world, 0)) == row[2], "original price trend differs");
+        }
+        std::cout << "Original price-trend cases: " << trends.size() << '\n';
     }
 }
 

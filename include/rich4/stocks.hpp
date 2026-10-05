@@ -6,6 +6,7 @@
 
 namespace rich4 {
 class World;
+class Random;
 
 namespace stocks {
 
@@ -14,8 +15,23 @@ struct SaleResult {
     bool commercial_owner_changed{};
 };
 
+struct PurchaseResult {
+    std::int32_t cost{};
+    bool commercial_owner_changed{};
+};
+
+enum class PriceTrend : std::uint8_t { rising, limit_up, falling, limit_down, unchanged };
+// Original 0x4295ea, including current quotes exactly at the rounded daily cap.
+[[nodiscard]] PriceTrend trend(const World& world, std::size_t stock);
+
+// Original 0x428d2a. Market shares use current quote and bank; primary company
+// shares use trunc(company valuation / 10000) and cash. The caller enforces UI
+// quantity limits; this boundary rejects negative/zero quantities or shortages.
+PurchaseResult buy_stock(World& world, std::size_t player, std::size_t stock,
+                         std::int32_t amount, bool from_market);
+
 // Original 0x428ec5: percentage movement, price-band tick rounding, and bounds
-// [1,9999]. Prices and percentages must be finite; movement is in [-10,10].
+// [1,9999]. Finite input price domain [0,10000], movement domain [-10,10].
 [[nodiscard]] float adjusted_price(float previous_price, float percent);
 
 // Original 0x428e23. Player and stock indices are zero based; amount must be
@@ -34,6 +50,15 @@ std::size_t update_stocks(World& world, unsigned one_based_or_zero_all);
 // binary32 accumulator conversion, and owned land/facility acquisition values.
 // Does not multiply property value by the price index.
 [[nodiscard]] std::int32_t player_wealth(const World& world, std::size_t player);
+
+// Original 0x42915a, called at the start of each player's turn. Consumes one draw
+// per stock whose available share count exceeds 1000.
+void refresh_trade_limits(World& world, Random& random);
+
+// Original 0x4291d6. The caller supplies its calendar holiday decision (Sunday or
+// map-specific holiday); news_effect_days is checked here. Neither reseeds nor
+// reads a host clock. Returns false when closed, preserving every stock/RNG bit.
+bool daily_update(World& world, Random& random, bool calendar_holiday);
 
 } // namespace stocks
 } // namespace rich4
