@@ -212,6 +212,7 @@ std::optional<Item> god_item(const GameEvent &event) {
         return std::nullopt;
     Item item;
     item.kind = Item::Kind::god_caption;
+    item.focus = event.player; // The god appears where the player stands (no AF12 animation yet).
     item.text = god_arrivals[std::size_t(index)];
     item.minimum_ms = 2400;
     return item;
