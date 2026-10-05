@@ -561,6 +561,12 @@ bool Screens::draw_decision(Frame &frame, GameSession &session, const Host &host
         draw_rescue(frame, session, decision, host);
         return true;
     case DecisionKind::action_target: // 遙控骰子: options 1..6 points then 取消 (0), no map targets
+        if (decision.victim) { // 搶奪卡 inventory pick (fcn_0044192a)
+            end_visits();
+            draw_steal(frame, session, decision, host);
+            return true;
+        }
+        steal_pick_.reset();
         if (decision.options.size() != 7 ||
             !std::all_of(decision.options.begin(), decision.options.end(), [&decision](const auto &option) {
                 return !option.location && option.value == ((&option - decision.options.data()) + 1) % 7;
@@ -603,6 +609,74 @@ void Screens::draw_remote_dice(Frame &frame, const GameDecision &decision, const
     if (const auto cancel = option_of(decision, 0))
         frame.button(option_id + int(*cancel), {356, 306, 436, 350}, "取消",
                      [host, index = *cancel] { host.respond(index); });
+}
+
+// 搶奪卡 for a human (fcn_0044192a): the victim's card grid (Panel 11:0) at (14,70) and, since the
+// card allows tools, their tool grid (Panel 11:1) at (14,270), both in the victim's hand order; the
+// original takes the clicked item at once. Touch: the first tap selects a tile (sunk, yellow frame,
+// its name above the grids), a second tap takes it; 取消 replaces the right-click.
+void Screens::draw_steal(Frame &frame, GameSession &session, const GameDecision &decision, const Host &host) {
+    shot = "steal";
+    const auto &world = session.world();
+    if (!decision.victim || *decision.victim >= world.players.size())
+        return;
+    const auto &victim = world.players[*decision.victim].state;
+    constexpr int gx = 14, card_y = 70, tool_y = 270;
+    opaque(frame, art(frame, 'p', 11, 0), gx, card_y);
+    opaque(frame, art(frame, 'p', 11, 1), gx, tool_y);
+    std::vector<std::uint8_t> cards;
+    card_names_on_grid(frame, victim.cards, gx, card_y, &cards);
+    const auto tools = tools_on_grid(frame, victim, gx, tool_y);
+    const auto option_for = [&decision](CardTargetKind kind, unsigned id) -> std::optional<std::size_t> {
+        return option_of(decision, std::int32_t((unsigned(kind) << 16U) | id));
+    };
+    if (steal_pick_ && *steal_pick_ >= decision.options.size())
+        steal_pick_.reset();
+    const auto tile = [&](CardTargetKind kind, unsigned id, Rect rect) {
+        const auto index = option_for(kind, id);
+        if (!index)
+            return;
+        if (steal_pick_ == *index || (frame.pointer_down && frame.pointer_in(rect)))
+            sink(frame.canvas, rect);
+        if (steal_pick_ == *index)
+            for (int inset = 0; inset < 3; ++inset)
+                ui::border(frame.canvas, {rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset},
+                           ui::color(255, 255, 0));
+        frame.hit(option_id + int(*index), rect, [this, host, index = *index] {
+            if (steal_pick_ == index) {
+                steal_pick_.reset();
+                if (sound)
+                    sound(1);
+                host.respond(index);
+            } else {
+                steal_pick_ = index;
+                if (sound)
+                    sound(0);
+            }
+        });
+    };
+    for (std::size_t t = 0; t < cards.size(); ++t)
+        tile(CardTargetKind::card, cards[t], grid_tile(gx, card_y, int(t)));
+    for (std::size_t t = 0; t < tools.size(); ++t)
+        tile(CardTargetKind::tool, tools[t], grid_tile(gx, tool_y, int(t)));
+    // Prompt / selected item's name and help (native: the original has no hover text here).
+    const Rect strip{gx, 41, gx + 412, 69};
+    ui::fill(frame.canvas, strip, ui::paper);
+    ui::border(frame.canvas, strip, ui::color(110, 74, 26));
+    std::string line = "請選擇要搶的卡片或道具";
+    if (steal_pick_) {
+        const auto value = decision.options[*steal_pick_].value;
+        const bool tool = (unsigned(value) >> 16U) == unsigned(CardTargetKind::tool);
+        const auto id = unsigned(value & 0xffff);
+        line = std::string(tool ? services::tool_names.at(id - 1) : services::card_names.at(id - 1)) +
+               "　再點一次就搶走";
+    }
+    frame.text(line, strip.left + 8, strip.top + 5, 16, ui::ink);
+    if (const auto cancel = option_of(decision, -1))
+        frame.button(option_id + int(*cancel), {gx + 316, 452, gx + 412, 478}, "取消", [this, host, index = *cancel] {
+            steal_pick_.reset();
+            host.respond(index);
+        });
 }
 
 // 嫁禍卡 for a human (fcn_00440e1a): with one candidate the original asks "是否嫁禍給%s？" (yes/no);
@@ -1447,6 +1521,20 @@ void Screens::gallery(Frame &frame, const World &base, const std::function<void(
                 frame_up.options.push_back({"", std::int32_t(i)});
         frame_up.options.push_back({"保留卡片", -1});
         shoot("frame-up-" + std::to_string(victims), [&] { draw_frame_up(frame, game, frame_up, host); });
+    }
+    { // 搶奪卡 picker over a victim's cards and tools, then with 地雷 selected.
+        GameDecision steal{DecisionKind::action_target, world.header.current_player, 0, 0, "請選擇要搶的卡片或道具", {}};
+        steal.victim = world.header.current_player;
+        for (const auto card : player.cards)
+            if (card && !option_of(steal, std::int32_t((unsigned(CardTargetKind::card) << 16U) | card)))
+                steal.options.push_back({"", std::int32_t((unsigned(CardTargetKind::card) << 16U) | card)});
+        for (unsigned tool = 1; tool <= 13; ++tool)
+            steal.options.push_back({"", std::int32_t((unsigned(CardTargetKind::tool) << 16U) | tool)});
+        steal.options.push_back({"取消", -1});
+        shoot("steal", [&] { draw_steal(frame, game, steal, host); });
+        steal_pick_ = option_of(steal, std::int32_t((unsigned(CardTargetKind::tool) << 16U) | 3U));
+        shoot("steal-selected", [&] { draw_steal(frame, game, steal, host); });
+        steal_pick_.reset();
     }
     // Bail screens.
     for (const bool hospital : {false, true}) {

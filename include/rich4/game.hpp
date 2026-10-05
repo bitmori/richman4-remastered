@@ -115,6 +115,8 @@ struct GameDecision {
     // Auction only (presentation): player slots that can no longer bid in this auction (ineligible
     // at the start, or withdrew), for the original "cannot bid" pose Panel 28+3c.
     std::uint8_t inactive_players = 0;
+    // 搶奪卡 inventory pick (fcn_0044192a): the player whose card and tool grids are shown.
+    std::optional<std::size_t> victim = std::nullopt;
 };
 
 // AI settings (託管AI, _rich4_ui_ai_settings_entry; docs/ui/finance-menus.md §11): a human
@@ -146,6 +148,8 @@ enum class Announcement : std::uint8_t {
                        // 7 hibernating, 8 sleepwalking; subject = owner, property = 2000+land / 4000+facility.
     tool_use,          // "使用%s" box (1500 ms) before a computer/託管 player's tool runs
                        // (rich4_ui_use_tool.asm:1721, the automatic tool loop); id = tool 1..13.
+    stolen,            // "搶得%s的\n\n%s" box (0x4652f8, 1500 ms) after a computer's 搶奪卡 pick:
+                       // subject = victim, id 0 card / 1 tool, value = card or tool id.
     mini_game_points,  // Closed-mode mini-game "得點券%d點" box (2000 ms, SG:4392): amount 50..69.
 };
 

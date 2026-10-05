@@ -2440,7 +2440,8 @@ struct GameSession::Impl {
         }
         throw std::logic_error("invalid card target kind");
     }
-    std::optional<CardTarget> choose_target(std::span<const CardTarget> options, const std::string &title) {
+    std::optional<CardTarget> choose_target(std::span<const CardTarget> options, const std::string &title,
+                                            std::optional<std::size_t> victim = std::nullopt) {
         const auto encode = [](CardTarget value) {
             return static_cast<std::int32_t>((static_cast<unsigned>(value.kind) << 16U) | value.value);
         };
@@ -2470,6 +2471,7 @@ struct GameSession::Impl {
             prompt.options.push_back(std::move(option));
         }
         prompt.options.push_back({"取消", -1});
+        prompt.victim = victim;
         throw NeedChoice{std::move(prompt), key};
     }
     std::optional<std::uint8_t> choose_facility_type(std::size_t slot) {
@@ -2541,7 +2543,14 @@ struct GameSession::Impl {
             for (std::size_t i = 0; i < 13; ++i)
                 if (world.players[victim].state.tool_amounts[i])
                     choices.push_back({CardTargetKind::tool, static_cast<std::uint16_t>(i + 1)});
-            return choose_target(choices, "請選擇要搶的卡片或道具");
+            return choose_target(choices, "請選擇要搶的卡片或道具", victim);
+        };
+        callbacks.stolen = [this](auto, auto victim, auto item, bool preset) {
+            if (!preset)
+                return; // a human chose it on the picker
+            auto &box = announce(Announcement::stolen, actor(), item.kind == CardTargetKind::tool ? 1 : 0);
+            box.subject = static_cast<std::int32_t>(victim);
+            box.value = item.value;
         };
         callbacks.choose_facility_type = [this](auto slot) { return choose_facility_type(slot); };
         callbacks.say = [this](auto slot, auto row, auto card, auto mood) {

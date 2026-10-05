@@ -45,6 +45,9 @@ struct CardCallbacks : EventCallbacks {
     std::function<bool(std::uint16_t, std::int32_t)> auction_property;
     std::function<std::optional<CardTarget>(std::uint8_t, std::span<const CardTarget>)> choose_target;
     std::function<std::optional<CardTarget>(std::size_t, std::size_t)> choose_inventory;
+    // Presentation only: 搶奪卡 moved `item` from `victim` to `actor`; `preset` = chosen without the
+    // inventory picker (computer use), where the original shows the 搶得 box instead.
+    std::function<void(std::size_t actor, std::size_t victim, CardTarget item, bool preset)> stolen;
     std::function<std::optional<std::uint8_t>(std::size_t)> choose_facility_type;
     std::function<bool(std::size_t, std::size_t, std::int32_t)> try_free;
     std::function<std::int32_t(std::size_t, std::uint8_t)> try_frame;

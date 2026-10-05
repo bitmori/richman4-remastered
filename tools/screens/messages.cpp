@@ -280,6 +280,14 @@ std::optional<Item> from_event(const GameEvent &event, const World &world) {
         return box(format(patterns[event.announcement_id],
                           {player_name(world, std::int64_t(event.player)), std::int64_t(event.value)}));
     }
+    case Announcement::stolen: { // "搶得%s的\n\n%s" (0x4652f8), 1500 ms, a computer's 搶奪卡
+        const bool tool = event.announcement_id == 1;
+        const auto id = std::size_t(event.value);
+        if (id < 1 || id > (tool ? services::tool_names.size() : services::card_names.size()))
+            return std::nullopt;
+        return box("搶得" + player_name(world, event.subject) + "的\n\n" +
+                   std::string(tool ? services::tool_names[id - 1] : services::card_names[id - 1]));
+    }
     case Announcement::tool_use: // "使用%s" (0x4653e5), 1500 ms, before a computer's tool runs
         if (event.announcement_id < 1 || event.announcement_id > services::tool_names.size())
             return std::nullopt;

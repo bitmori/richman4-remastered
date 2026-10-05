@@ -149,6 +149,8 @@ class Screens {
     void rescue_voice(bool hospital, int slot);
     std::string voiced_;
     void draw_remote_dice(Frame &, const GameDecision &, const Host &);
+    void draw_steal(Frame &, GameSession &, const GameDecision &, const Host &);
+    std::optional<std::size_t> steal_pick_; // 搶奪卡: option index selected by the first tap
     void draw_frame_up(Frame &, GameSession &, const GameDecision &, const Host &);
     bool draw_cast_movie(Frame &, std::shared_ptr<detail::CastMovie> &, std::uint64_t elapsed);
 

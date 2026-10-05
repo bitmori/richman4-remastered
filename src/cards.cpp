@@ -496,6 +496,8 @@ CardResult apply_card(World &w, Random &random, std::size_t actor, const CardUse
         // Original 0x44192a returns a bare tool ID; the caller still indexes the card-price table.
         hostility(w, cb, target, actor, services::card_prices[item->value - 1]);
         consume(w, actor, id);
+        if (cb.stolen)
+            cb.stolen(actor, target, *item, use.choice.has_value());
         say(cb, target, 2, id, 1);
         return used();
     }
