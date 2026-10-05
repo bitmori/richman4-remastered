@@ -121,6 +121,24 @@ class FixtureTests(unittest.TestCase):
         for path in self.output.iterdir():
             self.assertEqual(path.read_bytes(), (other / path.name).read_bytes())
 
+    def test_player_trading_has_a_valid_rival_offer_and_buyer_capacity(self):
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = (self.output / "player-trading.DAT").read_bytes()
+        manifest = json.loads((self.output / "player-trading.json").read_text())
+        expected = manifest["expected_trading"]
+        self.assertIs(manifest["synthetic"], True)
+        self.assertIs(expected["post_cancel_buy"], True)
+        self.assertEqual((expected["buyer_slot"], expected["seller_slot"], expected["offer_index"]), (0, 1, 0))
+        self.assertEqual(struct.unpack_from("<BBHiHBB", data, 0x2526 + 84), (3, 0, 5, 1000, 0, 0, 0))
+        self.assertEqual(data[0x2526:0x2526 + 84], bytes(84))
+        self.assertEqual(data[0x2526 + 84 + 12:0x2526 + 4 * 84], bytes(3 * 84 - 12))
+        self.assertEqual(data[0x690 + 4], expected["buyer_tool_count"])
+        self.assertEqual(data[0x690 + 15 + 4], expected["seller_tool_count"])
+        self.assertLess(data[0x690 + 4], expected["buyer_maximum_tool_count"])
+        self.assertGreaterEqual(struct.unpack_from("<i", data, 0x10 + 28)[0], expected["price"])
+        self.assertEqual(hashlib.sha256(self.source.read_bytes()).digest(), self.before)
+
     def test_bankruptcy_setup_uses_two_players_and_original_single_exit(self):
         result = self.invoke()
         self.assertEqual(result.returncode, 0, result.stderr)

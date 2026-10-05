@@ -186,6 +186,11 @@ void save_fixture(const fs::path& directory,const std::string& label,const World
     for(std::size_t i=0;i<w.players.size();++i){if(i)json<<',';const auto& p=w.players[i].state;json<<"{\"slot\":"<<i<<",\"node\":"<<p.node_id<<",\"last_node\":"<<p.last_node_id<<",\"x\":"<<p.x<<",\"y\":"<<p.y<<",\"cash\":"<<p.cash<<",\"bank\":"<<p.bank_balance<<",\"points\":"<<p.points<<",\"cards\":";array(json,p.cards);json<<",\"tools\":";array(json,p.tool_amounts);json<<'}';}
     json<<']';
     if(label=="bankruptcy-victory")json<<",\n  \"expected_endgame\":{\"winner_slot\":0,\"bankrupt_slot\":1,\"ai_cash\":1,\"ai_bank\":0,\"tortoise_days\":5,\"property_toll\":50000,\"route_modified\":false}";
+    if (label == "player-trading") {
+        json << ",\n  \"expected_trading\":{\"buyer_slot\":0,\"seller_slot\":1,\"offer_index\":0,"
+             << "\"kind\":3,\"item\":5,\"price\":1000,\"buyer_tool_count\":3,\"seller_tool_count\":2,"
+             << "\"buyer_maximum_tool_count\":9,\"post_cancel_buy\":true}";
+    }
     json<<",\n  \"nearby_targets\":[";bool first=true;const auto& active=w.players[0].state;const board::Camera camera{{active.x,active.y},0};
     for(std::size_t i=1;i<w.lands.size();++i){const auto& p=w.lands[i];if(!visible({p.x,p.y},camera))continue;if(!first)json<<',';first=false;json<<"{\"code\":"<<2000+i<<",\"owner\":"<<unsigned(p.economy.owner_code)<<",\"level\":"<<unsigned(p.economy.level)<<",\"type\":"<<unsigned(p.economy.chain_store)<<'}';}
     for(std::size_t i=1;i<w.facilities.size();++i){const auto& p=w.facilities[i];if(!visible({p.x,p.y},camera))continue;if(!first)json<<',';first=false;json<<"{\"code\":"<<4000+i<<",\"owner\":"<<unsigned(p.owner_code)<<",\"level\":"<<unsigned(p.level)<<",\"type\":"<<unsigned(p.facility_type)<<'}';}
@@ -216,6 +221,17 @@ int main(int argc,char** argv){try{
     for(const auto& spec:std::array<std::pair<const char*,unsigned>,3>{{{"cards-01-15",1},{"cards-16-30",16},{"tools-01-13",1}}}){auto world=original;configure(world,center,spec.second,spec.second+14);save_fixture(output,spec.first,world,source);}
     if(facility_center){auto world=original;configure(world,facility_center,1,15);save_fixture(output,"cards-facility",world,source);}
     save_fixture(output,"bankruptcy-victory",endgame,source);
+    {
+        auto world = original;
+        configure(world, center, 1, 15);
+        world.offers = {};
+        // Offer posting does not reserve inventory in the original game. The
+        // seller owns two motorcycles; the human has room below the cap of nine.
+        world.players[0].state.tool_amounts[4] = 3;
+        world.players[1].state.tool_amounts[4] = 2;
+        world.offers[1][0] = {OfferKind::tool, 0, 5, 1000, 0, 0, 0};
+        save_fixture(output, "player-trading", world, source);
+    }
     if(read(source)!=source_before)throw std::runtime_error("Original source changed during fixture generation");
     return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
