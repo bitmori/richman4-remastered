@@ -50,8 +50,16 @@ class MainScreen {
     // Starts the dice animation on a roll and re-centres the view when a turn or roll starts.
     void on_event(const GameEvent &event, const GameSession &session, Artwork &artwork);
     // The original roll animation is synchronous: while busy the application holds the game clock.
+    // It covers the character's toss pose, the dice FLC and the result-face hold.
     [[nodiscard]] bool dice_busy() const;
     void advance(unsigned elapsed_ms);
+    // Toss frame to draw for `slot` (board::PlayerSprite::tossing) while its roll animation runs;
+    // the last toss frame holds under the dice FLC and faces, as the original does not redraw.
+    [[nodiscard]] std::optional<std::uint8_t> toss_frame(std::size_t slot) const;
+    // Headless replays skip the toss (the dice FLC keeps its existing timing).
+    void set_skip_toss(bool skip) {
+        skip_toss_ = skip;
+    }
     void cycle_view_mode() {
         view_mode_ = (view_mode_ + 1) % 3;
     }
@@ -72,7 +80,7 @@ class MainScreen {
     void draw_minimap(Frame &frame, const World &world, int top, const MainScreenActions &actions);
     void draw_calendar(Frame &frame, const World &world, const MainScreenActions &actions);
     void draw_go(Frame &frame, const GameSession &session, const MainScreenActions &actions);
-    void draw_dice(Frame &frame, const GameSession &session, unsigned rotation);
+    void draw_dice(Frame &frame, const GameSession &session, unsigned rotation, const MainScreenActions &actions);
     void draw_full_map(Frame &frame, const World &world);
     std::uint8_t go_mask(Frame &frame, int x, int y);
 
@@ -93,8 +101,11 @@ class MainScreen {
     std::map<std::size_t, std::vector<graphics::Image>> dice_animations_;
     std::vector<std::uint8_t> dice_faces_;
     std::uint8_t dice_direction_ = 0;
-    bool dice_active_ = false;
+    bool dice_active_ = false, dice_sound_played_ = false, skip_toss_ = false;
     unsigned dice_elapsed_ = 0, dice_frames_ = 0;
+    // Pre-roll toss pose (movement state 2): frames per direction and total duration in ms.
+    std::size_t toss_slot_ = 0;
+    unsigned toss_frames_ = 0, toss_ms_ = 0;
 };
 
 } // namespace rich4::native

@@ -170,6 +170,19 @@ Placement with_override(Placement placement, std::size_t id, std::span<const Pro
 
 } // namespace
 
+std::size_t player_resource(const PlayerSprite &player) {
+    if (player.character >= 12 || player.traffic_method > 3) {
+        throw std::invalid_argument("invalid board player sprite selection");
+    }
+    // State 2 (toss) has no injured artwork: the original never tosses with those flags.
+    const unsigned action = player.tossing ? 2U : unsigned(player.walking);
+    const unsigned pose = player.injured        ? 18U
+                          : player.sleepwalking ? (player.tossing ? 2U : 16U + action)
+                          : player.on_water     ? 13U + action
+                                                : player.traffic_method * 3U + action;
+    return 0x80U + player.character * 21U + pose;
+}
+
 std::optional<Point> project(Point world, const Camera &camera) {
     validate_camera(camera);
     const std::int64_t tile_x = std::int64_t(floor_divide_32(world.x)) - floor_divide_32(camera.center.x);
@@ -361,11 +374,7 @@ RenderStats Renderer::render(graphics::Image &destination, const Scene &scene, c
         if (player.character >= 12 || player.direction > 7 || player.traffic_method > 3) {
             throw std::invalid_argument("invalid board player sprite selection");
         }
-        const unsigned pose = player.injured        ? 18U
-                              : player.sleepwalking ? 16U + unsigned(player.walking)
-                              : player.on_water     ? 13U + unsigned(player.walking)
-                                                    : player.traffic_method * 3U + unsigned(player.walking);
-        const std::size_t resource_index = 0x80U + player.character * 21U + pose;
+        const std::size_t resource_index = player_resource(player);
         const auto &resource = impl_->resource(true, resource_index);
         const auto frames_per_direction = resource.layout.entries.size() / 8;
         if (frames_per_direction == 0) {
