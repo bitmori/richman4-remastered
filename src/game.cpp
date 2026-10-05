@@ -3174,7 +3174,87 @@ struct GameSession::Impl {
             world.header.price_index =
                 std::max(world.header.price_index, (total / active) / world.header.initial_fund);
     }
+    // MONTHLY: presentation figures shared by the monthly-cycle screens (no rule effect).
+    MonthlyFigures monthly_figures() const {
+        MonthlyFigures figures;
+        for (std::size_t slot = 0; slot < world.players.size() && slot < 4; ++slot) {
+            const auto &state = world.players[slot].state;
+            if (state.controller_flags)
+                figures.active |= static_cast<std::uint8_t>(1U << slot);
+            figures.characters[slot] = state.character;
+        }
+        return figures;
+    }
+    void monthly_effect(EffectKind kind, MonthlyFigures figures) {
+        EffectEvent event{kind, actor(), player().node_id, actor_point(actor()), std::nullopt, 0, {}, 0,
+                          events.size()};
+        event.monthly = std::move(figures);
+        effects.push_back(std::move(event));
+    }
+    // Original fcn_0042ba97 (rich4_ui_stock.asm:3052), every 15th: each listed company pays its
+    // whole balance (a negative balance is a loss) into the active shareholders' bank deposits, in
+    // proportion to their shares; the balance is cleared when anybody holds shares. A deposit
+    // driven below zero is taken from cash, and a player whose cash also runs out goes bankrupt.
+    void pay_dividends() {
+        auto figures = monthly_figures();
+        std::array<std::int32_t, 4> totals{};
+        for (std::size_t stock = 0; stock < world.stocks.size() && stock < 12; ++stock) {
+            const auto id = world.stocks[stock].flags_4;
+            if (!id || id >= world.commercials.size())
+                continue;
+            auto &company = world.commercials[id];
+            std::int32_t shares = 0;
+            for (std::size_t slot = 0; slot < world.players.size(); ++slot)
+                if (world.players[slot].state.controller_flags)
+                    shares = add32(shares, world.players[slot].stocks[stock].amount);
+            DividendRow row{static_cast<std::uint8_t>(stock), company.funds, {}};
+            for (std::size_t slot = 0; slot < world.players.size() && slot < 4; ++slot) {
+                const auto held = world.players[slot].stocks[stock].amount;
+                if (!world.players[slot].state.controller_flags || !held)
+                    continue;
+                // FDIVP stored as binary32, then FILD funds × that ratio, truncated (FISTP).
+                const auto ratio = (numeric::Extended::from(held) / numeric::Extended::from(shares)).single();
+                row.payout[slot] =
+                    (numeric::Extended::from(company.funds) * numeric::Extended::from(ratio)).integer();
+                totals[slot] = add32(totals[slot], row.payout[slot]);
+            }
+            if (shares)
+                company.funds = 0;
+            figures.dividends.push_back(row);
+        }
+        if (figures.dividends.empty())
+            return;
+        monthly_effect(EffectKind::dividend, figures); // the table shows before the payout settles
+        for (std::size_t slot = 0; slot < world.players.size() && slot < 4; ++slot) {
+            auto &state = world.players[slot].state;
+            if (!state.controller_flags)
+                continue;
+            state.bank_balance = add32(state.bank_balance, totals[slot]);
+            if (state.bank_balance >= 0)
+                continue;
+            state.cash = add32(state.cash, state.bank_balance);
+            state.bank_balance = 0;
+            if (state.cash < 0) {
+                state.cash = 0;
+                bankrupt(slot);
+            }
+        }
+    }
     void close_month() {
+        // MONTHLY: the report's figures (fcn_00439bfa / fcn_00437e61 state 2), captured around the
+        // interest without changing it.
+        auto report = monthly_figures();
+        for (std::size_t slot = 0; slot < world.players.size() && slot < 4; ++slot) {
+            const auto &entry = world.players[slot];
+            report.deposit[slot] = entry.state.bank_balance;
+            report.interest[slot] =
+                (numeric::Extended::from(entry.state.bank_balance) * numeric::Extended::from(0.1)).integer();
+            if (entry.state.loan)
+                report.loans |= static_cast<std::uint8_t>(1U << slot);
+            report.unlucky_days[slot] = entry.status.total_winter_sleep_days;
+            report.spending[slot] = entry.status.cumulative_spending;
+            report.income[slot] = entry.status.cumulative_income;
+        }
         for (auto &entry : world.players) {
             auto &state = entry.state;
             if (state.controller_flags && state.loan == 0) {
@@ -3183,10 +3263,53 @@ struct GameSession::Impl {
                 state.bank_balance =
                     (numeric::Extended::from(state.bank_balance) * numeric::Extended::from(1.1)).integer();
             }
+        }
+        month_awards(report);
+        for (auto &entry : world.players) {
             entry.status.total_winter_sleep_days = 0;
             entry.status.cumulative_spending = entry.status.cumulative_income = 0;
         }
         emit(GameEventKind::bank_transfer, "月结完成，无贷款玩家获得存款利息");
+        monthly_effect(EffectKind::month_report, std::move(report));
+    }
+    // MONTHLY (presentation only): fcn_00437dfe picks the champion, the strictly richest listed
+    // player (ties keep the first); fcn_00437d1a picks the 悲情人物 by the score
+    // (+92 − +96) + 倒楣天數 × price index × 2500 + (word +68) × 10: the top score M wins only when
+    // M and the runner-up S (scores equal to M excluded) are non-zero and (M − S) / M > 0.4.
+    void month_awards(MonthlyFigures &report) const {
+        std::int32_t best_wealth = 0;
+        std::array<std::int32_t, 4> score{};
+        report.champion = -1;
+        for (std::size_t slot = 0; slot < world.players.size() && slot < 4; ++slot) {
+            if (!((report.active >> slot) & 1U))
+                continue;
+            const auto &entry = world.players[slot];
+            report.cash[slot] = entry.state.cash;
+            report.balance[slot] = entry.state.bank_balance;
+            report.total[slot] = wealth(slot);
+            if (report.champion < 0)
+                report.champion = static_cast<std::int32_t>(slot);
+            if (report.total[slot] > best_wealth) {
+                best_wealth = report.total[slot];
+                report.champion = static_cast<std::int32_t>(slot);
+            }
+            score[slot] = add32(
+                add32(subtract32(std::bit_cast<std::int32_t>(entry.status.cumulative_spending),
+                                 std::bit_cast<std::int32_t>(entry.status.cumulative_income)),
+                      multiply32(multiply32(entry.status.total_winter_sleep_days, world.header.price_index), 2500)),
+                multiply32(entry.status.god_luck_modifier, 10));
+        }
+        std::int32_t top = 0, runner = 0;
+        std::int32_t top_slot = -1;
+        for (std::size_t slot = 0; slot < 4; ++slot)
+            if (((report.active >> slot) & 1U) && score[slot] > top) {
+                top = score[slot];
+                top_slot = static_cast<std::int32_t>(slot);
+            }
+        for (std::size_t slot = 0; slot < 4; ++slot)
+            if (((report.active >> slot) & 1U) && score[slot] != top && score[slot] > runner)
+                runner = score[slot];
+        report.unlucky = top && runner && double(top - runner) / double(top) > 0.4 ? top_slot : -1;
     }
     std::uint32_t lease_expiry() const {
         static constexpr std::array<std::uint32_t, 6> intervals{0, 0x20000, 0x10000, 0x600, 0x300, 0x100};
@@ -3303,10 +3426,19 @@ struct GameSession::Impl {
         (void)stocks::daily_update(world, random,
                                    holidays::is_closed({date.year, date.month, date.day}, world.header.map_id,
                                                        world.header.stage_id));
+        if (date.day == 15) // original core_actions:4836: dividends (fcn_0042ba97) before the lottery draw
+            pay_dividends();
         if (lottery::draw_due(world.header.date)) {
+            auto show = monthly_figures(); // MONTHLY: the draw show needs the tickets before the draw
+            show.tickets = world.lottery_tickets;
+            show.pool = world.public_fund;
             const auto draw = lottery::draw(world, random);
-            if (draw.held)
+            if (draw.held) {
                 emit(GameEventKind::notice, "彩票开奖：" + std::to_string(draw.number), draw.payout);
+                show.number = draw.number;
+                show.winner = draw.winner ? static_cast<std::int32_t>(*draw.winner) : -1;
+                monthly_effect(EffectKind::lottery_draw, std::move(show));
+            }
         }
         if (advance.month_changed) {
             ++world.month_counter;

@@ -160,7 +160,40 @@ enum class EffectKind : std::uint8_t {
     demon_puff,        // Data 526, demon god downgraded the property at `target`
     bankrupt,          // Data 555
     money_spinner,     // computer/sleep-walking god slot machine (fcn_00440706); `spinner` set
-    roulette           // cupid wheel: computer spin, or the slow-down after a human STOP; `spinner` set
+    roulette,          // cupid wheel: computer spin, or the slow-down after a human STOP; `spinner` set
+    // MONTHLY: full-screen monthly-cycle screens, `monthly` set (tools/screens/monthly.cpp).
+    dividend,     // 15th: 上市公司分紅 table, Panel 76 (fcn_0042ba97)
+    lottery_draw, // 15th: 樂透開獎 show, Panel 15..17 (_rich4_ui_letou_kaijiang_entry)
+    month_report  // 1st: bank interest / ranking report, Panel 25 (fcn_00439bfa / fcn_00437e61)
+};
+
+// Figures of the monthly-cycle screens (docs/ui/finance-menus.md §4 dividend, §7.2 lottery draw,
+// §14 month report). Presentation only: the rule has ALREADY applied them when the effect is
+// drained. Arrays are indexed by player slot; `active` masks the players the original lists.
+struct DividendRow {
+    std::uint8_t stock = 0;          // stock index 0..11 (company name)
+    std::int32_t earnings = 0;       // 本月盈餘: the company's funds before the payout
+    std::array<std::int32_t, 4> payout{}; // trunc(earnings × shares / Σ shares) per slot
+    bool operator==(const DividendRow &) const = default;
+};
+struct MonthlyFigures {
+    std::uint8_t active = 0; // bit mask of the listed player slots (original +0x15 flag)
+    std::array<std::uint8_t, 4> characters{};
+    // dividend
+    std::vector<DividendRow> dividends{};
+    // lottery_draw
+    std::array<std::uint8_t, 36> tickets{}; // owner slot+1 of each number BEFORE the draw
+    std::int32_t pool = 0;                  // 累積獎金 before the payout
+    std::uint8_t number = 0;                // drawn number 1..36
+    std::int32_t winner = -1;               // winning slot, -1 = nobody
+    // month_report. Cards (Panel 25:11+i): 存款 = deposit before interest, 利息 = trunc(deposit×0.1)
+    // or 貸款中. Champion panel: cash, balance (deposit after interest) and 總資產 (wealth after it).
+    std::array<std::int32_t, 4> cash{}, deposit{}, interest{}, balance{}, total{};
+    std::uint8_t loans = 0;                            // bit mask: 貸款中 (no interest this month)
+    std::array<std::uint8_t, 4> unlucky_days{};        // 本月倒楣天數 (status +66)
+    std::array<std::uint32_t, 4> income{}, spending{}; // 本月意外之財 / 本月意外損失 (+96 / +92)
+    std::int32_t champion = -1, unlucky = -1;          // 本月冠軍 / 本月悲情人物 slots (-1 = none)
+    bool operator==(const MonthlyFigures &) const = default;
 };
 struct EffectPoint {
     std::int32_t x = 0, y = 0; // Original world coordinates (same space as board::Point).
@@ -179,6 +212,7 @@ struct EffectEvent {
     // effect, so the app can interleave drain_effects() with drain_events() in true order.
     std::size_t after_events = 0;
     std::optional<SpinnerState> spinner = std::nullopt; // money_spinner / roulette
+    std::optional<MonthlyFigures> monthly = std::nullopt; // dividend / lottery_draw / month_report
     bool operator==(const EffectEvent &) const = default;
 };
 

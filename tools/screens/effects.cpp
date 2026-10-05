@@ -98,6 +98,9 @@ EffectSpec effect_spec(const EffectEvent &effect) {
         return {'d', 555, 0, 100, 0, 0, true};
     case EffectKind::money_spinner: // drawn by screens/spinners.cpp, never queued here
     case EffectKind::roulette:
+    case EffectKind::dividend: // MONTHLY: full-screen, drawn by screens/monthly.cpp
+    case EffectKind::lottery_draw:
+    case EffectKind::month_report:
         return {'p', -1, 0, -1, 0, 0, false};
     }
     return {};
