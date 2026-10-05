@@ -62,6 +62,11 @@ add_library(main SHARED
   "${RICH4_REPO}/tools/native_game.cpp"
   "${RICH4_REPO}/tools/native_audio.cpp"
   "${RICH4_REPO}/tools/screens/main_screen.cpp"
+  "${RICH4_REPO}/tools/screens/draw.cpp"
+  "${RICH4_REPO}/tools/screens/finance.cpp"
+  "${RICH4_REPO}/tools/screens/stocks.cpp"
+  "${RICH4_REPO}/tools/screens/market.cpp"
+  "${RICH4_REPO}/tools/screens/menus.cpp"
   "${RICH4_REPO}/tools/screens/effects.cpp"
   "${RICH4_REPO}/tools/screens/messages.cpp"
   rich4_android.cpp)

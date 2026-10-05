@@ -54,7 +54,8 @@ if(RICH4_BUILD_GAME)
   target_link_libraries(rich4-effect-preview PRIVATE rich4_core Freetype::Freetype Iconv::Iconv)
   add_executable(rich4-native tools/native_game.cpp tools/native_audio.cpp tools/screens/main_screen.cpp
     tools/screens/effects.cpp
-    tools/screens/messages.cpp)
+    tools/screens/messages.cpp tools/screens/draw.cpp tools/screens/finance.cpp
+    tools/screens/stocks.cpp tools/screens/market.cpp tools/screens/menus.cpp)
   target_link_libraries(rich4-native PRIVATE rich4_core SDL3::SDL3 Freetype::Freetype Iconv::Iconv PkgConfig::FLUIDSYNTH)
   target_compile_options(rich4-native PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic>)
   if(APPLE)
