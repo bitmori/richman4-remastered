@@ -62,6 +62,8 @@ add_library(main SHARED
   "${RICH4_REPO}/tools/native_game.cpp"
   "${RICH4_REPO}/tools/native_audio.cpp"
   "${RICH4_REPO}/tools/screens/main_screen.cpp"
+  "${RICH4_REPO}/tools/screens/effects.cpp"
+  "${RICH4_REPO}/tools/screens/messages.cpp"
   "${RICH4_REPO}/tools/screens/items.cpp"
   rich4_android.cpp)
 add_dependencies(main libiconv_build)

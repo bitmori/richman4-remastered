@@ -3,8 +3,10 @@
 // artwork can be located by "entry:frame WxH" when wiring the native interface.
 #include "native_ui.hpp"
 #include "rich4/assets.hpp"
+#include "rich4/flc.hpp"
 #include "rich4/graphics.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <tuple>
 
@@ -32,6 +34,17 @@ int main(int argc, char **argv) {
             try {
                 data = archive.decode(entry);
             } catch (const std::exception &) {
+                continue;
+            }
+            if (flc::is_flc(data)) { // FLC movie: evenly spaced frames, index 0 transparent.
+                try {
+                    flc::Decoder movie(data);
+                    const auto step = std::max<std::size_t>(1, movie.frame_count() / std::max<std::size_t>(1, max_frames));
+                    while (movie.next())
+                        if ((movie.decoded_frames() - 1) % step == 0)
+                            cells.push_back({entry, movie.decoded_frames() - 1, movie.image()});
+                } catch (const std::exception &) {
+                }
                 continue;
             }
             for (std::size_t frame = 0; frame < max_frames; ++frame) {

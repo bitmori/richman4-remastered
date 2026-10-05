@@ -38,6 +38,11 @@ class Audio {
     // chooses category [0,26]; audio never consumes gameplay random numbers.
     // A new voice interrupts the preceding voice, as in the original game.
     void play_voice(std::uint8_t character, std::uint16_t category);
+    // Any Speaking.mkf clip (news/fortune announcer, event lines). Returns the clip length in
+    // milliseconds (0 when audio is disabled) so speech bubbles can be held until it ends.
+    std::uint32_t play_speech(std::size_t speaking_index);
+    void stop_voice();
+    [[nodiscard]] bool voice_active() const noexcept;
     void set_music(bool enabled);
     // 1..8 selects Rich08, Rich16..Rich22. Zero advances to the next track.
     // Normal completion advances through the same eight-track original playlist.

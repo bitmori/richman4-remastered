@@ -62,6 +62,8 @@ class Screens {
 
     // Replay support: show the card or tool shelf that holds a shop option.
     bool shop_show_option(std::int32_t value); // true when the shelf had to switch
+    // The shop option tapped once and awaiting its confirming second tap.
+    [[nodiscard]] std::optional<std::int32_t> shop_pending_value() const;
 
     // Developer gallery: draws each screen with synthetic state; `background` paints the board and
     // `save` stores the canvas under a name.
@@ -95,6 +97,9 @@ class Screens {
         std::string balloon;
         bool leaving = false;
         std::uint64_t leave_at = 0;
+        int pick_kind = -1; // 0 card row, 1 tool row, 2 own card tile, 3 own tool tile
+        std::size_t pick_index = 0;
+        std::int32_t pick_value = 0;
     };
     struct Magic {
         bool active = false;

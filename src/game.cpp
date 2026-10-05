@@ -63,6 +63,9 @@ struct GameSession::Impl {
     std::optional<MoveAnimation> animation;
     std::vector<std::uint8_t> faces;
     std::vector<GameEvent> events;
+    std::vector<EffectEvent> effects; // Presentation only; truncated with events on rule replay.
+    std::optional<CardTarget> chosen_card_target; // Last card target answered through choose_target.
+    bool mine_pending = false;                    // gods::touch is resolving a mine (explosion picture).
     unsigned phase_elapsed = 0;
     int remaining = 0;
     std::uint16_t next_node = 0;
@@ -131,6 +134,58 @@ struct GameSession::Impl {
     }
     void emit(GameEventKind kind, std::string message, std::int32_t amount = 0) {
         events.push_back({kind, actor(), amount, player().node_id, std::move(message)});
+    }
+    // ---- Presentation effects (docs/ui/effects.md §9): read-only, never draw randomness. ----
+    void effect(EffectKind kind, std::size_t slot, EffectPoint target, std::uint16_t property = 0) {
+        const auto &state = world.players.at(slot).state;
+        effects.push_back({kind, slot, state.node_id, target, std::nullopt, 0, {}, property});
+    }
+    EffectPoint actor_point(std::size_t slot) const {
+        const auto &state = world.players.at(slot).state;
+        return {state.x, state.y};
+    }
+    EffectPoint property_point(std::uint16_t code) const {
+        const auto point = instance_position(code);
+        return {point.x, point.y};
+    }
+    unsigned property_level(std::uint16_t code) const {
+        if (code > 2000 && code < 4000 && code - 2000U < world.lands.size())
+            return world.lands[code - 2000U].economy.level;
+        if (code > 4000 && code < 6000 && code - 4000U < world.facilities.size())
+            return world.facilities[code - 4000U].level;
+        return 0;
+    }
+    void sparkle_if_top_floor(std::uint16_t code, unsigned before) {
+        if (before < 5 && property_level(code) == 5)
+            effect(EffectKind::top_floor_sparkle, actor(), property_point(code), code);
+    }
+    // Tool pictures that are not driven by a tool callback: roadblock/mine/time bomb throws.
+    void tool_effect(unsigned tool, std::uint16_t target) {
+        if (tool < 2 || tool > 4 || !target || target >= world.nodes.size())
+            return;
+        const auto &node = world.nodes[target];
+        EffectEvent event{EffectKind::object_throw, actor(), target, {node.x, node.y}, actor_point(actor()),
+                          static_cast<std::uint8_t>(tool + 14), {}, 0};
+        effects.push_back(std::move(event));
+    }
+    // Card pictures: demolish (12) and monster (11) on a property target.
+    void card_effect(std::uint8_t card, std::optional<CardTarget> target) {
+        if (card != 11 && card != 12)
+            return;
+        if (!target)
+            target = chosen_card_target;
+        if (!target || target->kind != CardTargetKind::property)
+            return;
+        effect(card == 12 ? EffectKind::demolish : EffectKind::monster, actor(), property_point(target->value),
+               target->value);
+    }
+    // Presentation-only event for the original message boxes and announcement screens.
+    GameEvent &announce(Announcement kind, std::size_t slot, std::uint8_t id = 0) {
+        GameEvent event{GameEventKind::notice, slot, 0, world.players.at(slot).state.node_id, {}};
+        event.announcement = kind;
+        event.announcement_id = id;
+        events.push_back(std::move(event));
+        return events.back();
     }
     void voice(std::size_t slot, std::uint8_t category) {
         events.push_back(
@@ -344,6 +399,21 @@ struct GameSession::Impl {
         const auto &value = status();
         if (value.days_in_hotel || value.days_disappearing || value.days_in_prison ||
             value.days_in_hospital || value.days_sleeping) {
+            // Original turn-start status (rich4.asm:6600-6757): bubble 19/20/21, then the box.
+            const int status_kind = value.days_in_hotel        ? 0
+                                    : value.days_disappearing ? 1
+                                    : value.days_in_prison    ? 2
+                                    : value.days_in_hospital  ? 3
+                                                              : 4;
+            const unsigned raw = status_kind == 0   ? value.days_in_hotel
+                                 : status_kind == 1 ? value.days_disappearing & 0x3fU
+                                 : status_kind == 2 ? value.days_in_prison
+                                 : status_kind == 3 ? value.days_in_hospital
+                                                    : value.days_sleeping;
+            if (status_kind >= 2)
+                voice(actor(), status_kind == 2 ? 19 : status_kind == 3 ? 20 : 21);
+            announce(Announcement::absent_status, actor(), static_cast<std::uint8_t>(status_kind)).value =
+                static_cast<std::int32_t>(raw & 0x7fU);
             emit(GameEventKind::notice, player_name(actor()) + "本回合休息");
             finish_turn();
         } else if (human() && !value.days_sleep_walking)
@@ -417,10 +487,12 @@ struct GameSession::Impl {
                     const auto callbacks = card_callbacks();
                     if (const auto request =
                             choose_ai_card(world, random, actor(), callbacks, &card_ai_memory)) {
+                        chosen_card_target.reset();
                         const auto result = apply_card(world, random, actor(), *request, callbacks);
                         if (result.status == CardUseStatus::missing_callback)
                             throw UnsupportedRule{result.message};
                         if (result.status == CardUseStatus::used) {
+                            card_effect(request->card_id, request->target);
                             emit(GameEventKind::notice,
                                  std::string("电脑使用") +
                                      std::string(services::card_names.at(request->card_id - 1)));
@@ -442,10 +514,12 @@ struct GameSession::Impl {
                                                        request.destination, tool_callbacks());
                         if (!result.supported)
                             throw UnsupportedRule{result.message};
-                        if (result.applied)
+                        if (result.applied) {
+                            tool_effect(request.tool, request.target);
                             emit(GameEventKind::notice,
                                  std::string("电脑使用") +
                                      std::string(services::tool_names.at(request.tool - 1)));
+                        }
                     }
                 }
             },
@@ -489,6 +563,10 @@ struct GameSession::Impl {
         }
         emit(GameEventKind::dice_rolled, player_name(actor()) + "前进" + std::to_string(remaining) + "步",
              remaining);
+        if (!faces.empty()) { // fcn_00419572: values first, then the Panel 4..6 dice movie.
+            effect(EffectKind::dice_roll, actor(), actor_point(actor()));
+            effects.back().dice = faces;
+        }
         set_phase(GamePhase::rolling);
     }
     void start_step() {
@@ -559,6 +637,7 @@ struct GameSession::Impl {
                     if (--bomb.remaining_days == 0) {
                         remove_object(bomb_id);
                         change_building(world.nodes.at(player().node_id).type_and_index, false);
+                        effect(EffectKind::explosion, actor(), actor_point(actor())); // Data 525
                         injure(actor());
                         add_confinement(actor(), 5, true);
                         remaining = 0;
@@ -576,6 +655,12 @@ struct GameSession::Impl {
                     }
                 }
                 if (object) {
+                    // Mine (kind 17) explosion picture: emitted from the hospital callback below.
+                    mine_pending = world.objects.at(object - 1).kind == 17;
+                    struct ClearMine {
+                        bool &flag;
+                        ~ClearMine() { flag = false; }
+                    } clear_mine{mine_pending};
                     const auto result =
                         gods::touch(world, random, actor(), object, remaining == 0, god_callbacks());
                     check_god(result);
@@ -624,6 +709,8 @@ struct GameSession::Impl {
         }
         emit(upgrade ? GameEventKind::land_upgraded : GameEventKind::land_purchased,
              player_name(actor()) + (upgrade ? "升级房产" : "买下房产"), cost);
+        if (upgrade)
+            sparkle_if_top_floor(static_cast<std::uint16_t>(2000 + land_id), 4); // fcn_0040b0cd
         if (upgrade && land.economy.level == 5)
             voice(actor(), 15);
         else {
@@ -661,6 +748,9 @@ struct GameSession::Impl {
             }
             const auto cost = upgrade ? upgrade_price(land_id) : purchase_price(land_id);
             if (cost < 0 || player().cash < cost) {
+                if (cost >= 0)
+                    announce(Announcement::cash_insufficient, actor()).property =
+                        static_cast<std::uint16_t>(2000 + land_id);
                 finish_turn();
                 return;
             }
@@ -739,7 +829,8 @@ struct GameSession::Impl {
                     ? (numeric::Extended::from(requested) * numeric::Extended::from(ally_ratio)).integer()
                     : 0;
             pay_toll(owner, requested, payer,
-                     ally_code ? std::optional<std::size_t>(ally_code - 1U) : std::nullopt, ally_amount);
+                     ally_code ? std::optional<std::size_t>(ally_code - 1U) : std::nullopt, ally_amount,
+                     static_cast<std::uint16_t>(2000 + land_id));
             world.lands.at(land_id).removed_building = static_cast<std::uint32_t>(requested);
         });
     }
@@ -777,6 +868,8 @@ struct GameSession::Impl {
              : operation == 1 ? "建设设施"
                               : "升级设施",
              cost);
+        if (operation)
+            sparkle_if_top_floor(static_cast<std::uint16_t>(4000 + id), 4);
         if (facility.level == 5)
             voice(actor(), 15);
         finish_turn();
@@ -829,7 +922,8 @@ struct GameSession::Impl {
                                              facility.facility_type != 1);
         if (payer == owner)
             return;
-        pay_toll(owner, toll, payer);
+        pay_toll(owner, toll, payer, std::nullopt, 0, static_cast<std::uint16_t>(4000 + id),
+                 facility.facility_type, multiplier);
         facility.removed_building = static_cast<std::uint32_t>(toll);
         if (phase == GamePhase::finished)
             return;
@@ -873,6 +967,9 @@ struct GameSession::Impl {
             const auto cost = multiply32(operation == 2 ? entry.price_per_level() : entry.land_price,
                                          world.header.price_index);
             if (cost < 0 || player().cash < cost) {
+                if (cost >= 0)
+                    announce(Announcement::cash_insufficient, actor()).property =
+                        static_cast<std::uint16_t>(4000 + id);
                 finish_turn();
                 return;
             }
@@ -1286,7 +1383,16 @@ struct GameSession::Impl {
         return payer;
     }
     void pay_toll(std::size_t owner, std::int32_t requested, std::size_t payer,
-                  std::optional<std::size_t> ally = std::nullopt, std::int32_t ally_amount = 0) {
+                  std::optional<std::size_t> ally = std::nullopt, std::int32_t ally_amount = 0,
+                  std::uint16_t property = 0, std::uint8_t facility_type = 0, int multiplier = 0) {
+        {
+            auto &box = announce(Announcement::toll, payer, facility_type);
+            box.property = property;
+            box.subject = static_cast<std::int32_t>(owner);
+            box.second_subject = ally ? static_cast<std::int32_t>(*ally) : -1;
+            box.amount = requested;
+            box.value = multiplier;
+        }
         int most_hostile = -1;
         std::int32_t largest_hostility = 0;
         for (std::size_t i = 0; i < world.players.size(); ++i) {
@@ -1358,6 +1464,7 @@ struct GameSession::Impl {
         }
         events.push_back(
             {GameEventKind::player_bankrupt, slot, 0, state.node_id, player_name(slot) + "破产"});
+        effect(EffectKind::bankrupt, slot, actor_point(slot)); // Data 555
         if (check_game_end())
             return;
         // Original 0x40d095 retains buildings and auctions three distinct
@@ -1987,6 +2094,7 @@ struct GameSession::Impl {
         else
             return 0;
         change_building(code, true);
+        sparkle_if_top_floor(code, before);
         if (code < 4000) {
             const auto &land = world.lands.at(code - 2000);
             after = land.economy.level;
@@ -2010,13 +2118,23 @@ struct GameSession::Impl {
         };
         callbacks.game_over = [this] { return phase == GamePhase::finished; };
         callbacks.hospital = [this](auto slot, auto amount) {
+            if (mine_pending) // core_actions loc_0041be5f: Data 525 after the mine is removed.
+                effect(EffectKind::explosion, slot, actor_point(slot));
             injure(slot);
             add_confinement(slot, amount, true);
         };
         callbacks.voice = [this](auto slot, auto category) { voice(slot, category); };
         callbacks.upgrade_property = [this](auto code) { return upgrade_for_god(code); };
-        callbacks.downgrade_property = [this](auto code) { change_building(code, false); };
+        callbacks.downgrade_property = [this](auto code) {
+            change_building(code, false);
+            effect(EffectKind::demon_puff, actor(), property_point(code), code); // Data 526
+        };
         callbacks.hostility = [this](auto from, auto to, auto delta) { update_hostility(from, to, delta); };
+        callbacks.appeared = [this](auto slot, auto kind) {
+            effect(EffectKind::god_appear, slot, actor_point(slot));
+            effects.back().object_kind = kind;
+        };
+        callbacks.arrival = [this](auto slot, auto kind) { announce(Announcement::god_arrival, slot, kind); };
         return callbacks;
     }
     EventCallbacks event_callbacks() {
@@ -2151,7 +2269,9 @@ struct GameSession::Impl {
             return auction(code, seller).winner.has_value();
         };
         callbacks.choose_target = [this](auto card, auto options) {
-            return choose_target(options, std::string(services::card_names.at(card - 1)) + "：选择目标");
+            auto chosen = choose_target(options, std::string(services::card_names.at(card - 1)) + "：选择目标");
+            chosen_card_target = chosen; // Presentation only (card_effect).
+            return chosen;
         };
         callbacks.choose_inventory = [this](auto, auto victim) -> std::optional<CardTarget> {
             std::vector<CardTarget> choices;
@@ -2364,7 +2484,12 @@ struct GameSession::Impl {
             forced_roll = amount;
             begin_roll();
         };
-        callbacks.upgrade = [this](auto code) { change_building(code, true); };
+        callbacks.upgrade = [this](auto code) {
+            const auto before = property_level(code);
+            change_building(code, true);
+            effect(EffectKind::build_rise, actor(), property_point(code), code); // Data 553
+            sparkle_if_top_floor(code, before);
+        };
         callbacks.before_teleport = [this](auto slot) {
             if (slot == actor() && (player().controller_flags & 1U))
                 previous_turn[slot] = world;
@@ -2374,6 +2499,8 @@ struct GameSession::Impl {
             const auto point = instance_position(code);
             area_damage(static_cast<std::uint16_t>(point.x), static_cast<std::uint16_t>(point.y),
                         nuclear ? 1 : 0, true, static_cast<int>(slot), nuclear ? -1 : 100);
+            effect(nuclear ? EffectKind::nuclear_missile : EffectKind::missile, slot, {point.x, point.y},
+                   code > 2000 && code < 6000 ? code : 0);
         };
         return callbacks;
     }
@@ -2389,11 +2516,13 @@ struct GameSession::Impl {
         const auto checkpoint_random = random.state();
         const auto checkpoint_ai = card_ai_memory;
         const auto event_count = events.size();
+        const auto effect_count = effects.size();
         const auto old_phase = phase;
         const auto restore = [&] {
             world = std::move(checkpoint);
             random.seed(checkpoint_random);
             events.resize(event_count);
+            effects.resize(effect_count, EffectEvent{EffectKind::dice_roll});
             phase = old_phase;
             card_ai_memory = checkpoint_ai;
         };
@@ -2431,12 +2560,29 @@ struct GameSession::Impl {
         if (completed && on_success)
             on_success();
     }
+    // The original shows the news/fortune screen before the handler's effects (bubbles,
+    // boxes), so the announcement is inserted ahead of the events the handler emitted.
+    void announce_event(bool news, std::size_t slot, const EventResult &result, std::size_t position) {
+        GameEvent event{GameEventKind::notice, slot, 0, world.players.at(slot).state.node_id, {}};
+        event.announcement = news ? Announcement::news : Announcement::fortune;
+        event.announcement_id = result.event_id;
+        event.property = result.property;
+        event.subject = result.subject;
+        event.company = result.company;
+        event.value = result.value;
+        event.players = result.players;
+        event.player_amounts = result.player_amounts;
+        events.insert(events.begin() + static_cast<std::ptrdiff_t>(std::min(position, events.size())),
+                      std::move(event));
+    }
     void resolve_event(bool news) {
         run_rule([this, news] {
+            const auto position = events.size();
             const auto result = news ? apply_news(world, random, event_callbacks())
                                      : apply_fortune(world, random, actor(), event_callbacks());
             if (!result.supported)
                 throw UnsupportedRule{result.message};
+            announce_event(news, actor(), result, position);
             emit(GameEventKind::notice, result.message);
         });
     }
@@ -2502,9 +2648,11 @@ struct GameSession::Impl {
     services::MagicCallbacks magic_callbacks() {
         services::MagicCallbacks callbacks;
         callbacks.fortune = [this](auto slot) {
+            const auto position = events.size();
             const auto result = apply_fortune(world, random, slot, event_callbacks());
             if (!result.supported)
                 throw UnsupportedRule{result.message};
+            announce_event(false, slot, result, position);
             emit(GameEventKind::notice, result.message);
         };
         callbacks.defense = [this](auto slot) { return try_defense_card(slot); };
@@ -2827,6 +2975,8 @@ struct GameSession::Impl {
         } else if (kind >= 10 && kind <= 12) {
             const auto amount = kind == 10 ? 50 : kind == 11 ? 30 : 10;
             player().points = static_cast<std::uint16_t>(player().points + amount);
+            // The original shows the coupon box before the speech bubble.
+            announce(Announcement::point_coupon, actor()).amount = amount;
             if (kind == 10)
                 voice(actor(), static_cast<std::uint8_t>(random.next() & 1U));
             else if (kind == 11)
@@ -3074,12 +3224,14 @@ bool GameSession::use_card(const CardUse &request) {
     impl_->last_action_accepted = true;
     impl_->run_rule(
         [this, request] {
+            impl_->chosen_card_target.reset();
             const auto result =
                 apply_card(impl_->world, impl_->random, impl_->actor(), request, impl_->card_callbacks());
             impl_->last_action_accepted = result.used();
             if (result.status == CardUseStatus::missing_callback)
                 throw UnsupportedRule{result.message};
             if (result.used()) {
+                impl_->card_effect(request.card_id, request.target);
                 impl_->emit(GameEventKind::notice,
                             "使用" + std::string(services::card_names.at(request.card_id - 1)));
                 impl_->events.back().card = request.card_id;
@@ -3126,8 +3278,10 @@ bool GameSession::use_tool(unsigned id, std::uint16_t target, std::uint16_t dest
             impl_->last_action_accepted = result.applied;
             if (!result.supported)
                 throw UnsupportedRule{result.message};
-            if (result.applied)
+            if (result.applied) {
+                impl_->tool_effect(id, chosen);
                 impl_->emit(GameEventKind::notice, "使用" + std::string(services::tool_names.at(id - 1)));
+            }
         },
         true, false);
     return impl_->last_action_accepted || impl_->phase == GamePhase::awaiting_decision;
@@ -3400,6 +3554,11 @@ void GameSession::tick(unsigned elapsed_ms) {
 std::vector<GameEvent> GameSession::drain_events() {
     auto output = std::move(impl_->events);
     impl_->events.clear();
+    return output;
+}
+std::vector<EffectEvent> GameSession::drain_effects() {
+    auto output = std::move(impl_->effects);
+    impl_->effects.clear();
     return output;
 }
 bool GameSession::can_save() const noexcept {

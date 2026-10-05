@@ -134,7 +134,7 @@ Paths prepare() {
     const auto data = prepare_assets(internal);
     paths.assets = data / "game";
 
-    std::unique_ptr<char, decltype(&SDL_free)> preferences(SDL_GetPrefPath("simonliang", "rich4"), SDL_free);
+    std::unique_ptr<char, decltype(&SDL_free)> preferences(SDL_GetPrefPath("divby0", "rich4"), SDL_free);
     if (!preferences)
         throw std::runtime_error(std::string("No preference path: ") + SDL_GetError());
     paths.save_directory = fs::path(preferences.get()) / "saves";

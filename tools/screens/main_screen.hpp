@@ -81,6 +81,10 @@ class MainScreen {
     int hover_ = -1;
     int go_x_ = 180, go_y_ = 120;
     std::optional<std::pair<int, int>> go_drag_; // pointer offset inside the GO button
+    // Touch: a tap anywhere on GO rolls (the original's 35x41 roll hotspot is too small for a
+    // finger); it becomes a drag only once the pointer moves. Set on press, fired on release.
+    std::function<void()> pending_roll_;
+    std::pair<int, int> press_point_{};
     std::optional<board::Point> free_scroll_;
     bool minimap_drag_ = false, full_map_ = false;
     int minimap_top_ = 280;

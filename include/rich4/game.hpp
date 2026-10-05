@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -77,6 +78,20 @@ struct GameDecision {
     std::int32_t max_amount = 0;
 };
 
+// Original on-screen announcements (docs/ui/messages.md). Presentation only: emitting
+// them never changes a rule outcome or consumes random numbers.
+enum class Announcement : std::uint8_t {
+    none,
+    toll,              // Box before a toll: property, subject=owner, second=ally, amount, value=multiplier.
+    cash_insufficient, // "您的現金不足！" box when a buy/upgrade costs more than cash.
+    news,              // Full-screen news: id 0..35 plus body arguments.
+    fortune,           // Full-screen fortune: id 0..48 plus body arguments.
+    god_arrival,       // God attached: id = object kind (1..10, 12, 15).
+    point_coupon,      // "得點券N點" box (1000 ms): amount 10/30/50.
+    absent_status,     // Turn-start "%s坐牢中\n\n還剩%d天！" box: id 0 hotel, 1 away, 2 prison,
+                       // 3 hospital, 4 hibernating; value = days left.
+};
+
 struct GameEvent {
     GameEventKind kind;
     std::size_t player;
@@ -84,8 +99,46 @@ struct GameEvent {
     std::uint16_t node = 0;
     std::string message;
     std::optional<std::uint8_t> voice_category = std::nullopt;
+    Announcement announcement = Announcement::none;
+    std::uint8_t announcement_id = 0; // News/fortune handler, god kind or facility type (toll).
+    std::uint16_t property = 0;       // Original property code: 2000+land, 4000+facility.
+    std::int32_t subject = -1, second_subject = -1, company = -1, value = 0;
+    std::uint8_t players = 0; // Affected player slots (portrait rows).
+    std::array<std::int32_t, 4> player_amounts{};
     // Card id (1..30) when this event reports a card being used, for the card-art popup.
     std::optional<std::uint8_t> card = std::nullopt;
+};
+
+// Presentation-only record of an original on-board animation (docs/ui/effects.md §9). The rule
+// change has ALREADY happened when the effect is drained; the app replays the picture (FLC movie,
+// sprite throw, dice) and may show the pre-mutation board until the movie's commit frame.
+// Emitting effects never consumes randomness and never changes rule outcomes.
+enum class EffectKind : std::uint8_t {
+    dice_roll,         // Panel 4..6 + Panel 3 faces; `dice` holds the values already rolled
+    top_floor_sparkle, // Data 523, a property reached level 5
+    build_rise,        // Data 553, robot worker free build
+    object_throw,      // roadblock/mine/time bomb flies from `from` to `target`; object_kind 16/17/18
+    missile,           // Data 528
+    nuclear_missile,   // Data 530
+    explosion,         // Data 525, mine stepped on / time bomb exploded
+    demolish,          // Data 529, demolish card
+    monster,           // Data 557, monster card
+    god_appear,        // Data 540.., object_kind = god kind 1..15
+    demon_puff,        // Data 526, demon god downgraded the property at `target`
+    bankrupt           // Data 555
+};
+struct EffectPoint {
+    std::int32_t x = 0, y = 0; // Original world coordinates (same space as board::Point).
+};
+struct EffectEvent {
+    EffectKind kind;
+    std::size_t player = 0;                         // actor
+    std::uint16_t node = 0;                         // actor's road node, or the throw's target node
+    EffectPoint target{};                           // world point the camera centres on
+    std::optional<EffectPoint> from = std::nullopt; // throws: actor world point
+    std::uint8_t object_kind = 0;                   // throws: 16/17/18; god_appear: god kind
+    std::vector<std::uint8_t> dice{};               // dice_roll values
+    std::uint16_t property = 0;                     // target property code (2001.. / 4001..), if any
 };
 
 struct MoveAnimation {
@@ -136,6 +189,8 @@ class GameSession {
     bool respond(std::size_t option, std::int32_t amount = 0);
     void tick(unsigned elapsed_ms);
     [[nodiscard]] std::vector<GameEvent> drain_events();
+    // Additive presentation queue, in emission order (see EffectEvent).
+    [[nodiscard]] std::vector<EffectEvent> drain_effects();
 
     // Saving during an animation/decision is rejected, so a reload never loses
     // an in-flight action. World handles all original byte-layout serialization.

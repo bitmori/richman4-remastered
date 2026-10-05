@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "rich4/assets.hpp"
+#include "rich4/flc.hpp"
 #include "rich4/graphics.hpp"
 #include "rich4/save.hpp"
 #include "rich4/terrain.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
@@ -43,6 +45,7 @@ void usage() {
               << "  rich4-tool extract ARCHIVE.mkf ENTRY OUTPUT_FILE\n"
               << "  rich4-tool frame ARCHIVE.mkf ENTRY FRAME OUTPUT.ppm\n"
               << "  rich4-tool terrain ARCHIVE.mkf ENTRY OUTPUT.ppm\n"
+              << "  rich4-tool flc ARCHIVE.mkf ENTRY OUTPUT_PREFIX [STEP]  (FLC frames, index 0 magenta)\n"
               << "  rich4-tool roundtrip-save INPUT.dat OUTPUT.dat\n";
 }
 } // namespace
@@ -65,7 +68,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (command != "inspect" && command != "dump" && command != "extract" && command != "frame" &&
-            command != "terrain") {
+            command != "terrain" && command != "flc") {
             usage();
             return 2;
         }
@@ -112,6 +115,24 @@ int main(int argc, char **argv) {
         } else if (command == "frame" && argc == 6) {
             const auto data = archive.decode(index_of(argv[3]));
             rich4::graphics::write_ppm(rich4::graphics::decode_frame(data, index_of(argv[4])), argv[5]);
+        } else if (command == "flc" && (argc == 5 || argc == 6)) {
+            rich4::flc::Decoder movie(archive.decode(index_of(argv[3])));
+            const std::size_t step = argc == 6 ? std::max<std::size_t>(1, index_of(argv[5])) : 1;
+            std::size_t written = 0;
+            while (movie.next()) {
+                const auto index = movie.decoded_frames() - 1;
+                if (index % step)
+                    continue;
+                auto canvas = rich4::graphics::make_canvas(movie.width(), movie.height(), 0x7c1f);
+                rich4::graphics::blit(canvas, movie.image(), 0, 0);
+                std::ostringstream name;
+                name << argv[4] << '-' << std::setfill('0') << std::setw(3) << index << ".ppm";
+                rich4::graphics::write_ppm(canvas, name.str());
+                ++written;
+            }
+            std::cout << "{\"frames\":" << movie.frame_count() << ",\"width\":" << movie.width()
+                      << ",\"height\":" << movie.height() << ",\"delay_ms\":" << movie.delay_ms()
+                      << ",\"written\":" << written << "}\n";
         } else if (command == "terrain" && argc == 5) {
             const auto ground = rich4::terrain::parse_ground(archive.decode(index_of(argv[3])));
             rich4::graphics::write_ppm(rich4::terrain::render_overview(ground), argv[4]);

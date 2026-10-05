@@ -101,6 +101,25 @@ void sink(graphics::Image &canvas, Rect rect) {
         at(rect.left, y) = darken(at(rect.left, y));
 }
 
+// Touch selection highlight: blend the rect toward warm yellow.
+void tint(graphics::Image &canvas, Rect rect) {
+    rect.left = std::clamp(rect.left, 0, canvas.width);
+    rect.right = std::clamp(rect.right, 0, canvas.width);
+    rect.top = std::clamp(rect.top, 0, canvas.height);
+    rect.bottom = std::clamp(rect.bottom, 0, canvas.height);
+    constexpr std::array<unsigned, 3> target{6, 28, 31}; // b, g, r in 5-bit units
+    for (int y = rect.top; y < rect.bottom; ++y)
+        for (int x = rect.left; x < rect.right; ++x) {
+            auto &pixel = canvas.pixels[std::size_t(y * canvas.width + x)];
+            std::uint16_t result = 0;
+            for (unsigned channel = 0; channel < 3; ++channel) {
+                const unsigned shift = channel * 5, value = (pixel >> shift) & 31U;
+                result = static_cast<std::uint16_t>(result | ((value + target[channel]) / 2U) << shift);
+            }
+            pixel = result;
+        }
+}
+
 Rect grid_tile(int origin_x, int origin_y, int tile) {
     const int c = tile % 5, r = tile / 5;
     return {origin_x + 6 + 80 * c, origin_y + 6 + 56 * r, origin_x + 84 + 80 * c, origin_y + 60 + 56 * r};
@@ -454,15 +473,26 @@ void Screens::draw_targets(Frame &frame, const GameDecision &decision, const boa
             keyed(frame, art(frame, 'd', 0, std::size_t(first) + animation % std::size_t(count)), x, y);
             const int bounce = int((now(frame) / 80) % 8);
             keyed(frame, art(frame, 'd', 0, 38), x, y - 16 - (bounce < 4 ? bounce : 8 - bounce));
-            frame.hit(5000 + int(marker.index), {x - 22, y - 30, x + 22, y + 22},
-                      [tap, index = marker.index] { tap(index); });
         }
-    for (const auto &marker : markers)
-        if (selected != marker.index) {
-            const auto [x, y] = marker.point;
-            frame.hit(5000 + int(marker.index), {x - 20, y - 20, x + 20, y + 20},
-                      [tap, index = marker.index] { tap(index); });
+    // Finger-sized hit areas (the cursor art is mouse-sized). Where they overlap, the tap goes to
+    // the target nearest to the finger, so a target's own centre always picks that target.
+    const auto nearest = [&frame, markers, tap] {
+        std::optional<std::size_t> best;
+        long best_distance = 0;
+        for (const auto &marker : markers) {
+            const long dx = marker.point.x - frame.pointer_x, dy = marker.point.y - frame.pointer_y;
+            if (!best || dx * dx + dy * dy < best_distance) {
+                best = marker.index;
+                best_distance = dx * dx + dy * dy;
+            }
         }
+        if (best)
+            tap(*best);
+    };
+    for (const auto &marker : markers) {
+        const auto [x, y] = marker.point;
+        frame.hit(5000 + int(marker.index), {x - 30, y - 32, x + 30, y + 28}, nearest);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -498,6 +528,12 @@ constexpr std::array<std::array<const char *, 5>, 2> shop_lines{
       "歡迎下次再來！"},
      {"歡迎光臨\n道具店！", "您要兌換\n什麼道具？", "對不起，\n您的點券不夠！", "很抱歉！您的\n道具欄已滿！",
       "謝謝惠顧！"}}};
+}
+
+std::optional<std::int32_t> Screens::shop_pending_value() const {
+    if (!shop_.active || shop_.pick_kind < 0)
+        return std::nullopt;
+    return shop_.pick_value;
 }
 
 bool Screens::shop_show_option(std::int32_t value) {
@@ -584,11 +620,25 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
                 if (sound)
                     sound(3);
             };
+            const int kind = card ? 0 : 1;
             if (state.points < price)
                 complain(mode_lines[2]);
             else if (card ? card_count(state.cards) >= 15 : state.tool_amounts.at(item - 1) >= 9)
                 complain(mode_lines[3]);
-            else if (index && host.respond(*index)) {
+            else if (shop_.pick_kind != kind || shop_.pick_index != row) {
+                // Touch: the first tap shows the item in the balloon, a second tap buys it.
+                shop_.pick_kind = kind;
+                shop_.pick_index = row;
+                shop_.pick_value = value;
+                shop_.balloon =
+                    std::string(card ? services::card_names.at(item - 1) : services::tool_names.at(item - 1)) +
+                    "　" + std::to_string(price) + "點\n再點一次就兌換";
+                shop_.balloon_until = UINT64_MAX;
+                if (sound)
+                    sound(1);
+            } else if (index && host.respond(*index)) {
+                shop_.pick_kind = -1;
+                shop_.balloon.clear();
                 (card ? shop_.cards_bought : shop_.tools_bought).at(row) = true;
                 if (sound)
                     sound(1);
@@ -601,6 +651,8 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
             const auto card = shop.cards[i];
             const bool bought = shop.cards_bought[i];
             const int y = int(i) * 24;
+            if (shop.pick_kind == 0 && shop.pick_index == i)
+                tint(frame.canvas, {14 + dx, 82 + y, 215 + dx, 104 + y});
             centred(frame, services::card_names.at(card - 1), 95 + dx, 93 + y, 20, bought ? grey : white);
             top_right(frame, "$" + std::to_string(services::card_prices.at(card - 1)), 199 + dx, 85 + y, 20,
                       bought ? grey : white);
@@ -613,6 +665,8 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
             const auto tool = shop.tools[i];
             const bool bought = shop.tools_bought[i];
             const int y = int(i) * 48;
+            if (shop.pick_kind == 1 && shop.pick_index == i)
+                tint(frame.canvas, {12 + dx, 81 + y, 213 + dx, 127 + y});
             centred(frame, services::tool_names.at(tool - 1), 95 + dx, 102 + y, 20, bought ? grey : white);
             top_right(frame, "$" + std::to_string(services::tool_prices.at(tool - 1)), 199 + dx, 94 + y, 20,
                       bought ? grey : white);
@@ -639,10 +693,38 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
         const Rect rect{233 + 80 * c, 299 + 56 * r, 311 + 80 * c, 353 + 56 * r};
         if (frame.pointer_down && frame.pointer_in(rect))
             sink(frame.canvas, rect);
-        frame.hit(option_id + int(*index), rect, [this, host, index = *index] {
-            if (host.respond(index) && sound)
-                sound(1);
-        });
+        const int kind = mode ? 3 : 2;
+        if (shop.pick_kind == kind && shop.pick_index == tile) {
+            ui::border(frame.canvas, rect, ui::color(255, 255, 0));
+            ui::border(frame.canvas, {rect.left + 1, rect.top + 1, rect.right - 1, rect.bottom - 1},
+                       ui::color(255, 255, 0));
+        }
+        const auto owned = mode ? player.tool_amounts.at(std::size_t(sell_values[tile] % 100) - 1) : 1;
+        frame.hit(option_id + int(*index), rect,
+                  [this, host, kind, tile, owned, index = *index, value = sell_values[tile]] {
+                      if (shop_.pick_kind != kind || shop_.pick_index != tile) {
+                          // Touch: the first tap names the price, a second tap sells.
+                          const auto item = std::size_t(value % 100);
+                          const bool card = kind == 2;
+                          const auto price = card ? services::card_prices.at(item - 1)
+                                                  : services::tool_prices.at(item - 1) * owned;
+                          shop_.pick_kind = kind;
+                          shop_.pick_index = tile;
+                          shop_.pick_value = value;
+                          shop_.balloon = "賣出" +
+                                          std::string(card ? services::card_names.at(item - 1)
+                                                           : services::tool_names.at(item - 1)) +
+                                          "\n可得" + std::to_string(price * 9 / 10) + "點，再點一次";
+                          shop_.balloon_until = UINT64_MAX;
+                          if (sound)
+                              sound(1);
+                          return;
+                      }
+                      shop_.pick_kind = -1;
+                      shop_.balloon.clear();
+                      if (host.respond(index) && sound)
+                          sound(1);
+                  });
     }
     // Switch shop, EXIT and points box.
     const Rect switch_rect{542, 13, 627, 98}, exit_rect{556, 246, 636, 286};
@@ -658,7 +740,10 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
         keyed(frame, art(frame, 'p', 10, 15), 120, 10);
         centred(frame, shop.balloon, 235, 119, 20, dark, false, dark, true);
         if (!shop.leaving) // a tap on the balloon dismisses it, as a click did in the original
-            frame.hit(281, {150, 30, 360, 210}, [this] { shop_.balloon.clear(); });
+            frame.hit(281, {150, 30, 360, 210}, [this] {
+                shop_.balloon.clear();
+                shop_.pick_kind = -1;
+            });
     }
     if (shop.leaving) {
         if (leave)
@@ -667,11 +752,13 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
     }
     frame.hit(shop_switch_id, switch_rect, [this] {
         shop_.mode ^= 1;
+        shop_.pick_kind = -1;
         if (!shop_.balloon.empty() && shop_.balloon != shop_lines[0][0] && shop_.balloon != shop_lines[1][0])
             shop_.balloon.clear();
     });
     if (leave)
         frame.hit(option_id + int(*leave), exit_rect, [this, mode] {
+            shop_.pick_kind = -1;
             shop_.leaving = true;
             shop_.leave_at = 0;
             shop_.balloon = shop_lines[std::size_t(mode)][4];
@@ -1028,6 +1115,19 @@ void Screens::gallery(Frame &frame, const World &base, const std::function<void(
         shop_.balloon_until = *clock + 1000;
         shoot(mode ? "shop-tool-balloon" : "shop-card-balloon", [&] { draw_shop(frame, game, shop, host); });
     }
+    shop_.mode = 0;
+    shop_.pick_kind = 0;
+    shop_.pick_index = 3;
+    shop_.pick_value = 112;
+    shop_.balloon = "拆除卡　15點\n再點一次就兌換";
+    shop_.balloon_until = UINT64_MAX;
+    shoot("shop-card-picked", [&] { draw_shop(frame, game, shop, host); });
+    shop_.pick_kind = 2;
+    shop_.pick_index = 1;
+    shop_.pick_value = 304;
+    shop_.balloon = "賣出換地卡\n可得22點，再點一次";
+    shoot("shop-card-sell-picked", [&] { draw_shop(frame, game, shop, host); });
+    shop_.pick_kind = -1;
     shop_.leaving = true;
     shop_.leave_at = *clock + 1000;
     shop_.balloon = shop_lines[0][4];

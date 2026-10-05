@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-package com.simonliang.rich4;
+package io.divby0.rich4;
 
 import org.libsdl.app.SDLActivity;
 
