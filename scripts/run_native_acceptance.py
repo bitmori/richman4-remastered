@@ -53,7 +53,7 @@ def matrix(turns):
         cases.append(Case(f"inventory-{name}", "synthetic_inventory", turns, seed, fixture=name))
     cases.append(Case("target-card-13-tool-11", "synthetic_target", 3, 3,
                       fixture="cards-01-15", exercise_card=13, exercise_tool=11))
-    for card in (22, 26, 28):
+    for card in (17, 22, 26, 28):
         cases.append(Case(f"target-card-{card}", "synthetic_target", 3, 7,
                           fixture="cards-16-30", exercise_card=card))
     cases.append(Case("bankruptcy-victory", "synthetic_endgame", 3, 3,

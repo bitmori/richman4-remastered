@@ -142,8 +142,8 @@ class MatrixTests(unittest.TestCase):
 
     def test_matrix_has_all_required_categories_and_fresh_inputs(self):
         cases = acceptance.matrix(30)
-        self.assertEqual(len(cases), 19)
-        self.assertEqual(len({case.name for case in cases}), 19)
+        self.assertEqual(len(cases), 20)
+        self.assertEqual(len({case.name for case in cases}), 20)
         natural = [case for case in cases if not case.synthetic]
         self.assertEqual([case.map_id for case in natural], list(range(8)))
         self.assertEqual(len({case.seed for case in natural}), 8)
@@ -152,7 +152,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual({case.fixture for case in inventory}, set(acceptance.INVENTORY_FIXTURES))
         self.assertTrue(all(case.days == 30 for case in inventory))
         targets = [case for case in cases if case.category == "synthetic_target"]
-        self.assertEqual({case.exercise_card for case in targets}, {13, 22, 26, 28})
+        self.assertEqual({case.exercise_card for case in targets}, {13, 17, 22, 26, 28})
         self.assertTrue(any(case.exercise_card == 13 and case.exercise_tool == 11 for case in targets))
         self.assertTrue(all(case.days == 3 and case.synthetic for case in cases[12:]))
         self.assertTrue(any(case.exercise_card == 6 and case.exercise_recovery for case in cases))
@@ -166,10 +166,10 @@ class MatrixTests(unittest.TestCase):
         self.assertTrue(summary["native_acceptance_verified"])
         self.assertFalse(summary["original_full_game_equivalence_verified"])
         self.assertEqual(self.maximum_active, 2)
-        self.assertEqual(len(self.calls), 19)
-        self.assertEqual(len({str(call["output"]) for call in self.calls}), 19)
+        self.assertEqual(len(self.calls), 20)
+        self.assertEqual(len({str(call["output"]) for call in self.calls}), 20)
         loads = [Path(call["load"]) for call in self.calls if call["load"]]
-        self.assertEqual(len(set(loads)), 11)
+        self.assertEqual(len(set(loads)), 12)
         self.assertTrue(all(self.output / "inputs" in path.parents for path in loads))
         self.assertTrue(all(item["status"] == "passed" and item["binary_sha256"] == summary["binary_sha256"]
                             for item in summary["runs"]))
@@ -197,7 +197,7 @@ class MatrixTests(unittest.TestCase):
         self.raise_case = "natural-map-3"
         code, summary = self.invoke()
         self.assertEqual(code, 1)
-        self.assertEqual(len(summary["runs"]), 19)
+        self.assertEqual(len(summary["runs"]), 20)
         failed = [item for item in summary["runs"] if item["status"] == "failed"]
         self.assertEqual([item["name"] for item in failed], [self.raise_case])
         self.assertIn("TimeoutExpired", failed[0]["error"])

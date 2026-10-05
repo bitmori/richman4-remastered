@@ -1,6 +1,6 @@
 # 031 — Native acceptance matrix
 
-`scripts/run_native_acceptance.py` runs 19 independent native gameplay cases,
+`scripts/run_native_acceptance.py` runs 20 independent native gameplay cases,
 collects their evidence, and rejects incomplete action coverage. It composes
 `run_native_playability.run`; it does not substitute a state-only simulation
 for the SDL application's event queue. Both SDL drivers are `dummy`, with no
@@ -43,7 +43,7 @@ of a 30-day test.
 | --- | ---: | ---: | --- |
 | All eight map resources | 8 | 30 by default | Natural new game; distinct seeds `42 + 97 * map_id` |
 | Inventory coverage | 4 | 30 by default | Synthetic `cards-01-15`, `cards-16-30`, `tools-01-13`, `cards-facility` |
-| Directed actions | 4 | 3 | Fresh synthetic loads: card 13 + tool 11, card 22, card 26, card 28 |
+| Directed actions | 5 | 3 | Fresh synthetic loads: card 13 + tool 11, card 17, card 22, card 26, card 28 |
 | Bankruptcy and human victory | 1 | 3 | Synthetic two-player `bankruptcy-victory` |
 | Recovery and card cancellation | 1 | 3 | Fresh `cards-01-15`; card 6 and `--exercise-recovery` |
 | Player trading | 1 | 3 | Synthetic `player-trading`; `--exercise-trading` |
@@ -51,7 +51,7 @@ of a 30-day test.
 The generator is invoked once with `--output NEW_DIR --assets GAME`. It emits
 six master fixture sets, each containing DAT bytes, a native RNG sidecar and a
 JSON manifest. All manifests must explicitly identify synthetic provenance.
-Each of the eleven synthetic runs receives its own copy of all three files;
+Each of the twelve synthetic runs receives its own copy of all three files;
 it never loads another run's output. Each run also has separate gameplay,
 save-directory, report and log paths. At most two child games execute together.
 
@@ -76,7 +76,7 @@ remaining cases from collecting their evidence.
 
 The combined result additionally requires:
 
-- All 19 cases pass; all eight natural map IDs appear.
+- All 20 cases pass; all eight natural map IDs appear.
 - Executed card IDs cover all 26 active cards, `1..17` and `22..30`; executed
   tools cover `1..13`. Reactive cards `18..21`, if observed, are reported
   separately and cannot fill an active-card gap. Presence in an inventory is
@@ -118,7 +118,7 @@ python3 tests/native_fixture_tests.py build/native/rich4-native-fixture
 ```
 
 At introduction, all **11 orchestration tests** passed using mocked child
-processes. They cover the 19-case plan, two-worker overlap, private inputs,
+processes. They cover the 20-case plan, two-worker overlap, private inputs,
 coverage failures despite individual success, timeout continuation, winner
 verification, strict recovery/trading types, changed source files, mutated
 private input, tampered evidence, failed or mislabeled generation, and output
@@ -129,7 +129,15 @@ generator and a publicly authored ring-map save. The added test examines the
 serialized 12-byte offer, empty human listing slots, inventory capacity, funds
 and source immutability. These tests need no original game assets.
 
-The full 19-case matrix has **not** been run as part of this tooling commit.
-Its acceptance result must come from a subsequent `summary.json` produced by
-the integrated application; passing the orchestration tests alone is not
-native gameplay acceptance.
+The initial 19-case execution is recorded in local artifact
+`artifacts/native-acceptance/debug-asan-final-20261005/summary.json`.
+All 19 individual runs passed, including eight natural starts of 30 days each,
+all 13 tools, victory, recovery, trading and integrity checks. The combined
+result correctly **failed**, because only 25 of 26 active cards were executed:
+card 17 was missing. The twentieth case explicitly requests card 17 on a fresh
+fixture. The coverage requirement is unchanged; an inventory containing a card
+still cannot count as execution.
+
+The expanded matrix's result must come from its own subsequent `summary.json`
+produced by the integrated application. Passing the orchestration tests or
+combining separate partial reports does not establish a passing full matrix.
