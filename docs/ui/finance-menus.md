@@ -804,8 +804,17 @@ Black screen with Panel 76:0 at (24,24).
 
 - Dividend = trunc(funds × shares / Σ active shares); the company's `funds` is then reset. Payouts go
   to the bank deposit.
-- Sound id 61.
-- Closes on click, or after 3 s when flag 0x46cb01 is set (**UNVERIFIED**).
+- Effect 61 plays once on open (preset `ref_004755a8`).
+- Window proc `fcn_0042b3eb` (ST:2514): black 640×480, 76:0 opaque at (24,24), `SetTimer(1000 ms)`.
+  It closes on a left **or right** button-up, or by itself on the third tick (about 3 s). `0x46cb01` is
+  only the app-active flag (`WM_ACTIVATEAPP`, rich4_main.asm:169/175): the timer pauses while the
+  window is inactive.
+- The screen is shown every 15th (core_actions:4836, before the lottery draw), with a row per listed
+  stock (`stocks_on_map+4` ≠ 0). After it closes, each active player's total is added to the deposit
+  (`+0x20`); a negative deposit is moved to cash, and negative cash is zeroed and bankrupts the
+  player (`_rich4_player_bankrupt`). The share ratio is FDIVP stored as binary32 (`fstp dword`); the
+  payout is FILD funds × ratio, truncated. Native: `pay_dividends` in `src/game.cpp`, screen
+  `tools/screens/monthly.cpp`.
 
 ---
 
@@ -1002,7 +1011,9 @@ Music 8, 50 ms timer. Opens only if at least one ticket is sold. There is no mou
   - Up to 6 numbers on one row at y+30; 7–12 use two rows at y+15 / y+45; more than 12 are not shown.
 
 **Flow.**
-1. `"#0017嗨！\n又到了每月\n十五號樂透\n開獎時間∼"` (only if `cfg+1` is on).
+1. `"#0017嗨！\n又到了每月\n十五號樂透\n開獎時間∼"` (only if `cfg+1` is on; when it is off, #0018 is
+   skipped too and the cage starts on the first tick).
+   Full timeline (bubbles, cage/winner FLC ticks, host faces, ticket panels): §14.2.
 2. `"#0018現在馬上為您\n開出這一期的\n號碼．．．。"`.
 3. The cage FLC plays for at least 20 ticks.
 4. The number is drawn **inside the UI** (LT:2087):
@@ -1344,11 +1355,11 @@ The native API is in `include/rich4/game.hpp` (`GameSession`, `DecisionKind`),
 | Numeric pad | `amount_control` (+/- control) | the amount passed to `respond` / `buy_stock` / `post_offer` | Replace with Panel 21/22 art and behaviour. |
 | Stock market | `Screen::stocks` table | `buy_stock(i, qty)`, `sell_stock(i, qty)`, `close_stock_market()`; `stocks::trend`; `World::stocks`, `stock_history_bits`, `stock_history_cursor`, `commercials`, `month_counter` | The chart and pie can be drawn from existing World data. |
 | Red / black card stock target | card-target flow | `use_card` / `card_targets` | Check that `CardTarget` covers stock indices. |
-| Monthly dividend | text notice only | — | Needs an event (see the list below). |
+| Monthly dividend | `tools/screens/monthly.cpp` | `EffectKind::dividend` + `EffectEvent::monthly` | Rule ported in `pay_dividends` (was missing). |
 | Player info | `Screen::wealth` paper list | `World.players[].state/status`, `stocks::player_wealth`, `lands`, `facilities`, `commercials` | |
 | Save / load | fixed `Save1.DAT` / `Autosave.DAT` | `SaveFile`, `SaveHeader` (date, map_id, stage_id, player_count), `PlayerState.character` | Enumerate SAVE0–5. |
 | Lottery purchase | `DecisionKind::lottery`, options "1".."36" plus 离开 | `respond(option)`; `World::lottery_tickets`, `public_fund` | Becomes a 9×4 grid on Panel 12:0. |
-| Lottery draw | notice only | `lottery::Draw` is computed internally in the daily update | Needs an event. |
+| Lottery draw | `tools/screens/monthly.cpp` | `EffectKind::lottery_draw` + `EffectEvent::monthly` (tickets before the draw, pool, number, winner) | |
 | Auction | `DecisionKind::auction`, legal options only | `respond(option)` mapped to `AuctionAction` 0–6 (same order as the original buttons) | Show all 7 buttons. |
 | Trading | `Screen::trading` | `open_trading`, `post_offer`, `cancel_offer`, `buy_offer`, `close_trading`; `trading::quotes`, `listable_items`, `listing_limits` (`maximum_price` = 10× market, matching the original) | |
 | Options | `Screen::settings` (speed ×1/2/4, music, sfx, fullscreen) | — | Mostly app-level config. |
@@ -1381,12 +1392,12 @@ The native API is in `include/rich4/game.hpp` (`GameSession`, `DecisionKind`),
 **Stocks**
 8. There is no `GameSession` query for "market closed today", which the 本日休市 screen needs.
 9. Commercial building level (byte +0x19) is not modelled; it is used for company pictures 15 and 24.
-10. There is no monthly dividend event carrying the per-player and per-company table.
+10. ~~There is no monthly dividend event carrying the per-player and per-company table.~~ Done: `EffectKind::dividend` (§14).
 11. Price-limit refusal reasons (漲停 / 跌停) are not reported; native only returns false. Note also
     that the original UI checks only `flags_10` and bank balance, not `shares_available`.
 
 **Lottery and auction**
-12. Lottery draw: no pending "draw show" event with {number, winner, payout, sold_numbers_only},
+12. (Draw show: done, `EffectKind::lottery_draw`, §14.2.) Lottery draw: no pending "draw show" event with {number, winner, payout, sold_numbers_only},
     tickets per player, and the pool before payout. There is also no `cfg+1` dialogue flag.
 13. Auction: the bidder table is private (slots, status codes 1–8, seller flag, cash, current and last
     bidder, initial price). There are no per-action outcome events and no property picture index.
@@ -1434,5 +1445,117 @@ The native API is in `include/rich4/game.hpp` (`GameSession`, `DecisionKind`),
 - Trading: `fcn_00423b3b` filter and sort; the sex-to-colour mapping; property-picker hotkeys.
 - Auction: Panel 26:20 / 26:24 usage; facility picture tables.
 - Stock chart band edges (±2 px).
-- Dividend screen auto-close flag 0x46cb01.
 - Which bank call path (L2549 vs L2709) is passing versus stopping.
+
+---
+
+## 14. Monthly cycle (month-end report, lottery draw timeline)
+
+`fcn_0041cf67` (rich4_player_core_actions.asm:4767) runs once per day. `edi` = `fcn_00452117`'s
+"month changed" result. On day 15 it calls `fcn_0042ba97` (dividend table, §4) and then
+`_rich4_ui_letou_kaijiang_entry` (§7.2, §14.2); on a month change it calls `fcn_00439bfa`
+(the report below), then re-places objects 13/14. Native: `GameSession` emits
+`EffectKind::dividend` / `lottery_draw` / `month_report` with `EffectEvent::monthly`
+(`MonthlyFigures`), drawn by `tools/screens/monthly.cpp`.
+
+### 14.1 Month-end bank report (`fcn_00439bfa` rich4.asm:18988, window proc `fcn_00437e61` :16815)
+
+**Setup.** Sounds preset `0x475b17` = Effect 27, 28, 60. Panel 25 is loaded and music 9 starts
+(`fcn_004549cf(9)`; restored by `fcn_00454bcc` on close). Listed players = slots with `+0x15 ≠ 0`, in
+slot order (n = 2..4). **There is no ranking/sort**; frames 25:5–10 (MONEY board, digits 1–4, coin)
+are unused here.
+
+Initial picture: 25:0 opaque at (0,0); lady 25:19 at (24,70); per listed player i the figure
+25:(3c+47) (centred origin) at (600, Y[n][i]), c = character (`+0x13`).
+
+| table | n=2 | n=3 | n=4 |
+|---|---|---|---|
+| Y `0x475918` (column y) | 120, 360 | 100, 240, 380 | 60, 180, 300, 420 |
+| X `0x475930` (lineup x) | 407, 490 | 324, 407, 490 | 324, 407, 490, 573 |
+| spotlight x `0x475948` | 334, 414 | 259, 334, 414 | 259, 334, 414, 494 |
+| spotlight frame `0x475960` | 16, 17 | 15, 16, 17 | 15, 16, 17, 18 |
+
+Cards: frame 25:(11+i), drawn at (360, Y−36); text pre-rendered into the card with font
+(18, 0x101010, 0, bold): "存款：" (4,6) align 0, deposit `+0x20` at (154,6) align 1, "利息：" (4,46),
+then red 0xff0000 "貸款中" at (154,46) align 1 when the loan `+0x24 ≠ 0`, else trunc(deposit × 0.1)
+(`ref_00464ea0`). The card shows the deposit **before** interest.
+
+Bubbles (generic `fcn_0044ec30` / `fcn_0044ecb6` / `fcn_0044ee18`, rich4.asm:23272–23425): frame at
+(x,y) − origin, text font (20, 0x101010, 0, bold) align 4 at the frame centre + (dx,dy), `#NNNN`
+plays Speaking NNNN. A bubble stays ≥ 2000 ms and until its voice ends; state handlers only run on
+timer ticks with no bubble up. Default config: 25:1 at (190,10), (0,−30).
+
+**Timer** 100 ms. A left/right button-up (any state ≠ 0) removes the bubble at once, skips a playing
+reaction FLC (flags bit 1) and sets `c42e`, which also skips the next wait in states 5, 0xF, 0x16.
+
+| state | action |
+|---|---|
+| open (0x405) | state 1; `cfg+1`: bubble `#0092各位客戶辛苦了！\n又到了每月銀行\n結算的日子。` |
+| 1 | lady 25:24 at (28,70); bubble `#0093大富翁銀行將\n根據您的存款，\n加發１０％的儲金利息。` → 2 |
+| 2 | figures become 25:(3c+49); cards appear. **Interest is credited here**: loan-free players get deposit = trunc(deposit × 1.1) (`0x464e88`). Pick the 悲情人物 (`fcn_00437d1a`) and the champion (`fcn_00437dfe`). → 5, or → 0xF if there is no 悲情人物 or it is the champion (`cfg+1` off: → 0x16 with 30 ticks) |
+| 5 | count; tick 20: lineup (25:0, lady 19, figures 3c+47 at X[n][i], bottom on y=330); tick 30: lady 25:32 at (35,67), bubble `#0095本月悲情人物是．．。`, Effect 27 → 6 |
+| 6 | spotlight on the 悲情人物 (opaque, at (x,0)), lady 25:37 at (0,89), lineup; bubble `#0096+c` name; Effect 60 → 7 |
+| 7 | lady 32, award panel 25:2 at (440,405) (origin 139,49): font (16, 0x101010, bold) labels x=320 align 0, values x=560 align 1, rows y 370/388/406/424: 獲獎原因： / 本月意外損失： `+0x5c` / 本月意外之財： `+0x60` / 本月倒楣天數： "%d天" of `+0x42`; lineup without that player → 8 |
+| 8 | Data **417+2c** FLC at (X+dx417, 330+dy417), plays = flags bits 8..15; then lady 25:38 at (17,65) → 9 |
+| 9 | bubble 25:3 at (190,10), (0,+20): `#0108別灰心，再加油喔！`; count = 19 → 0xF |
+| 0xF | count; tick 20: lineup; tick 30: lady 38, bubble (25:1) `#0109本月冠軍是．．。`, Effect 27 → 0x10 |
+| 0x10 | spotlight on the champion, lady 25:42 at (27,64), lineup; bubble `#0110+c` name; Effect 28 → 0x11 |
+| 0x11 | 25:0 + spotlight + award panel (no lady): 獲獎原因： / 現金： `+0x1c` / 存款： (after interest) / 總資產： `_rich4_calculate_player_wealth`; lineup without the champion → 0x12 |
+| 0x12 | Data **416+2c** FLC at (X+dx416, 330+dy416); then lady 25:45 at (6,60) → 0x13 |
+| 0x13 | bubble 25:4 at (213,37), (0,+20): `#0122其他人還要\n更努力喔！`; count = 10 → 0x16 |
+| 0x16 | count down; at 0 (1 s) or on a click the screen closes by itself |
+
+On close, every listed player's `+0x42` (倒楣天數), `+0x5c` and `+0x60` are zeroed.
+
+**Champion** `fcn_00437dfe`: the listed player with the strictly largest wealth (start 0, ties keep
+the first; the first listed player if nobody is above 0). **悲情人物** `fcn_00437d1a`: score =
+(`+0x5c` − `+0x60`) + `+0x42` × price index × 2500 + (word `+0x44`) × 10; M = the top score
+(start 0), S = the top among scores ≠ M; a winner only when M ≠ 0, S ≠ 0 and (M − S)/M > 0.4
+(`0x464d58`), else none.
+
+**Reaction table** `0x4759f7` {dx416, dy416, flags416, dx417, dy417, flags417} by character:
+0 (−50,−94,0x603,−77,−148,0x003), 1 (−48,−97,0x403,−48,−90,0x603), 2 (−38,−97,0x603,−50,−87,0x603),
+3 (−31,−61,0x603,−64,−109,0x303), 4 (−41,−87,0x403,−42,−77,0x603), 5 (−44,−76,0x403,−31,−60,0x203),
+6 (−36,−100,0x603,−36,−103,0x603), 7 (−50,−89,0x403,−50,−87,0x003), 8 (−51,−90,0x403,−51,−92,0x003),
+9 (−31,−60,0x403,−51,−95,0x303), 10 (−103,−188,0x403,−39,−87,0x603), 11 (−40,−75,0x403,−40,−75,0x403).
+Flags: bit 0 overlay, bit 1 click-skippable, bits 8..15 play count (**UNVERIFIED** reading).
+
+**Lady animation** (every tick, rich4.asm:18259–18943; libc `rand()` → cosmetic RNG in native):
+blink when `rand()>>10 == 0` through `0x4759e8` — mode 0 (lady 19) eyes 21,20,21 at (76,120);
+mode 1 (24) 28,27,28 at (103,120), restoring with 25 (glance 25/26 when `rand()>>10 == 1`); mode 2
+(32) 34,33,34 at (87,118); mode 4 (38) 39,40,39 at (83,123). Mouth only while a bubble is up:
+1-in-4 per tick opens for (rand&7)+1 ticks — mode 0 22/23 at (76,160), mode 1 30/29 at (103,155),
+mode 2 35/36 at (87,161), mode 5 44/43 at (90,134). Modes 3, 4, 6 have no mouth.
+
+**Native differences.** The core credits the interest at the month change (`close_month`) and the
+report shows the figures captured around it (`MonthlyFigures::deposit/interest/balance/total`). The
+`cfg+1` dialogue option is not modelled (always on). Music switch: TODO(audio) hook in `monthly.cpp`.
+
+### 14.2 Lottery draw timeline (`fcn_0043010c`, rich4_ui_letou.asm:1304)
+
+Timer 50 ms. The window proc handles only 0x401/0x405/0x113/0xF: **no mouse or key input** (native:
+a tap ends the current bubble early). Bubble config default 15:22 at (300,47), (0,−10).
+
+| state | trigger | action |
+|---|---|---|
+| open | | 15:0, hosts 15:1 at (472,66) and 15:3 at (7,66), board, tickets; `cfg+1`: bubble #0017 → 1 |
+| 1 | bubble gone | bubble `#0018現在馬上為您\n開出這一期的\n號碼．．。` → 2 |
+| 2 | bubble gone | host 15:2 at (418,66); Effect 57; cage FLC Panel 16 at (183,75) prepared → 3, cnt 1 |
+| 3 | each tick | cnt 20: the host's arm is restored (bg (418,171,80×80), 15:1 src (0,51,38×90) at (472,117)); from cnt 20 one cage frame per tick; at the end the result: balls 15:(37+d) at (286,405)/(358,405), green Data 517:(8+d) at (300,220)/(340,220) |
+| → 4 | sold | bubble `#0019本月份的得主\n是．．．。` |
+| 4 → 5 | bubble gone | winner layout: hosts erased, 15:6 at (0,0), 15:5 at (505,66), plate 15:24 at (320,200), name font (28, red, 0x400000, 3, 4) at (320,180) with voice `0x475630[c]` = #0020+c; board at (91,19)/(91,56); Effect 58 |
+| 5 | each tick | static to cnt 30, then one Panel 17 frame per tick at (205,0); at the end restore (150,0,330×360) (movie, plate, name, green digits go) and bubble `#0032恭喜您獨得\n所有獎金！` → 6 |
+| 6 | bubble gone | hosts 15:1/15:3 and the board return → 8 |
+| → 7 | unsold | 500 ms wait; right host replaced by 15:4 at (489,116), left face 15:21 at (52,89); bubble config 15:23 at (320,200), (0,0); `#0033SORRY！\n本月份沒有人\n得獎∼` |
+| 7 | bubble gone | `#0034獎金將累積\n到下個月．\n．．．。` → 8 |
+| 8 | | hosts back, config back to 15:22; `#0035希望下次\n得獎者就\n是您！` → 9 |
+| 9 | bubble gone | `#0036行動要快喔！` → 10 |
+| 10 | bubble gone | close; with a winner the pool is paid and the tickets cleared |
+
+Host faces (states 1–3, 9–10 only): `rand()>>9` 0 → right blink 15:8,7,8,10 at (512,102); 1 → left
+blink 15:16,17,16,15 at (52,89); 2–3 → right eyes 15:(9+rand&1); 4–5 → left eyes 15:(14+rand&1).
+Right mouth at (512,119) while a bubble is up: 1-in-4 per tick 15:12/13 for 1–15 ticks, then 15:11.
+
+Ticket panels (`fcn_0042f417`, LT:206): listed players only, origins column-major (16,340),
+(16,410), (328,340), (328,410); area 296×60 darkened −16; head 15:(25+c) at (px+20, py+30);
+numbers "%02d" in Panel 13 digits at x = px+54+40i (units +16), y+30 (≤ 6) or y+15/y+45 (7–12).
