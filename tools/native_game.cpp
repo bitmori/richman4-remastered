@@ -64,6 +64,7 @@ struct Options {
     fs::path assets, font, load, save_directory, output;
     bool headless = false, start_new = false, hidden_window = false, exercise_recovery = false;
     bool exercise_trading = false;
+    bool touch = false; // finger-sized number pad (always on Android; --touch on desktop)
     fs::path gallery;               // dev: render every original-style menu/finance screen to DIR and exit
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
@@ -83,6 +84,7 @@ Options arguments(int argc, char **argv) {
     options.assets = platform.assets;
     options.font = platform.font;
     options.save_directory = platform.save_directory;
+    options.touch = true;
 #endif
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -96,6 +98,8 @@ Options arguments(int argc, char **argv) {
             options.exercise_trading = true;
         else if (argument == "--start-new")
             options.start_new = true;
+        else if (argument == "--touch")
+            options.touch = true;
         else {
             if (index + 1 >= argc)
                 throw std::invalid_argument("Missing value for " + argument);
@@ -208,6 +212,7 @@ class Application {
             inputs_.open(options_.output / "inputs.jsonl");
         }
         audio_ = std::make_unique<audio::Audio>(options_.assets);
+        pad_.set_scale(options_.touch ? 2 : 1);
         if (!audio_->music_available())
             std::cerr << audio_->music_diagnostic() << '\n';
     }
@@ -1214,7 +1219,7 @@ class Application {
         }
         if (decision.kind == DecisionKind::primary_stock) {
             auto host = make_host();
-            screens::draw_primary_stock(host, decision, pad_, bank_actions());
+            screens::draw_primary_stock(host, session_->world(), decision, pad_, bank_actions());
             return;
         }
         if (decision.kind == DecisionKind::lottery || decision.kind == DecisionKind::auction) {
@@ -1775,7 +1780,7 @@ class Application {
             else if (decision.kind == DecisionKind::auction)
                 screens::draw_auction(host, world, decision, [](std::size_t) {});
             else
-                screens::draw_primary_stock(host, decision, pad_, none);
+                screens::draw_primary_stock(host, world, decision, pad_, none);
             if (pad_.active()) {
                 buttons_.clear();
                 pad_.draw(host);

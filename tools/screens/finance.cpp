@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "finance.hpp"
 
+#include "../native_stock_names.hpp"
+
 #include "rich4/calendar.hpp"
 #include "rich4/stocks.hpp"
 #include "rich4/world.hpp"
@@ -46,9 +48,6 @@ graphics::Rect pad_key_rect(const PadKey &key) {
     if (key.id == 3)
         return {61, 59, 124, 91};
     return {key.x - 4, key.y - 3, key.x + 37, key.y + 20};
-}
-graphics::Rect offset(graphics::Rect rect, int x, int y) {
-    return {rect.left + x, rect.top + y, rect.right + x, rect.bottom + y};
 }
 
 std::int32_t parse(const std::string &text) {
@@ -101,14 +100,15 @@ int ids::atm_digit(int digit) {
 // ---------------------------------------------------------------------------------------
 // Number pad (Panel 21 artwork, Panel 22 hit map)
 
-void NumberPad::open(std::int32_t maximum, Done done, int x, int y) {
+void NumberPad::open(std::int32_t maximum, Done done) {
     active_ = true;
     dragging_ = false;
     maximum_ = std::max(0, maximum);
     text_ = "0";
     done_ = std::move(done);
-    x_ = std::clamp(x, 0, 512);
-    y_ = std::clamp(y, 0, 288);
+    // The original opens at (256,144). The doubled touch pad sits lower so a prompt box fits above it.
+    x_ = scale_ > 1 ? 320 - 64 * scale_ : 256;
+    y_ = scale_ > 1 ? 92 : 144;
 }
 
 std::int32_t NumberPad::value() const {
@@ -138,7 +138,7 @@ void NumberPad::press(int key) {
 }
 
 void NumberPad::set_from_gauge(int x) {
-    const int position = std::clamp(x - (x_ + 10), 0, 107);
+    const int position = std::clamp((x - x_) / scale_ - 10, 0, 107);
     const int step = std::clamp((position * 33 + 53) / 107, 0, 33);
     text_ = std::to_string(static_cast<std::int32_t>(std::int64_t(maximum_) * step / 33));
 }
@@ -170,7 +170,7 @@ void NumberPad::key(Host &host, char key) {
     else if (key == '\b')
         id = 6;
     else if (key == 'H' || key == 'h') {
-        set_from_gauge(x_ + 64);
+        set_from_gauge(x_ + 64 * scale_);
         if (host.sound)
             host.sound(gauge_sound);
         return;
@@ -197,7 +197,11 @@ void NumberPad::draw(Host &host) {
     if (!active_)
         return;
     auto &frame = host.frame;
-    const auto &body = frame.artwork.frame('p', 21, 0);
+    const int k = scale_;
+    const auto picture = [&](std::size_t index) -> const graphics::Image & {
+        return scaled(frame.artwork, 'p', 21, index, k);
+    };
+    const auto &body = picture(0);
     if (dragging_) {
         if (frame.pointer_down)
             set_from_gauge(frame.pointer_x);
@@ -205,26 +209,29 @@ void NumberPad::draw(Host &host) {
             dragging_ = false;
     }
     frame.picture(body, x_, y_);
-    for (std::size_t k = 0; k < std::min<std::size_t>(9, text_.size()); ++k) {
-        const char digit = text_[text_.size() - 1 - k];
-        frame.picture('p', 21, std::size_t(16 + digit - '0'), x_ + 107 - 12 * int(k), y_ + 11);
+    for (std::size_t n = 0; n < std::min<std::size_t>(9, text_.size()); ++n) {
+        const char digit = text_[text_.size() - 1 - n];
+        frame.picture(picture(std::size_t(16 + digit - '0')), x_ + k * (107 - 12 * int(n)), y_ + k * 11);
     }
-    frame.picture('p', 21, 1, x_ + 10, y_ + 42);
+    frame.picture(picture(1), x_ + k * 10, y_ + k * 42);
     if (const auto current = value(); current > 0 && maximum_ > 0) {
         const auto step = std::clamp(int(double(current) / maximum_ * 33), 0, 33);
-        blit_part(frame.canvas, body, {10, 42, 10 + pad_gauge[std::size_t(step)], 54}, x_ + 10, y_ + 42);
+        blit_part(frame.canvas, body, {k * 10, k * 42, k * (10 + pad_gauge[std::size_t(step)]), k * 54},
+                  x_ + k * 10, y_ + k * 42);
     }
     for (const auto &key : pad_keys) {
-        const auto rect = offset(pad_key_rect(key), x_, y_);
+        const auto local = pad_key_rect(key);
+        const graphics::Rect rect{x_ + k * local.left, y_ + k * local.top, x_ + k * local.right,
+                                  y_ + k * local.bottom};
         if (frame.pointer_down && frame.pointer_in(rect))
-            frame.picture('p', 21, std::size_t(key.id), x_ + key.x, y_ + key.y);
+            frame.picture(picture(std::size_t(key.id)), x_ + k * key.x, y_ + k * key.y);
         hit(host, 900 + key.id, rect, key_sound, [this, id = key.id] { press(id); });
     }
-    hit(host, ids::pad_gauge, {x_ + 6, y_ + 34, x_ + 122, y_ + 58}, gauge_sound, [this, &frame] {
+    hit(host, ids::pad_gauge, {x_ + k * 6, y_ + k * 34, x_ + k * 122, y_ + k * 58}, gauge_sound, [this, &frame] {
         dragging_ = true;
         set_from_gauge(frame.pointer_x);
     });
-    hit(host, ids::pad_body, {x_, y_, x_ + 128, y_ + 192}, no_sound, [] {});
+    hit(host, ids::pad_body, {x_, y_, x_ + k * 128, y_ + k * 192}, no_sound, [] {});
     // Touch has no right button: tapping outside the pad cancels, like the original right-click.
     hit(host, ids::pad_cancel, {0, 0, 640, 480}, cancel_sound, [this] {
         active_ = false;
@@ -316,11 +323,14 @@ void BankScreen::draw(Host &host, const World &world, const GameDecision &decisi
         }
     }
     if (stage_ == Stage::atm)
-        draw_atm(host, world, decision, actions);
+        draw_atm(host, world, decision, pad, actions);
     else if (stage_ == Stage::desk)
         draw_desk(host, world, decision, pad, actions);
     else
         draw_director(host, world, decision, pad, actions);
+    if (pad.active() && pad.scale() > 1 && !lines_.empty()) // the enlarged pad hides the balloon
+        popup(host, lines_[std::min(std::size_t((host.frame.ticks - line_started_) / 2000), lines_.size() - 1)],
+              pad.prompt_top());
     if (!popup_.empty()) {
         if (host.frame.ticks < popup_until_)
             popup(host, popup_, 196);
@@ -382,7 +392,8 @@ void BankScreen::atm_key(Host &host, int index, const World &world, const GameDe
         append_digit(atm_text_, character, 10, maximum);
 }
 
-void BankScreen::draw_atm(Host &host, const World &world, const GameDecision &decision, const BankActions &actions) {
+void BankScreen::draw_atm(Host &host, const World &world, const GameDecision &decision, NumberPad &pad,
+                          const BankActions &actions) {
     auto &frame = host.frame;
     const auto &status = world.players.at(decision.player).status;
     const auto maximum = atm_maximum(world, decision.player);
@@ -413,6 +424,20 @@ void BankScreen::draw_atm(Host &host, const World &world, const GameDecision &de
         blit_part(frame.canvas, frame.artwork.frame('p', 24, 4), {0, 0, lit, 26}, 118, 210);
     }
     const auto &world_ref = world;
+    if (pad.scale() > 1) {
+        // Touch: the ATM's 33x17 keys are too small for a finger, so its display and keypad open
+        // the enlarged number pad instead; Enter on the pad completes the ATM transaction.
+        hit(host, ids::atm_keypad, {113, 165, 330, 362}, key_sound,
+            [this, &pad, &world_ref, decision, actions, maximum, host_frame = &frame, sound = host.sound] {
+                pad.open(maximum, [this, &world_ref, decision, actions, host_frame, sound](std::int32_t amount) {
+                    atm_text_ = std::to_string(amount);
+                    if (amount <= 0)
+                        return; // cancelled or 0: stay at the ATM
+                    Host callback{*host_frame, sound, {}};
+                    atm_key(callback, 17, world_ref, decision, actions);
+                });
+            });
+    }
     for (std::size_t index = 0; index < atm_rects.size(); ++index) {
         const auto rect = atm_rect(index);
         const auto &r = atm_rects[index];
@@ -485,7 +510,9 @@ void BankScreen::draw_desk(Host &host, const World &world, const GameDecision &d
     // Current balloon line (each line about two seconds, fcn_0044ee18).
     std::string line;
     if (!lines_.empty()) {
-        const auto index = std::size_t((frame.ticks - line_started_) / 2000);
+        auto index = std::size_t((frame.ticks - line_started_) / 2000);
+        if (pad.active()) // the request stays up while the amount is typed
+            index = std::min(index, lines_.size() - 1);
         if (index < lines_.size())
             line = lines_[index];
         else {
@@ -614,7 +641,9 @@ void BankScreen::draw_director(Host &host, const World &world, const GameDecisio
     text(frame, grouped(special), 128, 211, 6, label);
     text(frame, grouped(std::int64_t(total) - special), 128, 259, 6, label);
     if (!lines_.empty()) {
-        const auto index = std::size_t((frame.ticks - line_started_) / 2000);
+        auto index = std::size_t((frame.ticks - line_started_) / 2000);
+        if (pad.active())
+            index = std::min(index, lines_.size() - 1);
         if (index < lines_.size()) {
             frame.picture('p', 23, 22, 214, 50);
             text(frame, lines_[index], 339, 95, 4, {20, 0x101010, 0, bold});
@@ -674,13 +703,22 @@ void BankScreen::draw_director(Host &host, const World &world, const GameDecisio
 
 // ---------------------------------------------------------------------------------------
 
-void draw_primary_stock(Host &host, const GameDecision &decision, NumberPad &pad, const BankActions &actions) {
+void draw_primary_stock(Host &host, const World &world, const GameDecision &decision, NumberPad &pad,
+                        const BankActions &actions) {
     auto &frame = host.frame;
-    frame.picture('p', 73, 5, 227, 42);
+    std::string company;
+    if (decision.land_id < world.commercials.size()) {
+        const auto stock = world.commercials[decision.land_id].stock_index;
+        const auto index = std::size_t(world.header.stage_id * 4 + world.header.map_id) * 12 + stock;
+        if (stock < 12 && index < native_stock_names.size())
+            company = std::string(native_stock_names[index]) + "\n";
+    }
+    const int top = pad.active() ? pad.prompt_top() : pad.scale() > 1 ? 2 : 42;
+    frame.picture('p', 73, 5, 227, top);
     text(frame,
-         "認購原始股\n每股" + std::to_string(decision.amount) + "元\n最多" + std::to_string(decision.max_amount) +
-             "股",
-         319, 86, 4, black_text);
+         "認購原始股\n" + company + "每股" + std::to_string(decision.amount) + "元\n最多" +
+             std::to_string(decision.max_amount) + "股",
+         319, top + 44, 4, black_text);
     if (!pad.active())
         pad.open(decision.max_amount, [actions](std::int32_t amount) {
             if (amount > 0)

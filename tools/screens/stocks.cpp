@@ -75,6 +75,10 @@ void line(graphics::Image &canvas, int x0, int y0, int x1, int y1, std::uint16_t
 
 constexpr graphics::Rect page_button{16, 9, 125, 40}, buy_button{128, 9, 199, 40}, sell_button{202, 9, 273, 40},
     info_button{276, 9, 411, 40}, exit_button{552, 8, 624, 41};
+// The top bar is 31 px tall; its hit areas extend to the screen edge and the header row for fingers.
+graphics::Rect tall(graphics::Rect rect) {
+    return {rect.left, 0, rect.right, 47};
+}
 
 } // namespace
 
@@ -135,8 +139,8 @@ void StockMarket::draw(Host &host, const World &world, std::size_t player, Numbe
         popup_ = std::move(message);
         popup_until_ = frame_pointer->ticks + 1500;
     };
-    hit(host, ids::stock_page, page_button, click_sound, [this] { page ^= 1; });
-    hit(host, ids::stock_exit, exit_button, exit_sound, [this, actions] {
+    hit(host, ids::stock_page, tall(page_button), click_sound, [this] { page ^= 1; });
+    hit(host, ids::stock_exit, {exit_button.left, 0, 640, 47}, exit_sound, [this, actions] {
         if (page == 1)
             page = 0;
         else
@@ -163,7 +167,7 @@ void StockMarket::draw(Host &host, const World &world, std::size_t player, Numbe
                     : 0;
     const auto holding = holder.stocks[stock].amount;
     const bool suspended = quote.suspension_days != 0;
-    hit(host, ids::stock_buy, buy_button, click_sound, [suspended, buy_maximum, trend, refuse, actions, stock, &pad] {
+    hit(host, ids::stock_buy, tall(buy_button), click_sound, [suspended, buy_maximum, trend, refuse, actions, stock, &pad] {
         if (suspended || buy_maximum <= 0)
             return;
         if (trend == stocks::PriceTrend::limit_up) {
@@ -175,7 +179,7 @@ void StockMarket::draw(Host &host, const World &world, std::size_t player, Numbe
                 refuse("無法買進！");
         });
     });
-    hit(host, ids::stock_sell, sell_button, click_sound, [suspended, holding, trend, refuse, actions, stock, &pad] {
+    hit(host, ids::stock_sell, tall(sell_button), click_sound, [suspended, holding, trend, refuse, actions, stock, &pad] {
         if (suspended || holding <= 0)
             return;
         if (trend == stocks::PriceTrend::limit_down) {
@@ -187,7 +191,7 @@ void StockMarket::draw(Host &host, const World &world, std::size_t player, Numbe
                 refuse("無法賣出！");
         });
     });
-    hit(host, ids::stock_info, info_button, click_sound, [this] { info_open = true; });
+    hit(host, ids::stock_info, tall(info_button), click_sound, [this] { info_open = true; });
 }
 
 void StockMarket::draw_prices(Host &host, const World &world, std::size_t player) {

@@ -12,6 +12,7 @@
 #include "rich4/game.hpp"
 #include "rich4/trading.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -32,7 +33,7 @@ int pad_digit(int digit); // 905 for 0, 907..915 for 7 8 9 4 5 6 1 2 3
 inline constexpr int atm_withdraw = 920, atm_deposit = 921, atm_exit = 922, atm_gauge = 923, atm_max = 936,
                      atm_enter = 937;
 int atm_digit(int digit);
-inline constexpr int atm_clear = 933, atm_back = 935;
+inline constexpr int atm_clear = 933, atm_back = 935, atm_keypad = 938;
 inline constexpr int desk_exit = 940, desk_loan = 941, desk_repay = 942, desk_window = 943, director_finance = 944,
                      director_return = 945, director_exit = 946, bank_skip = 947;
 inline constexpr int stock_page = 434, stock_buy = 430, stock_sell = 431, stock_info = 435, stock_exit = 60,
@@ -44,7 +45,19 @@ inline constexpr int stock_page = 434, stock_buy = 430, stock_sell = 431, stock_
 class NumberPad {
   public:
     using Done = std::function<void(std::int32_t)>;
-    void open(std::int32_t maximum, Done done, int x = 256, int y = 144);
+    void open(std::int32_t maximum, Done done);
+    // Touch screens: draw the pad's original artwork at an integer scale (2 on phones) so each
+    // key is a finger-sized target. Desktop keeps the original 1x geometry.
+    void set_scale(int scale) {
+        scale_ = std::clamp(scale, 1, 2);
+    }
+    [[nodiscard]] int scale() const noexcept {
+        return scale_;
+    }
+    // Top of a Panel 73:5 prompt box (88 px) placed directly above the pad.
+    [[nodiscard]] int prompt_top() const noexcept {
+        return scale_ > 1 ? 2 : 42;
+    }
     void close() {
         active_ = false;
     }
@@ -69,7 +82,7 @@ class NumberPad {
     void press(int key);
     void set_from_gauge(int x);
     bool active_ = false, dragging_ = false;
-    int x_ = 256, y_ = 144;
+    int x_ = 256, y_ = 144, scale_ = 1;
     std::int32_t maximum_ = 0;
     std::string text_ = "0";
     Done done_;
@@ -110,7 +123,8 @@ class BankScreen {
 
   private:
     enum class Stage { atm, desk, director };
-    void draw_atm(Host &host, const World &world, const GameDecision &decision, const BankActions &actions);
+    void draw_atm(Host &host, const World &world, const GameDecision &decision, NumberPad &pad,
+                  const BankActions &actions);
     void draw_desk(Host &host, const World &world, const GameDecision &decision, NumberPad &pad,
                    const BankActions &actions);
     void draw_director(Host &host, const World &world, const GameDecision &decision, NumberPad &pad,
@@ -132,7 +146,8 @@ class BankScreen {
 };
 
 // DecisionKind::primary_stock: Panel 73:5 prompt box above the number pad.
-void draw_primary_stock(Host &host, const GameDecision &decision, NumberPad &pad, const BankActions &actions);
+void draw_primary_stock(Host &host, const World &world, const GameDecision &decision, NumberPad &pad,
+                        const BankActions &actions);
 
 // Panel 75 stock market (rich4_ui_stock.asm).
 struct StockActions {

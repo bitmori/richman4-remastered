@@ -63,7 +63,9 @@ void MainMenu::draw(Host &host, const MenuActions &actions) {
     text(frame, "V3.11", 638, 470, 6, white_text);
     for (std::size_t i = 0; i < entries.size(); ++i) {
         const auto &entry = entries[i];
-        const auto rect = anchored_rect(frame.artwork.frame('d', 1, 2 * i + 2), entry.x, entry.y);
+        auto rect = anchored_rect(frame.artwork.frame('d', 1, 2 * i + 2), entry.x, entry.y);
+        if (entry.id == ids::menu_exit) // finger-sized target around the small EXIT label
+            rect = {rect.left - 10, rect.top - 6, rect.right + 10, 480};
         hit(host, entry.id, rect, entry.id == ids::menu_exit ? exit_sound : click_sound, *entry.action,
             entry.enabled);
     }
@@ -305,7 +307,8 @@ void NewGameSetup::draw(Host &host, const std::function<void(const NewGameChoice
         !picks_.empty());
     hit(host, ids::setup_exit, {544, 176, 624, 216}, exit_sound, exit);
     for (int row = 0; row < 6; ++row)
-        hit(host, ids::setup_dropdown + row, {602, 226 + 36 * row, 626, 251 + 36 * row}, hover_sound,
+        hit(host, ids::setup_dropdown + row, {dropdown_rects[std::size_t(row)].left, 220 + 36 * row, 630, 256 + 36 * row},
+            hover_sound,
             [this, row] { dropdown_ = row; }, row_supported(row));
 }
 
@@ -443,14 +446,14 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
         return;
     }
     auto *frame_pointer = &frame;
-    hit(host, ids::options_speed, at(81, 17, 129, 33), click_sound, [this, frame_pointer] {
+    hit(host, ids::options_speed, at(81, 9, 135, 41), click_sound, [this, frame_pointer] {
         const int index = std::clamp((frame_pointer->pointer_x - ox - 81) / 16, 0, 2);
         state_.speed = 1U << unsigned(index);
     });
-    hit(host, ids::options_volume, at(89, 81, 153, 97), click_sound, [this] { state_.music = true; });
-    hit(host, ids::options_volume + 1, at(89, 113, 153, 129), click_sound, [this] { state_.sound = true; });
-    hit(host, ids::options_music, at(62, 78, 85, 101), click_sound, [this] { state_.music = !state_.music; });
-    hit(host, ids::options_sound, at(62, 110, 85, 133), click_sound, [this] { state_.sound = !state_.sound; });
+    hit(host, ids::options_volume, at(89, 74, 160, 105), click_sound, [this] { state_.music = true; });
+    hit(host, ids::options_volume + 1, at(89, 106, 160, 137), click_sound, [this] { state_.sound = true; });
+    hit(host, ids::options_music, at(4, 74, 89, 105), click_sound, [this] { state_.music = !state_.music; });
+    hit(host, ids::options_sound, at(4, 106, 89, 137), click_sound, [this] { state_.sound = !state_.sound; });
     hit(host, ids::options_song, at(18, 226, 177, 346), click_sound, [actions, frame_pointer] {
         const int index = std::clamp((frame_pointer->pointer_y - oy - 226) / 15, 0, 7);
         if (actions.play_song)
@@ -459,8 +462,8 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
     for (int i = 0; i < 3; ++i)
         hit(host, ids::options_big[std::size_t(i)], big_rects[std::size_t(i)], click_sound, [this, i] { confirm_ = i; },
             in_game_ && i != 1);
-    hit(host, ids::options_cancel, at(194, 314, 257, 345), exit_sound, actions.close);
-    hit(host, ids::options_ok, at(266, 314, 329, 345), click_sound, [this, actions] {
+    hit(host, ids::options_cancel, at(190, 308, 261, 352), exit_sound, actions.close);
+    hit(host, ids::options_ok, at(262, 308, 336, 352), click_sound, [this, actions] {
         actions.apply(state_);
         actions.close();
     });
@@ -518,7 +521,7 @@ void PlayerInfo::draw(Host &host, const World &world, const std::function<void()
         draw_properties(host, world);
     else
         draw_stocks(host, world);
-    hit(host, ids::info_exit, {492, 9, 603, 39}, exit_sound, exit);
+    hit(host, ids::info_exit, {492, 0, 610, 48}, exit_sound, exit);
 }
 
 void PlayerInfo::draw_assets(Host &host, const World &world) {
@@ -654,8 +657,8 @@ void PlayerInfo::draw_properties(Host &host, const World &world) {
         frame.picture('p', 9, 7, 593, 369);
     if (frame.pointer_down && frame.pointer_in({593, 417, 624, 448}))
         frame.picture('p', 9, 8, 593, 417);
-    hit(host, ids::info_up, {593, 369, 624, 400}, click_sound, [this] { scroll_ = scroll_ >= 10 ? scroll_ - 10 : 0; });
-    hit(host, ids::info_down, {593, 417, 624, 448}, click_sound,
+    hit(host, ids::info_up, {586, 360, 634, 408}, click_sound, [this] { scroll_ = scroll_ >= 10 ? scroll_ - 10 : 0; });
+    hit(host, ids::info_down, {586, 409, 634, 457}, click_sound,
         [this, total = rows.size()] {
             if (scroll_ + 10 < total)
                 scroll_ += 10;

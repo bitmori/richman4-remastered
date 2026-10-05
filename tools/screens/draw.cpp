@@ -2,6 +2,8 @@
 #include "draw.hpp"
 
 #include <algorithm>
+#include <map>
+#include <tuple>
 #include <vector>
 
 namespace rich4::native::screens {
@@ -158,6 +160,32 @@ void pressed_bevel(graphics::Image &canvas, graphics::Rect rect) {
             canvas.pixels[std::size_t(y * canvas.width + x)] = canvas.pixels[std::size_t((y - 1) * canvas.width + x - 1)];
     darken(canvas, {rect.left, rect.top, rect.right, rect.top + 1}, -16);
     darken(canvas, {rect.left, rect.top + 1, rect.left + 1, rect.bottom}, -16);
+}
+
+const graphics::Image &scaled(Artwork &artwork, char archive, std::size_t entry, std::size_t index, int scale) {
+    const auto &source = artwork.frame(archive, entry, index);
+    if (scale <= 1)
+        return source;
+    static std::map<std::tuple<const graphics::Image *, int>, graphics::Image> cache;
+    auto &result = cache[{&source, scale}];
+    if (result.pixels.empty()) {
+        result.width = source.width * scale;
+        result.height = source.height * scale;
+        result.origin_x = source.origin_x * scale;
+        result.origin_y = source.origin_y * scale;
+        result.pixels.resize(std::size_t(result.width * result.height));
+        if (!source.opaque_pixels.empty())
+            result.opaque_pixels.resize(result.pixels.size());
+        for (int y = 0; y < result.height; ++y)
+            for (int x = 0; x < result.width; ++x) {
+                const auto from = std::size_t((y / scale) * source.width + x / scale);
+                const auto to = std::size_t(y * result.width + x);
+                result.pixels[to] = source.pixels[from];
+                if (!source.opaque_pixels.empty())
+                    result.opaque_pixels[to] = source.opaque_pixels[from];
+            }
+    }
+    return result;
 }
 
 void backdrop(Frame &frame, char archive, std::size_t entry, std::size_t index) {

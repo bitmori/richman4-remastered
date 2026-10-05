@@ -124,8 +124,8 @@ void TradingBoard::draw(Host &host, const World &world, std::size_t actor, Numbe
     else if (view_ != View::board)
         draw_picker(host, world, actor, pad, actions);
     if (pad.active() && !prompt_.empty()) {
-        frame.picture('p', 73, 5, 227, 42);
-        text(frame, prompt_, 319, 86, 4, black_text);
+        frame.picture('p', 73, 5, 227, pad.prompt_top());
+        text(frame, prompt_, 319, pad.prompt_top() + 44, 4, black_text);
     }
     if (!notice_.empty() && now_ < notice_until_)
         popup(host, notice_, 196);
@@ -260,7 +260,7 @@ void TradingBoard::draw_picker(Host &host, const World &world, std::size_t actor
                 outline_rect(frame.canvas, line, rgb(0xffffff));
             hit(host, ids::trade_item + int(i), line, click_sound, [choose, item = items[i]] { choose(item); });
         }
-        hit(host, ids::trade_picker_close, {462, 36, 488, 60}, exit_sound, [this] { view_ = View::board; });
+        hit(host, ids::trade_picker_close, {448, 26, 500, 64}, exit_sound, [this] { view_ = View::board; });
     } else if (view_ == View::properties) {
         window = {112, 32, 528, 448};
         frame.picture('p', 73, 2, 112, 32);
@@ -298,9 +298,9 @@ void TradingBoard::draw_picker(Host &host, const World &world, std::size_t actor
                 outline_rect(frame.canvas, line, rgb(0xffffff));
             hit(host, ids::trade_item + int(index), line, click_sound, [choose, item = items[index]] { choose(item); });
         }
-        hit(host, ids::trade_picker_close, {512, 33, 528, 52}, exit_sound, [this] { view_ = View::board; });
-        hit(host, ids::trade_up, {512, 64, 528, 96}, click_sound, [this] { scroll_ = scroll_ >= 11 ? scroll_ - 11 : 0; });
-        hit(host, ids::trade_down, {512, 96, 528, 128}, click_sound, [this, total = visible.size()] {
+        hit(host, ids::trade_picker_close, {512, 26, 548, 62}, exit_sound, [this] { view_ = View::board; });
+        hit(host, ids::trade_up, {512, 62, 548, 98}, click_sound, [this] { scroll_ = scroll_ >= 11 ? scroll_ - 11 : 0; });
+        hit(host, ids::trade_down, {512, 98, 548, 134}, click_sound, [this, total = visible.size()] {
             if (scroll_ + 11 < total)
                 scroll_ += 11;
         });
@@ -372,10 +372,13 @@ void TradingBoard::draw_detail(Host &host, const World &world, std::size_t actor
     for (const auto rect : {act, close})
         if (frame.pointer_down && frame.pointer_in(rect))
             pressed_bevel(frame.canvas, rect);
+    const auto finger = [](graphics::Rect rect) { // the red buttons are only 23 px tall
+        return graphics::Rect{rect.left - 6, rect.top - 9, rect.right + 6, rect.bottom + 9};
+    };
     text(frame, own ? "撤 件" : "購 買", (act.left + act.right) / 2, (act.top + act.bottom) / 2, 2, font_b);
     text(frame, "離 開", (close.left + close.right) / 2, (close.top + close.bottom) / 2, 2, font_b);
     const auto cash = world.players.at(actor).state.cash;
-    hit(host, ids::trade_act, act, click_sound, [this, quote, own, actions, cash] {
+    hit(host, ids::trade_act, finger(act), click_sound, [this, quote, own, actions, cash] {
         if (own) {
             if (actions.cancel(quote.index))
                 view_ = View::board;
@@ -386,7 +389,7 @@ void TradingBoard::draw_detail(Host &host, const World &world, std::size_t actor
         else
             notice(cash < quote.offer.price ? "您的現金不足！" : "無法購買！");
     });
-    hit(host, ids::trade_detail_exit, close, exit_sound, [this] { view_ = View::board; });
+    hit(host, ids::trade_detail_exit, finger(close), exit_sound, [this] { view_ = View::board; });
     hit(host, ids::trade_outside - 100, {left, top, left + 192, top + height}, no_sound, [] {});
     hit(host, ids::trade_outside, {0, 0, 640, 480}, cancel_sound, [this] { view_ = View::board; });
 }
