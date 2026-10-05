@@ -48,6 +48,8 @@ struct Audio {
     std::function<void()> stop_voice;
 };
 
+// Speech bubble for event_strings[character][category] (§1.4), optionally centring the camera.
+[[nodiscard]] Item speech_bubble(std::uint8_t character, unsigned category, std::optional<std::size_t> focus);
 // Translates a core event into its original overlay (nothing for plain notices).
 [[nodiscard]] std::optional<Item> from_event(const GameEvent &event, const World &world);
 // Yes/no prompts (§2.2): buy/upgrade land or facility. Others keep their own dialogs.

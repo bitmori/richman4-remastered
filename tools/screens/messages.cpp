@@ -101,11 +101,13 @@ std::string company_name(const World &world, std::int32_t company) {
     return stock_name(world, world.commercials[std::size_t(company)].stock_index);
 }
 
-Item bubble(const World &world, std::size_t slot, unsigned category) {
+} // namespace
+
+Item speech_bubble(std::uint8_t character, unsigned category, std::optional<std::size_t> focus) {
     Item item;
     item.kind = Item::Kind::bubble;
-    item.focus = slot;
-    item.character = static_cast<std::uint8_t>(world.players.at(slot).state.character % 12);
+    item.focus = focus;
+    item.character = static_cast<std::uint8_t>(character % 12);
     item.mood = slot_moods.at(category);
     const auto line = event_lines.at(item.character).at(category);
     if (line.starts_with('@'))
@@ -116,6 +118,11 @@ Item bubble(const World &world, std::size_t slot, unsigned category) {
     item.minimum_ms = 1000;
     item.wait_voice = true;
     return item;
+}
+
+namespace {
+Item bubble(const World &world, std::size_t slot, unsigned category) {
+    return speech_bubble(world.players.at(slot).state.character, category, slot);
 }
 
 Item box(std::string text, std::uint32_t ms = 1500) {
