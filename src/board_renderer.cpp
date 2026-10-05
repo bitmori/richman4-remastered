@@ -367,8 +367,10 @@ RenderStats Renderer::render(graphics::Image& destination, const Scene& scene,
         if (player.character >= 12 || player.direction > 7 || player.traffic_method > 3) {
             throw std::invalid_argument("invalid board player sprite selection");
         }
-        const std::size_t resource_index =
-            0x80U + player.character * 21U + player.traffic_method * 3U + (player.walking ? 1U : 0U);
+        const unsigned pose = player.injured ? 18U : player.sleepwalking ? 16U + unsigned(player.walking)
+            : player.on_water ? 13U + unsigned(player.walking)
+                              : player.traffic_method * 3U + unsigned(player.walking);
+        const std::size_t resource_index = 0x80U + player.character * 21U + pose;
         const auto& resource = impl_->resource(true, resource_index);
         const auto frames_per_direction = resource.layout.entries.size() / 8;
         if (frames_per_direction == 0) {
@@ -383,7 +385,7 @@ RenderStats Renderer::render(graphics::Image& destination, const Scene& scene,
         if (actor.slot < 4 || actor.slot > 8 || actor.direction > 7) {
             throw std::invalid_argument("invalid board special actor selection");
         }
-        const auto pose = actor.sleepwalking ? 3U : actor.on_water ? 2U : actor.walking ? 1U : 0U;
+        const auto pose = actor.sleepwalking ? (actor.walking ? 3U : 0U) : actor.on_water ? 2U : actor.walking ? 1U : 0U;
         const std::size_t index = actor.slot == 8 ? 0x209U + unsigned(actor.walking)
                                                 : 0x16cU + actor.slot * 4U + pose;
         const auto count = impl_->resource(true, index).layout.entries.size() / 8;
@@ -457,7 +459,8 @@ RenderStats Renderer::render(graphics::Image& destination, const Scene& scene,
     }
     for (std::size_t table = 3; table <= 4; ++table) {
         for (std::size_t id = 1; id < impl_->placements[table].size(); ++id) {
-            const auto& item = impl_->placements[table][id];
+            const auto item = table == 3 ? with_override(impl_->placements[table][id], id, scene.commercials)
+                                         : impl_->placements[table][id];
             if (item.sprite == 0) {
                 continue;
             }

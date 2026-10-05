@@ -33,6 +33,7 @@ struct PlayerSprite {
     std::size_t slot{};            // Property owner 1 refers to slot 0, and so on.
     bool active{};                 // Original depth tie-break: active player is in front.
     bool walking{};
+    bool on_water{}, sleepwalking{}, injured{};
 };
 
 struct ObjectSprite {
@@ -64,6 +65,7 @@ struct Scene {
     std::span<const PropertyState> lands;
     std::span<const PropertyState> facilities;
     std::span<const SpecialPlayerSprite> special_players;
+    std::span<const PropertyState> commercials;
 };
 
 struct RenderStats {

@@ -114,6 +114,27 @@ void asset_tests(const std::filesystem::path& assets, const std::filesystem::pat
         renderer.render(actual, scene, camera);
         require(actual.pixels == expected.pixels,
                 "actor asset selection, anchor, or depth order changed");
+        for (unsigned character = 0; character < 12; ++character) {
+            for (unsigned pose : {13U, 14U, 16U, 17U, 18U}) {
+                const auto bytes = data.decode(0x80U + character * 21U + pose);
+                require(assets::parse_graphics(bytes).entries.size() >= 8,
+                        "boat, sleepwalk, or injury art lacks direction frames");
+                if (character != 10) continue;
+                std::array<board::PlayerSprite, 1> actors{};
+                actors[0].position = camera.center;
+                actors[0].character = 10;
+                actors[0].walking = pose == 14 || pose == 17;
+                actors[0].on_water = pose == 13 || pose == 14;
+                actors[0].sleepwalking = pose == 16 || pose == 17;
+                actors[0].injured = pose == 18;
+                auto reference = graphics::make_canvas(640, 480, 0x1234);
+                renderer.render(reference, {}, camera);
+                graphics::blit(reference, graphics::decode_frame(bytes, 0), 220, 260, camera.viewport);
+                auto rendered = graphics::make_canvas(640, 480, 0x1234);
+                renderer.render(rendered, {actors, {}, {}, {}}, camera);
+                require(rendered.pixels == reference.pixels, "special player state chose wrong artwork");
+            }
+        }
         // Every original special actor pose and view must select an existing
         // frame, including the robot's separate resources 0x209/0x20a.
         for (unsigned slot = 4; slot <= 8; ++slot) {
@@ -122,7 +143,7 @@ void asset_tests(const std::filesystem::path& assets, const std::filesystem::pat
                     const board::Camera rotated{camera.center, static_cast<std::uint8_t>(view)};
                     const std::array<board::SpecialPlayerSprite, 1> actors{{{
                         camera.center, static_cast<std::uint8_t>(slot), 3, 5, false,
-                        pose == 1, pose == 2, pose == 3}}};
+                        pose == 1 || pose == 3, pose == 2, pose == 3}}};
                     const auto index = slot == 8 ? 0x209U + pose : 0x16cU + slot * 4U + pose;
                     const auto bytes = data.decode(index);
                     const auto count = assets::parse_graphics(bytes).entries.size() / 8;
