@@ -27,6 +27,8 @@
 | 时空地图设施 | MAP `0x68 + local_map * 17` 起的 17 项 |
 | 企业和景观 | MAP `0x26 + record.sprite_index`；保留原共享资源表的前 24 槽映射 |
 | 人物常规姿态 | DATA `0x80 + character * 21 + traffic_method * 3 + pose` |
+| 特殊角色槽 4–7 | DATA `0x16c + slot * 4 + pose`；静止、走路、水面、梦游 |
+| 机器娃娃槽 8 | DATA `0x209` 静止、`0x20a` 行走 |
 | 静止道具 | DATA `0x18c + kind - 1` |
 
 人物方向为 `(direction + 8 - camera_rotation) & 7`，每个方向使用 `frame_count / 8` 帧。建筑、企业、景观使用 `(8 - record.direction - camera_rotation) & 7`。交通方式覆盖步行、机车、汽车、工程车；常规姿态覆盖静止和行走。
@@ -84,4 +86,6 @@ build/native/board_renderer_tests ~/Downloads/rich4-original-game artifacts/boar
 
 `artifacts/board-renderer/map-0-view-0.png`、`map-0-view-3.png` 是本机生成并检查过的原始资源场景图。其余 PPM 也在同一忽略目录；这些商业美术图像不提交仓库。测试第三个可选参数预留原版投影 CSV 对照，字段为 `center_x,center_y,rotation,world_x,world_y,screen_x,screen_y`；未提供金标时不会报告 EXE 对照通过。
 
-仍需继续迁移：人物特殊状态/船只/神明附身姿态、特殊 NPC、动画道具与附身偏移、查封/涨价地面效果、文字与剩余步数覆盖、与原版全场景快照的严格对照。当前渲染器的商业建筑和景观采用初始地图记录；一般土地、设施的拥有者/等级/类型可由 `Scene` 覆盖。用户存档中被转移的商业设施或景观位置尚不能通过此快照接口替换。扩大 viewport 不会自动增加原始 440×440 地面遍历覆盖，应用应按原画布缩放。
+仍需继续迁移：人物特殊状态/船只/神明附身姿态、动画道具与附身偏移、查封/涨价地面效果、文字与剩余步数覆盖、与原版全场景快照的严格对照。当前渲染器的商业建筑和景观采用初始地图记录；一般土地、设施的拥有者/等级/类型可由 `Scene` 覆盖。用户存档中被转移的商业设施或景观位置尚不能通过此快照接口替换。扩大 viewport 不会自动增加原始 440×440 地面遍历覆盖，应用应按原画布缩放。
+
+2026-10-05 补充：加入五个特殊角色槽的独立只读渲染快照。用原资源逐一检查 144 个角色/姿态/视角组合，独立选帧再合成的全部像素一致；ASan/UBSan 通过。应用按 inactive_state 隐藏离场角色，水面和梦游姿态来自 World 状态。此验证不证明 NPC 行为或原 EXE 整帧一致。

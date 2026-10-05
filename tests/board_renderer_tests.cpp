@@ -114,6 +114,31 @@ void asset_tests(const std::filesystem::path& assets, const std::filesystem::pat
         renderer.render(actual, scene, camera);
         require(actual.pixels == expected.pixels,
                 "actor asset selection, anchor, or depth order changed");
+        // Every original special actor pose and view must select an existing
+        // frame, including the robot's separate resources 0x209/0x20a.
+        for (unsigned slot = 4; slot <= 8; ++slot) {
+            for (unsigned pose = 0; pose < (slot == 8 ? 2U : 4U); ++pose) {
+                for (unsigned view = 0; view < 8; ++view) {
+                    const board::Camera rotated{camera.center, static_cast<std::uint8_t>(view)};
+                    const std::array<board::SpecialPlayerSprite, 1> actors{{{
+                        camera.center, static_cast<std::uint8_t>(slot), 3, 5, false,
+                        pose == 1, pose == 2, pose == 3}}};
+                    const auto index = slot == 8 ? 0x209U + pose : 0x16cU + slot * 4U + pose;
+                    const auto bytes = data.decode(index);
+                    const auto count = assets::parse_graphics(bytes).entries.size() / 8;
+                    require(count != 0, "special actor direction group is empty");
+                    const auto frame = ((3U + 8U - view) & 7U) * count + 5U % count;
+                    auto reference = graphics::make_canvas(640, 480, 0x1234);
+                    renderer.render(reference, {}, rotated);
+                    graphics::blit(reference, graphics::decode_frame(bytes, frame), 220, 260,
+                                   rotated.viewport);
+                    auto rendered = graphics::make_canvas(640, 480, 0x1234);
+                    renderer.render(rendered, {{}, {}, {}, {}, actors}, rotated);
+                    require(rendered.pixels == reference.pixels,
+                            "special actor asset, direction, or anchor mismatch");
+                }
+            }
+        }
     }
     std::size_t renders = 0;
     std::size_t total_sprites = 0;

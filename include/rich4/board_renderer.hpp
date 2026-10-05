@@ -42,6 +42,14 @@ struct ObjectSprite {
     std::uint8_t animation_frame{};
 };
 
+struct SpecialPlayerSprite {
+    Point position;
+    std::uint8_t slot{}; // Original slots 4..7 and tool robot slot 8.
+    std::uint8_t direction{};
+    std::uint8_t animation_frame{};
+    bool active{}, walking{}, on_water{}, sleepwalking{};
+};
+
 struct PropertyState {
     std::uint32_t id{};   // One-based index in the corresponding original DAT table.
     std::uint8_t owner{}; // Zero means unowned; otherwise player slot plus one.
@@ -55,6 +63,7 @@ struct Scene {
     std::span<const ObjectSprite> objects;
     std::span<const PropertyState> lands;
     std::span<const PropertyState> facilities;
+    std::span<const SpecialPlayerSprite> special_players;
 };
 
 struct RenderStats {

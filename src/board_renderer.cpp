@@ -379,6 +379,19 @@ RenderStats Renderer::render(graphics::Image& destination, const Scene& scene,
             direction * frames_per_direction + player.animation_frame % frames_per_direction;
         enqueue(player.position, true, resource_index, frame, player.active ? 13 : 12);
     }
+    for (const auto& actor : scene.special_players) {
+        if (actor.slot < 4 || actor.slot > 8 || actor.direction > 7) {
+            throw std::invalid_argument("invalid board special actor selection");
+        }
+        const auto pose = actor.sleepwalking ? 3U : actor.on_water ? 2U : actor.walking ? 1U : 0U;
+        const std::size_t index = actor.slot == 8 ? 0x209U + unsigned(actor.walking)
+                                                : 0x16cU + actor.slot * 4U + pose;
+        const auto count = impl_->resource(true, index).layout.entries.size() / 8;
+        if (count == 0) throw assets::AssetError("special actor sprite has fewer than eight directions");
+        const auto direction = std::size_t((actor.direction + 8 - camera.rotation) & 7);
+        enqueue(actor.position, true, index, direction * count + actor.animation_frame % count,
+                actor.active ? 13 : 12);
+    }
     for (const auto& object : scene.objects) {
         if (object.kind == 0 || object.kind > 20 || object.direction > 7) {
             throw std::invalid_argument("invalid board object sprite selection");
