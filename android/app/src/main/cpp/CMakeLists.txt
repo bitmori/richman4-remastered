@@ -61,6 +61,7 @@ add_subdirectory("${RICH4_REPO}" rich4 EXCLUDE_FROM_ALL)
 add_library(main SHARED
   "${RICH4_REPO}/tools/native_game.cpp"
   "${RICH4_REPO}/tools/native_audio.cpp"
+  "${RICH4_REPO}/tools/screens/main_screen.cpp"
   "${RICH4_REPO}/tools/screens/draw.cpp"
   "${RICH4_REPO}/tools/screens/finance.cpp"
   "${RICH4_REPO}/tools/screens/stocks.cpp"
