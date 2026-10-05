@@ -18,6 +18,7 @@
 #include "rich4/world.hpp"
 #include "rich4/world_validation.hpp"
 #include "screens/effects.hpp" // EFFECTS: original board animations
+#include "screens/intro.hpp"   // new-game airplane / parachute intro
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -285,10 +286,32 @@ class Application {
         auto last_tick = SDL_GetTicks();
         for (unsigned iteration = 0; running_; ++iteration) {
             draw();
-            if (options_.auto_rounds && !effects_.active()) // EFFECTS: replay input waits for effects
+            if (options_.auto_rounds && !effects_.active() && !intro_.active()) // replay input waits for movies
                 drive_test();
             SDL_Event event{};
             while (SDL_PollEvent(&event)) {
+                if (intro_.active() && screen_ == Screen::game) {
+                    // The intro movies are skippable by mouse-up or key-up (fcn_0045144f flags bit 1);
+                    // a skip ends the whole intro. Tap and Android Back skip too. Nothing else
+                    // reacts to input until it ends. Only a release whose press happened during the
+                    // intro counts: the release of the setup's OK press must not skip it at once.
+                    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                        (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat))
+                        intro_pressed_ = true;
+                    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP)
+                        frame_.pointer_down = false; // no stale "pressed" control after the intro
+                    if ((event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_KEY_UP) &&
+                        intro_pressed_) {
+                        intro_.skip();
+                        continue;
+                    }
+                    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+                        event.type == SDL_EVENT_KEY_UP || event.type == SDL_EVENT_MOUSE_MOTION ||
+                        event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_TEXT_INPUT ||
+                        event.type == SDL_EVENT_FINGER_DOWN || event.type == SDL_EVENT_FINGER_UP ||
+                        event.type == SDL_EVENT_FINGER_MOTION || event.type == SDL_EVENT_MOUSE_WHEEL)
+                        continue;
+                }
                 if (event.type == SDL_EVENT_QUIT) {
                     if (screen_ == Screen::stocks)
                         close_stocks();
@@ -424,7 +447,7 @@ class Application {
             last_tick = now;
             if (session_ && screen_ == Screen::game && !items_.popup_active()) { // the card popup is modal
                 observe(); // a GO press emits the roll before the clock advances
-                if (!effects_.active() && !messages_.active()) // only the step being shown advances
+                if (!effects_.active() && !messages_.active() && !intro_.active()) // only the step shown advances
                     main_screen_.advance(elapsed);
                 pump_presentation();
                 // The original roll animation, board effects (EFFECTS) and every bubble/box/news popup
@@ -715,7 +738,7 @@ class Application {
         try {
             install_session(World::from_map_resource(
                                 artwork_.archive('m').decode((choice.stage * 4 + choice.map) * 2 + 1), configuration),
-                            options_.seed);
+                            options_.seed, true);
         } catch (const std::exception &error) {
             std::cerr << "New game failed: " << error.what() << '\n';
             toast_ = "無法開始新遊戲";
@@ -725,7 +748,9 @@ class Application {
         }
         ++new_games_;
     }
-    void install_session(World world, std::uint32_t seed) {
+    // intro: a new game plays the original airplane/parachute intro before the first turn
+    // (rich4_main.asm:376 fcn_00415872); loading a save does not (loc_00401d08).
+    void install_session(World world, std::uint32_t seed, bool intro = false) {
         validate_playable_world(world);
         end_amount_edit();
         const auto map = static_cast<std::uint8_t>(world.header.stage_id * 4 + world.header.map_id);
@@ -743,7 +768,17 @@ class Application {
         presentation_.clear();
         presented_player_.reset();
         items_.reset();
-        observe();
+        intro_.skip();
+        if (intro && !(options_.auto_rounds && !options_.play_effects)) { // replays keep their timing
+            std::vector<std::uint8_t> characters;
+            for (const auto &player : session_->world().players)
+                if (player.state.controller_flags)
+                    characters.push_back(player.state.character);
+            intro_.start(characters);
+            intro_ticks_ = 0;
+            intro_pressed_ = false;
+        }
+        observe(); // the first turn's events queue behind the intro (presenting())
     }
     bool load(const fs::path &path) {
         try {
@@ -791,7 +826,7 @@ class Application {
         std::optional<EffectEvent> effect;
     };
     bool presenting() const {
-        return main_screen_.dice_busy() || effects_.active() || messages_.active();
+        return intro_.active() || main_screen_.dice_busy() || effects_.active() || messages_.active();
     }
     void pump_presentation() {
         while (session_ && !presentation_.empty() && !presenting()) {
@@ -910,6 +945,8 @@ class Application {
             draw_board();
         if (session_ && screen_ == Screen::game && !items_.popup_active()) // card art plays before its movie
             draw_effects(); // EFFECTS: overlay after the board, before toasts
+        if (session_ && screen_ == Screen::game)
+            draw_intro();
         if (screen_ == Screen::menu) {
             main_menu_.draw(host, {[this] {
                                        if (session_ && session_->phase() != GamePhase::finished)
@@ -1008,6 +1045,27 @@ class Application {
         }
     }
 
+    // Full-screen new-game intro (screens/intro.hpp). Covers the board until it ends or is skipped.
+    void draw_intro() {
+        const auto now = SDL_GetTicks();
+        const auto elapsed = intro_ticks_ ? static_cast<unsigned>(std::min<Uint64>(now - intro_ticks_, 100)) : 0;
+        intro_ticks_ = now;
+        if (!intro_.active())
+            return;
+        intro_.draw(canvas_, elapsed, [this](std::size_t sound) {
+            if (sound_effects_)
+                audio_->play_sound(sound);
+        });
+        if (!intro_.active())
+            return;
+        buttons_.clear(); // input is blocked while the intro plays
+        if (options_.play_effects && !options_.output.empty() && now >= intro_capture_ && intro_frames_ < 400) {
+            std::ostringstream name;
+            name << "intro-" << std::setw(3) << std::setfill('0') << intro_frames_++ << ".ppm";
+            graphics::write_ppm(canvas_, options_.output / name.str());
+            intro_capture_ = now + 80;
+        }
+    }
     // EFFECTS: plays queued original animations (tools/screens/effects.cpp) over the board viewport.
     void draw_effects() {
         const auto now = SDL_GetTicks();
@@ -2185,6 +2243,10 @@ class Application {
     std::unique_ptr<board::Renderer> board_;
     std::unique_ptr<audio::Audio> audio_;
     native::EffectPlayer effects_{artwork_}; // EFFECTS
+    native::IntroPlayer intro_{artwork_};    // new-game parachute intro (screens/intro.hpp)
+    Uint64 intro_ticks_ = 0, intro_capture_ = 0;
+    unsigned intro_frames_ = 0;
+    bool intro_pressed_ = false; // a press began during the intro; its release skips
     std::deque<PresentationStep> presentation_; // see observe()
     std::optional<std::size_t> presented_player_;
     Uint64 effect_ticks_ = 0;                // EFFECTS: last draw_effects() time

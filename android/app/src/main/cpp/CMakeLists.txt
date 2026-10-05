@@ -68,6 +68,7 @@ add_library(main SHARED
   "${RICH4_REPO}/tools/screens/market.cpp"
   "${RICH4_REPO}/tools/screens/menus.cpp"
   "${RICH4_REPO}/tools/screens/effects.cpp"
+  "${RICH4_REPO}/tools/screens/intro.cpp"
   "${RICH4_REPO}/tools/screens/messages.cpp"
   "${RICH4_REPO}/tools/screens/items.cpp"
   rich4_android.cpp)
