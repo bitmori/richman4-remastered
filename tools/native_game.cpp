@@ -11,6 +11,7 @@
 #include "rich4/trading.hpp"
 #include "rich4/world.hpp"
 #include "rich4/world_validation.hpp"
+#include "screens/effects.hpp" // EFFECTS: original board animations
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -189,6 +190,7 @@ class Application {
             inputs_.open(options_.output / "inputs.jsonl");
         }
         audio_ = std::make_unique<audio::Audio>(options_.assets);
+        effects_.set_skip(options_.auto_rounds != 0); // EFFECTS: replays stay zero-duration
         if (!audio_->music_available())
             std::cerr << audio_->music_diagnostic() << '\n';
     }
@@ -314,7 +316,8 @@ class Application {
                                      : static_cast<unsigned>(std::min<Uint64>(now - last_tick, 100)) * speed_;
             last_tick = now;
             if (session_ && screen_ == Screen::game) {
-                session_->tick(elapsed);
+                if (!effects_.active()) // EFFECTS: the original blocks its game loop during an effect
+                    session_->tick(elapsed);
                 observe();
                 if (session_->can_save() && last_autosaved_day_ != session_->completed_days()) {
                     write_save(options_.save_directory / "Autosave.DAT");
@@ -502,6 +505,7 @@ class Application {
         ui::write_file(path.string() + ".rng", {state.begin(), state.end()});
     }
     void observe() {
+        effects_.enqueue(session_->drain_effects(), session_.get()); // EFFECTS
         for (const auto &event : session_->drain_events()) {
             ++event_counts_[event.kind];
             if (event.kind == GameEventKind::dice_rolled && event.player < dice_by_player_.size())
@@ -563,11 +567,15 @@ class Application {
         buttons_.clear();
         canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
         frame_.ticks = SDL_GetTicks();
+        if (session_) // EFFECTS: pre-mutation board for effect commit frames (only while idle)
+            effects_.remember(session_->world(), session_.get(), frame_.ticks);
         if (screen_ == Screen::menu || screen_ == Screen::new_game ||
             (screen_ == Screen::settings && !session_)) {
             picture(artwork_.frame('d', 1, 0), 0, 0);
         } else if (session_)
             draw_board();
+        if (session_ && screen_ == Screen::game)
+            draw_effects(); // EFFECTS: overlay after the board, before toasts
         if (screen_ == Screen::menu) {
             hit(1, {125, 320, 255, 440}, [this] { screen_ = session_ ? Screen::game : Screen::new_game; });
             hit(2, {270, 320, 400, 440}, [this] { load(load_path()); }, fs::exists(load_path()));
@@ -654,6 +662,21 @@ class Application {
         }
     }
 
+    // EFFECTS: plays queued original animations (tools/screens/effects.cpp) over the board viewport.
+    void draw_effects() {
+        const auto now = SDL_GetTicks();
+        const auto elapsed = effect_ticks_ ? static_cast<unsigned>(std::min<Uint64>(now - effect_ticks_, 100)) : 0;
+        effect_ticks_ = now;
+        if (!effects_.active())
+            return;
+        effects_.draw(canvas_, *board_, session_->world(), static_cast<std::uint8_t>(rotation_), elapsed, now,
+                      [this](std::size_t sound) {
+                          if (sound_effects_)
+                              audio_->play_sound(sound);
+                      });
+        if (effects_.active())
+            buttons_.clear(); // input is blocked while an effect plays, as in the original
+    }
     void draw_board() {
         const auto &world = session_->world();
         sync_decision();
@@ -1621,6 +1644,8 @@ class Application {
     std::unique_ptr<GameSession> session_;
     std::unique_ptr<board::Renderer> board_;
     std::unique_ptr<audio::Audio> audio_;
+    native::EffectPlayer effects_{artwork_}; // EFFECTS
+    Uint64 effect_ticks_ = 0;                // EFFECTS: last draw_effects() time
     graphics::Image canvas_;
     std::vector<Button> buttons_;
     native::Frame frame_{canvas_, artwork_, font_, buttons_};
