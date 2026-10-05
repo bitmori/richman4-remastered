@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "purpose": "Reproduce the previously verified no-window GDI and DirectDraw probes without using desktop automation.",
+  "engine_relative_to_repository": ".local/boxedwine/Boxedwine.app/Contents/MacOS/Boxedwine",
+  "runtime_base": "~/Library/Containers/org.boxedwine/Data/Library/Application Support/Boxedwine",
+  "filesystem_relative_to_runtime": "FileSystems2/TinyCore15Wine11.0.zip",
+  "prefix_template_relative_to_runtime": "Rich4/root",
+  "run_directory_relative_to_runtime": "Rich4-playability/headless-probe-{unique_id}",
+  "isolation": {
+    "copy_prefix_read_only": true,
+    "preserve_symlinks": true,
+    "exclude_root_children": [
+      "tmp"
+    ],
+    "required_registry": {
+      "HKEY_CURRENT_USER\\Software\\Wine\\Direct3D\\DirectDrawRenderer": "gdi"
+    },
+    "private_prefix_overlays": [
+      {
+        "path": "lib/libvulkan.so.1",
+        "content": "",
+        "reason": "Mask the guest Unix Vulkan bridge; Wine 11 probes it even for GDI applications."
+      }
+    ],
+    "never_modify_prefix_template_or_filesystem_zip": true
+  },
+  "host_env": {
+    "SDL_VIDEODRIVER": "dummy",
+    "SDL_AUDIODRIVER": "dummy",
+    "SDL_RENDER_DRIVER": "software",
+    "SDL_MAC_BACKGROUND_APP": "1"
+  },
+  "boxedwine_args": [
+    "-novideo",
+    "-nosound",
+    "-resolution",
+    "640x480",
+    "-bpp",
+    "32"
+  ],
+  "guest_env": {
+    "WINEDLLOVERRIDES": "winemenubuilder.exe,mscoree,mshtml,winevulkan,vulkan-1=",
+    "WINEDEBUG": "-all",
+    "WINE_D3D_CONFIG": "renderer=no3d"
+  },
+  "launch_argv_template": [
+    "{engine}",
+    "{boxedwine_args...}",
+    "-root",
+    "{run_directory}/root",
+    "-zip",
+    "{filesystem}",
+    "-mount_drive",
+    "{run_directory}/work",
+    "d",
+    "-w",
+    "/mnt/drive_d",
+    "{-env guest_env...}",
+    "/bin/wine",
+    "D:\\{probe_executable}"
+  ],
+  "compiler": "i686-w64-mingw32-gcc",
+  "compiler_flags": [
+    "-std=c11",
+    "-O0",
+    "-mwindows"
+  ],
+  "probes": [
+    {
+      "source": "tools/playability/headless_gdi_probe.c",
+      "executable": "headless_gdi_probe.exe",
+      "link_flags": [
+        "-lgdi32",
+        "-luser32"
+      ],
+      "completion": "result.txt",
+      "expected_completion": "screen=640x480 client=128x96 red=ff0000 blue=0000ff mouse=1 key=1\n",
+      "image": "gdi-probe.bmp",
+      "image_format": "BMP 32-bit top-down BGRA",
+      "width": 128,
+      "height": 96,
+      "split_x": 64,
+      "left_rgb": [
+        255,
+        0,
+        0
+      ],
+      "right_rgb": [
+        0,
+        0,
+        255
+      ]
+    },
+    {
+      "source": "tools/playability/headless_ddraw_probe.c",
+      "executable": "headless_ddraw_probe.exe",
+      "link_flags": [
+        "-lddraw",
+        "-ldxguid",
+        "-luser32"
+      ],
+      "completion": "ddraw-result.txt",
+      "expected_completion": "PASS bits=16 red=f800 blue=001f compared=307200 mismatches=0\n",
+      "image": "ddraw-probe.ppm",
+      "image_format": "P6 RGB",
+      "width": 640,
+      "height": 480,
+      "split_x": 320,
+      "left_rgb": [
+        255,
+        0,
+        0
+      ],
+      "right_rgb": [
+        0,
+        0,
+        255
+      ]
+    }
+  ],
+  "process": {
+    "start_new_session": true,
+    "timeout_seconds": 40,
+    "terminate_only_owned_process_group_on_timeout": true,
+    "normal_observed_exit_code": 1,
+    "require_completion_and_pixel_verification": true,
+    "never_fallback_to_cocoa": true
+  },
+  "validated_environment": "Bundled Boxedwine26R1Mac with TinyCore15Wine11.0 on the current macOS ARM64 host; the bundled SDL exposes cocoa and dummy, not offscreen.",
+  "validation_scope": "Synthetic GDI/DirectDraw probes only; actual Rich4 gameplay requires separate acceptance."
+}
