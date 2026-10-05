@@ -8,6 +8,7 @@
 #include "rich4/inventory.hpp"
 #include "rich4/random.hpp"
 #include "rich4/stocks.hpp"
+#include "rich4/stocks_ai.hpp"
 #include "rich4/services.hpp"
 #include "rich4/auction.hpp"
 #include "rich4/lottery.hpp"
@@ -15,7 +16,10 @@
 #include "rich4/cards.hpp"
 #include "rich4/tools.hpp"
 #include "rich4/gods.hpp"
+#include "rich4/tools_ai.hpp"
+#include "rich4/special_actors.hpp"
 #include "rich4/board_renderer.hpp"
+#include "rich4/legacy_float.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -55,7 +59,8 @@ struct GameSession::Impl {
     int remaining = 0;
     std::uint16_t next_node = 0;
     std::uint64_t days = 0;
-    bool resume_movement = false;
+    std::optional<std::size_t> winner;
+    bool resume_movement = false, bank_resume_encounter = false;
     std::map<std::size_t, int> event_choices;
     std::function<void()> pending_continuation;
     std::size_t pending_choice_key = 0;
@@ -88,6 +93,7 @@ struct GameSession::Impl {
         for (const auto& player : world.players)
             if (player.state.node_id >= world.nodes.size() || player.state.last_node_id >= world.nodes.size())
                 throw std::invalid_argument("player node outside native world");
+        if (!world.has_initial_random_state() && check_game_end())return;
         if (world.has_initial_random_state()) {
             for (const auto kind : {1U,3U,5U,7U,9U,11U,13U,14U})
                 place_existing_object(kind-1,random_free_node());
@@ -197,32 +203,115 @@ struct GameSession::Impl {
             world.nodes[state.node_id].flags |= 0x100U << actor();
         }
         if (!(value.days_in_hotel | value.days_disappearing | value.days_in_prison | value.days_in_hospital)) {
+            if(value.days_sleep_walking&0x80U){
+                const auto previous=value.flags_102&3U;
+                if(previous==3 || (previous==1 && player().tool_amounts[4]) || (previous==2 && player().tool_amounts[5])){
+                    player().traffic_method=value.flags_102;player().dice_count=value.flags_103;
+                    if(previous==1 || previous==2)--player().tool_amounts[previous+3U];
+                }else{player().traffic_method=0;player().dice_count=1;}
+            }
             age_status(value.days_sleeping); age_status(value.days_sleep_walking);
             age_status(value.days_tortoise_walking);
         }
-        if ((value.allied_days & 0x80U) != 0) value.allied_player = 0;
+        if ((value.allied_days & 0x80U) != 0) {
+            if(value.allied_player && value.allied_player<=world.players.size()){
+                auto& partner=world.players[value.allied_player-1].status;partner.allied_player=partner.allied_days=0;
+            }
+            value.allied_player = 0;
+        } else if(value.allied_days && value.allied_player && value.allied_player<=world.players.size()){
+            update_hostility(actor(),value.allied_player-1,-multiply32(20,world.header.price_index));
+            update_hostility(value.allied_player-1,actor(),-multiply32(20,world.header.price_index));
+        }
         age_status(value.days_stopping); age_status(value.days_rejected_by_bank);
         age_status(value.days_bank_no_loans); age_status(value.allied_days); age_status(value.days_assurance);
+        if(value.god_info){auto& god=world.objects.at(value.god_info-1);if(--god.remaining_days==0)check_god(gods::detach(world,actor(),god_callbacks()));}
+        if((player().traffic_method&3U)==3){
+            player().traffic_method=static_cast<std::uint8_t>(player().traffic_method-4);
+            if(!(player().traffic_method&0xfcU)){
+                const auto previous=value.flags_100&3U;
+                if((previous==1 && player().tool_amounts[4]) || (previous==2 && player().tool_amounts[5])){
+                    player().traffic_method=value.flags_100;player().dice_count=value.flags_101;
+                    --player().tool_amounts[previous+3U];
+                }else{player().traffic_method=0;player().dice_count=1;}
+            }
+        }
     }
     void start_turn(bool update = true) {
         spawn_if_needed();
         decision.reset(); animation.reset(); remaining = 0;
-        if (update) { stocks::refresh_trade_limits(world,random); update_status(); }
+        if(update){
+            run_rule([this]{stocks::refresh_trade_limits(world,random);collect_due_loan();if(phase!=GamePhase::finished && player().controller_flags)update_status();},true,false,[this]{enter_turn();});
+        }else enter_turn();
+    }
+    void enter_turn() {
+        if(phase==GamePhase::finished)return;
+        if(!player().controller_flags){finish_turn();return;}
         emit(GameEventKind::turn_started, player_name(actor()) + "的回合");
         const auto& value = status();
         if (value.days_in_hotel || value.days_disappearing || value.days_in_prison ||
             value.days_in_hospital || value.days_sleeping) {
             emit(GameEventKind::notice, player_name(actor()) + "本回合休息"); finish_turn();
-        } else if (value.days_stopping) {
-            faces.clear(); remaining = 0; land();
         } else if (human() && !value.days_sleep_walking) set_phase(GamePhase::human_ready);
-        else begin_roll();
+        else if(value.days_sleep_walking || (player().controller_flags&0x30U))begin_roll();
+        else begin_ai_turn();
+    }
+    void ai_dice_count() {
+        const auto traffic=player().traffic_method&3U;
+        if(traffic!=1 && traffic!=2)return;
+        player().dice_count=static_cast<std::uint8_t>(traffic+1);
+        if(status().attached_bomb){if(world.objects.at(status().attached_bomb-1).remaining_days<15)player().dice_count=1;return;}
+        const auto preview=lookahead(actor(),5);
+        unsigned good=0,bad=0;
+        for(auto id:preview.nodes){
+            const auto code=world.nodes.at(id).type_and_index;
+            unsigned owner=0;bool property=false;
+            if(code>2000 && code<4000){owner=world.lands.at(code-2000).economy.owner_code;property=true;}
+            else if(code>4000 && code<6000){owner=world.facilities.at(code-4000).owner_code;property=true;}
+            if(property){if(!owner || owner==actor()+1)++good;else ++bad;}
+        }
+        if(good>=2 && bad<=1)player().dice_count=1;
+        else if(traffic==2 && !good && bad>2)player().dice_count=static_cast<std::uint8_t>(2+(random.next()&1U));
+    }
+    void begin_ai_turn() {
+        run_rule([this]{
+            const bool closed = card_callbacks().market_closed();
+            for (const auto& trade : stocks_ai::buy(world, random, actor(), closed))
+                emit(GameEventKind::notice, "电脑买入股票" + std::to_string(trade.stock + 1) +
+                     "，" + std::to_string(trade.quantity) + "股", trade.value);
+            for (const auto& trade : stocks_ai::sell(world, random, actor(), closed))
+                emit(GameEventKind::notice, "电脑卖出股票" + std::to_string(trade.stock + 1) +
+                     "，" + std::to_string(trade.quantity) + "股", trade.value);
+            reconcile_financing(false);
+            if(phase==GamePhase::finished || !player().controller_flags)return;
+            if(random.next()&1U){
+                const auto callbacks=card_callbacks();
+                if(const auto request=choose_ai_card(world,random,actor(),callbacks,&card_ai_memory)){
+                    const auto result=apply_card(world,random,actor(),*request,callbacks);
+                    if(result.status==CardUseStatus::missing_callback)throw UnsupportedRule{result.message};
+                    if(result.status==CardUseStatus::used)emit(GameEventKind::notice,std::string("电脑使用")+std::string(services::card_names.at(request->card_id-1)));
+                }
+            }else{
+                tools_ai::Callbacks callbacks;
+                callbacks.nearby_instances=[this](auto slot){const auto& p=world.players.at(slot).state;return instance_codes(p.x,p.y,-1);};
+                const auto selected=tools_ai::choose(world,random,actor(),callbacks);
+                if(!selected.supported)throw UnsupportedRule{selected.message};
+                if(selected.decision){const auto& request=*selected.decision;const auto result=tools::use(world,random,actor(),request.tool,request.target,request.destination,tool_callbacks());
+                    if(!result.supported)throw UnsupportedRule{result.message};
+                    if(result.applied)emit(GameEventKind::notice,std::string("电脑使用")+std::string(services::tool_names.at(request.tool-1)));
+                }
+            }
+        },true,false,[this]{
+            if(phase==GamePhase::finished || phase==GamePhase::rolling || phase==GamePhase::moving)return;
+            if(!player().controller_flags || status().days_in_hotel || status().days_disappearing || status().days_in_prison || status().days_in_hospital || status().days_sleeping || status().days_sleep_walking){finish_turn();return;}
+            ai_dice_count();begin_roll();
+        });
     }
     void begin_roll() {
-        if (player().controller_flags & 1U) previous_turn[actor()] = world;
+        if ((player().controller_flags & 1U) && !(player().controller_flags&0x30U)) previous_turn[actor()] = world;
         faces.clear(); remaining = 0;
-        if (status().days_stopping) { land(); return; }
-        if (forced_roll) {
+        if(player().controller_flags&0x30U)remaining=1;
+        else if (status().days_stopping) { land(); return; }
+        else if (forced_roll) {
             remaining = static_cast<int>(*forced_roll); faces.push_back(static_cast<std::uint8_t>(*forced_roll)); forced_roll.reset();
         } else if (status().days_tortoise_walking) remaining = 1;
         else {
@@ -270,12 +359,40 @@ struct GameSession::Impl {
         --remaining; animation.reset();
         emit(GameEventKind::moved, player_name(actor()) + "到达道路" + std::to_string(next_node));
         const auto object=static_cast<std::uint16_t>((next.flags>>16U)&255U);
+        if(remaining>0 && (next.flags&255U)==14 && !status().days_sleep_walking && (!object || world.objects.at(object-1).kind!=16)){
+            bank_resume_encounter=true;open_bank(true);return;
+        }
+        step_encounter();
+    }
+    void step_encounter() {
+        const auto object=static_cast<std::uint16_t>((world.nodes.at(player().node_id).flags>>16U)&255U);
         run_rule([this,object]{
+            const auto occupants=(world.nodes.at(player().node_id).flags>>8U)&15U&~(1U<<actor());
+            if(occupants && remaining==0){
+                const auto other=static_cast<std::size_t>(std::countr_zero(occupants));
+                if(other<world.players.size() && !world.players[other].state.controller_flags){
+                    (void)pay(static_cast<int>(actor()),-1,multiply32(1000,world.header.price_index),0);relocate_bankrupt(other);
+                    if(phase==GamePhase::finished)return;
+                }
+            }
+            if(status().attached_bomb){
+                const auto bomb_id=status().attached_bomb;auto& bomb=world.objects.at(bomb_id-1);
+                if(--bomb.remaining_days==0){
+                    remove_object(bomb_id);change_building(world.nodes.at(player().node_id).type_and_index,false);
+                    injure(actor());add_confinement(actor(),5,true);remaining=0;return;
+                }
+                const auto mask=occupants;
+                if(mask){const auto other=static_cast<std::size_t>(std::countr_zero(mask));
+                    if(other<world.players.size() && world.players[other].state.controller_flags && !world.players[other].status.attached_bomb){
+                        world.players[other].status.attached_bomb=bomb_id;bomb.attached_player=static_cast<std::uint8_t>(other+1);status().attached_bomb=0;
+                    }
+                }
+            }
             if(object){const auto result=gods::touch(world,random,actor(),object,remaining==0,god_callbacks());check_god(result);if(result.stop_movement)remaining=0;}
         },true,false,[this]{
             if(phase==GamePhase::finished)return;
             if(status().days_in_hospital || status().days_in_prison || status().days_disappearing){finish_turn();return;}
-            if(remaining>0){if((world.nodes.at(player().node_id).flags&255U)==14 && !status().days_sleep_walking)open_bank(true);else start_step();}
+            if(remaining>0)start_step();
             else land();
         });
     }
@@ -345,21 +462,36 @@ struct GameSession::Impl {
             ((land.temporary_state & 0xf0U) && (land.temporary_state & 0x0fU))) { finish_turn(); return; }
         std::vector<LandEconomyRecord> records;
         for (std::size_t i = 1; i < world.lands.size(); ++i) records.push_back(world.lands[i].economy);
-        std::int32_t toll = land_toll(records, economy.owner_code, world.header.price_index,
-            economy.chain_store ? std::nullopt : std::optional<std::string_view>(economy.street_name));
-        if (land.temporary_state) toll = multiply32(toll, 2);
+        const auto street = economy.chain_store ? std::nullopt :
+            std::optional<std::string_view>(economy.street_name);
+        auto toll = land_toll(records, economy.owner_code, world.header.price_index, street);
+        const auto ally_code = owner_status.allied_player;
+        const auto ally_toll = ally_code ? land_toll(records, ally_code, world.header.price_index, street) : 0;
+        if (land.temporary_state) toll = multiply32(toll, 2); // The ally's portion is not doubled.
+        toll = add32(toll, ally_toll);
+        const float ally_ratio = ally_code && toll ?
+            (numeric::Extended::from(ally_toll) / numeric::Extended::from(toll)).single() : 0.0F;
         if (status().god_info == 1) toll >>= 1;
         else if (status().god_info == 2) toll = 0;
         else if (status().god_info == 5) toll = add32(toll, toll >> 1);
         else if (status().god_info == 6) toll = multiply32(toll, 2);
-        run_rule([this,land_id,owner,toll]{
-            auto requested=toll;
-            const auto payer=select_toll_payer(requested,static_cast<int>(owner));
-            if(payer==owner)return;
-            world.lands.at(land_id).removed_building=static_cast<std::uint32_t>(requested);
-            pay_toll(owner,requested,payer);
+        if (!toll) { finish_turn(); return; }
+        run_rule([this, land_id, owner, toll, ally_code, ally_toll, ally_ratio] {
+            // Original hostility belongs to the arriving player and is recorded
+            // before a free/frame card or death god can alter the payment.
+            update_hostility(actor(), owner, subtract32(toll, ally_toll) / 100);
+            if (ally_code) update_hostility(actor(), ally_code - 1U, ally_toll / 100);
+            auto requested = toll;
+            const auto payer = select_toll_payer(requested, static_cast<int>(owner));
+            if (payer == owner || (ally_code && payer == ally_code - 1U)) return;
+            const auto ally_amount = ally_code ?
+                (numeric::Extended::from(requested) * numeric::Extended::from(ally_ratio)).integer() : 0;
+            pay_toll(owner, requested, payer, ally_code ? std::optional<std::size_t>(ally_code - 1U) :
+                     std::nullopt, ally_amount);
+            world.lands.at(land_id).removed_building = static_cast<std::uint32_t>(requested);
         });
     }
+
     bool transaction_blocked() const {
         return status().god_info == 7 || status().god_info == 8 || status().god_info == 15;
     }
@@ -416,10 +548,12 @@ struct GameSession::Impl {
         else if (status().god_info == 2) toll = 0;
         else if (status().god_info == 5) toll = add32(toll, toll >> 1);
         else if (status().god_info == 6) toll = multiply32(toll, 2);
-        const auto payer=select_toll_payer(toll,static_cast<int>(owner),facility.facility_type==1);
+        if (!toll) return;
+        update_hostility(actor(), owner, toll / 100);
+        const auto payer=select_toll_payer(toll,static_cast<int>(owner),facility.facility_type==1,facility.facility_type!=1);
         if(payer==owner)return;
-        facility.removed_building = static_cast<std::uint32_t>(toll);
         pay_toll(owner,toll,payer);
+        facility.removed_building = static_cast<std::uint32_t>(toll);
         if (phase == GamePhase::finished) return;
         auto& paying_player=world.players[payer].state;
         auto& paying_status=world.players[payer].status;
@@ -615,11 +749,12 @@ struct GameSession::Impl {
             else if (status().god_info == 2) toll = 0;
             else if (status().god_info == 5) toll = add32(toll,toll >> 1);
             else if (status().god_info == 6) toll = multiply32(toll,2);
-            amount_voice(actor(),toll,9);
-            const auto paid = pay(static_cast<int>(actor()),static_cast<int>(id+100),toll,0);
+            const auto payer=select_toll_payer(toll,-1,absence!=0);
+            if(payer==actor())amount_voice(actor(),toll,9);
+            const auto paid = pay(static_cast<int>(payer),static_cast<int>(id+100),toll,0);
             if (paid) emit(GameEventKind::rent_paid,"向公司支付费用",paid);
             if (phase == GamePhase::finished) return;
-            if (absence && player().controller_flags) disappear(actor(),absence,0);
+            if (absence && world.players[payer].state.controller_flags) disappear(payer,absence,0);
             offer_primary_stock(id);
         });
     }
@@ -690,17 +825,17 @@ struct GameSession::Impl {
         value.hostility[target] = static_cast<std::uint32_t>(std::max(add32(old, delta), 0));
         if (delta > 0 && value.allied_player == target + 1) { value.allied_player = 0; value.allied_days = 0; }
     }
-    std::size_t select_toll_payer(std::int32_t& requested,int owner,bool compulsory_absence=false) {
+    std::size_t select_toll_payer(std::int32_t& requested,int owner,bool compulsory_absence=false,bool free_allowed=true) {
         const auto offered=[&]{return requested>=multiply32(2000,world.header.price_index) || requested>add32(player().cash,player().bank_balance);};
-        if(offered() && try_free_card(actor(),static_cast<std::size_t>(owner),requested))requested=0;
+        if(free_allowed && offered() && try_free_card(actor(),static_cast<std::size_t>(owner),requested))requested=0;
         auto payer=actor();
         if(offered()){const auto target=try_frame_card(actor(),1,requested);if(target>=0)payer=static_cast<std::size_t>(target);}
         if(requested || compulsory_absence)for(std::size_t i=0;i<world.players.size();++i)
             if(i!=payer && world.players[i].state.controller_flags && (world.players[i].status.god_info==14 || world.players[i].status.god_info==15)){payer=i;break;}
         return payer;
     }
-    void pay_toll(std::size_t owner, std::int32_t requested,std::size_t payer) {
-        update_hostility(payer, owner, requested / 100);
+    void pay_toll(std::size_t owner, std::int32_t requested, std::size_t payer,
+                  std::optional<std::size_t> ally = std::nullopt, std::int32_t ally_amount = 0) {
         int most_hostile = -1;
         std::int32_t largest_hostility = 0;
         for (std::size_t i = 0; i < world.players.size(); ++i) {
@@ -714,13 +849,26 @@ struct GameSession::Impl {
             if (hostile_speech) voice(payer, 18);
         }
         if (!hostile_speech) amount_voice(payer, requested, 9);
-        amount_voice(owner, requested, 6);
-        const auto paid = pay(static_cast<int>(payer), static_cast<int>(owner), requested, 0);
+        const auto owner_amount = subtract32(requested, ally_amount);
+        amount_voice(owner, owner_amount, 6);
+        auto paid = pay(static_cast<int>(payer), static_cast<int>(owner), owner_amount, 0);
+        if (ally) paid = add32(paid, pay(static_cast<int>(payer), static_cast<int>(*ally), ally_amount, 0));
         if (paid) emit(GameEventKind::rent_paid, player_name(payer) + "支付租金", paid);
+    }
+    bool check_game_end() {
+        unsigned active=0,humans=0;std::optional<std::size_t> survivor;
+        for(std::size_t i=0;i<world.players.size();++i){
+            if(world.players[i].state.controller_flags){++active;survivor=i;}
+            if(world.players[i].state.controller_flags&1U)++humans;
+        }
+        if(humans && active>1)return false;
+        winner=active==1 && humans?survivor:std::nullopt;
+        events.push_back({GameEventKind::game_finished,winner.value_or(actor()),0,player().node_id,
+                         winner?player_name(*winner)+"获胜":"游戏结束"});
+        set_phase(GamePhase::finished);return true;
     }
     void bankrupt(std::size_t slot) {
         auto& state = world.players.at(slot).state;
-        const bool was_human = (state.controller_flags & 1U) != 0;
         state.controller_flags = 0;
         const auto& node = world.nodes.at(state.node_id);
         state.x = static_cast<std::uint16_t>(node.x); state.y = static_cast<std::uint16_t>(node.y);
@@ -736,15 +884,7 @@ struct GameSession::Impl {
             }
         }
         events.push_back({GameEventKind::player_bankrupt, slot, 0, state.node_id, player_name(slot) + "破产"});
-        unsigned active = 0, humans = 0;
-        for (const auto& other : world.players) {
-            if (other.state.controller_flags) ++active;
-            if (other.state.controller_flags & 1U) ++humans;
-        }
-        if (!humans || (was_human && world.header.human_player_count == 1) || active == 1) {
-            emit(GameEventKind::game_finished, humans ? "游戏结束，最后一位玩家获胜" : "游戏结束");
-            set_phase(GamePhase::finished); return;
-        }
+        if(check_game_end())return;
         // Original 0x40d095 retains buildings and auctions three distinct
         // properties only when the bankrupt player owned more than three.
         std::vector<std::uint16_t> properties;
@@ -785,13 +925,23 @@ struct GameSession::Impl {
         if (value.days_in_hospital) world.hospital_roster[slot] = 0;
         value.days_in_hotel = value.days_disappearing = value.days_in_prison = value.days_in_hospital = 0;
     }
+    void relocate_bankrupt(std::size_t slot) {
+        auto& state=world.players.at(slot).state;
+        const auto old=state.node_id;world.nodes.at(old).flags&=~(0x100U<<slot);
+        const auto destination=random_free_node(old);const auto& node=world.nodes.at(destination);
+        const auto previous=std::find_if(node.neighbors.begin(),node.neighbors.end(),[](auto id){return id!=0;});
+        state.node_id=destination;state.last_node_id=previous==node.neighbors.end()?0:*previous;
+        state.x=static_cast<std::uint16_t>(node.x);state.y=static_cast<std::uint16_t>(node.y);
+        const auto& before=world.nodes.at(state.last_node_id);state.direction=direction::from_delta(node.x-before.x,node.y-before.y);
+        world.nodes[destination].flags|=0x100U<<slot;
+    }
     void injure(std::size_t slot) {
         if (slot >= world.players.size()) return;
         auto& entry = world.players.at(slot);
         auto& state = entry.state;
         const auto& value = entry.status;
-        if (!state.controller_flags || value.days_in_hotel || value.days_disappearing ||
-            value.days_in_prison || value.days_in_hospital) return;
+        if(!state.controller_flags){relocate_bankrupt(slot);return;}
+        if (value.days_in_hotel || value.days_disappearing || value.days_in_prison || value.days_in_hospital) return;
         if (state.traffic_method) {
             if ((state.traffic_method & 3U) == 1) ++world.tool_supply[4];
             else if ((state.traffic_method & 3U) == 2) ++world.tool_supply[5];
@@ -1363,7 +1513,10 @@ struct GameSession::Impl {
         callbacks.restore_last_state=[this]{return restore_last_state();};
         callbacks.remote_dice=[this](auto,unsigned amount){forced_roll=amount;begin_roll();};
         callbacks.upgrade=[this](auto code){change_building(code,true);};
-        callbacks.before_teleport=[this](auto slot){clear_absences(slot);};
+        callbacks.before_teleport = [this](auto slot) {
+            if (slot == actor() && (player().controller_flags & 1U)) previous_turn[slot] = world;
+            clear_absences(slot);
+        };
         callbacks.blast=[this](auto code,bool nuclear,auto slot){
             const auto point=instance_position(code);
             area_damage(static_cast<std::uint16_t>(point.x),static_cast<std::uint16_t>(point.y),nuclear?1:0,true,static_cast<int>(slot),nuclear?-1:100);
@@ -1376,10 +1529,11 @@ struct GameSession::Impl {
         choice_sequence = 0;
         World checkpoint = world;
         const auto checkpoint_random = random.state();
+        const auto checkpoint_ai = card_ai_memory;
         const auto event_count = events.size();
         const auto old_phase = phase;
         const auto restore = [&] {
-            world = std::move(checkpoint); random.seed(checkpoint_random); events.resize(event_count); phase = old_phase;
+            world = std::move(checkpoint); random.seed(checkpoint_random); events.resize(event_count); phase = old_phase; card_ai_memory=checkpoint_ai;
         };
         try {
             action();
@@ -1480,6 +1634,42 @@ struct GameSession::Impl {
         if (prompt.options.empty()) { finish_turn(); return; }
         decision = std::move(prompt); set_phase(GamePhase::awaiting_decision);
     }
+    void collect_bank_debt(std::size_t slot,std::int32_t amount) {
+        auto& state=world.players.at(slot).state;
+        state.bank_balance=subtract32(state.bank_balance,amount);
+        if(state.bank_balance>=0)return;
+        state.cash=add32(state.cash,state.bank_balance);state.bank_balance=0;
+        if(state.cash<0){state.cash=0;bankrupt(slot);}
+    }
+    void collect_due_loan() {
+        const auto due=calendar::unpack(status().loan_due_date);
+        if(!calendar::is_valid(due))return;
+        const auto left=calendar::days_between({world.header.date.year,world.header.date.month,world.header.date.day},due);
+        if(left==0){
+            const auto amount=player().loan;collect_bank_debt(actor(),amount);
+            player().loan=0;status().loan_due_date=0;
+            emit(GameEventKind::bank_transfer,"贷款到期，银行收回贷款",amount);
+        }else if(left>0 && left<=3)emit(GameEventKind::notice,"贷款将在"+std::to_string(left)+"天后到期");
+    }
+    void reconcile_financing(bool after_withdrawal) {
+        int owner=-1;
+        for(std::size_t i=1;i<world.commercials.size();++i)if(world.commercials[i].commerce_type==7 && world.commercials[i].owner_code)owner=world.commercials[i].owner_code-1;
+        if(after_withdrawal){
+            if(owner<0 || owner==static_cast<int>(actor()))return;
+            auto& state=world.players.at(static_cast<std::size_t>(owner)).state;
+            if(!state.special_finance)return;
+            std::int32_t bank_total=0;
+            for(std::size_t i=0;i<world.players.size();++i)if(static_cast<int>(i)!=owner && world.players[i].state.controller_flags)bank_total=add32(bank_total,world.players[i].state.bank_balance);
+            if(bank_total<state.special_finance){
+                const auto amount=subtract32(state.special_finance,bank_total);
+                collect_bank_debt(static_cast<std::size_t>(owner),amount);
+                state.special_finance=std::max(0,subtract32(state.special_finance,amount));
+            }
+        }else for(std::size_t i=0;i<world.players.size();++i){
+            auto& state=world.players[i].state;
+            if(static_cast<int>(i)!=owner && state.controller_flags && state.special_finance){collect_bank_debt(i,state.special_finance);state.special_finance=0;}
+        }
+    }
     void set_loan_due_date(std::size_t slot) {
         auto& entry = world.players.at(slot);
         if (!entry.status.loan_due_date) entry.status.loan_due_date = calendar::pack(holidays::loan_due_date(
@@ -1515,6 +1705,26 @@ struct GameSession::Impl {
             }
         }
     }
+    bool owns_current_bank() const {
+        const auto code=world.nodes.at(player().node_id).type_and_index;
+        return code>6000 && code<8000 && static_cast<std::size_t>(code-6000)<world.commercials.size() && world.commercials[code-6000].owner_code==actor()+1;
+    }
+    std::int32_t financing_limit() const {
+        std::int32_t total=0;
+        for(std::size_t i=0;i<world.players.size();++i)if(i!=actor())total=add32(total,world.players[i].state.bank_balance);
+        return subtract32(total,player().special_finance);
+    }
+    bool change_financing(std::int32_t amount,bool borrowing) {
+        if(amount<=0 || !owns_current_bank() || resume_movement)return false;
+        if(borrowing){
+            if(status().days_bank_no_loans || amount>financing_limit())return false;
+            player().bank_balance=add32(player().bank_balance,amount);player().special_finance=add32(player().special_finance,amount);
+        }else{
+            if(amount>player().special_finance || amount>add32(player().cash,player().bank_balance))return false;
+            collect_bank_debt(actor(),amount);player().special_finance=subtract32(player().special_finance,amount);
+        }
+        emit(GameEventKind::bank_transfer,borrowing?"银行融资已存入账户":"归还银行融资",amount);return true;
+    }
     void open_bank(bool passing) {
         resume_movement = passing;
         if (status().days_rejected_by_bank) {
@@ -1526,11 +1736,16 @@ struct GameSession::Impl {
             if (!passing) {
                 if (!status().days_bank_no_loans) options.push_back({"贷款",3});
                 if (player().loan > 0) options.push_back({"还贷",4});
+                if(owns_current_bank()){
+                    if(!status().days_bank_no_loans && financing_limit()>0)options.push_back({"银行融资",5});
+                    if(player().special_finance>0)options.push_back({"归还融资",6});
+                }
             }
             options.push_back({"离开", 0});
             decision = GameDecision{DecisionKind::bank, actor(), 0, 0, "办理存款或提款", std::move(options)};
             set_phase(GamePhase::awaiting_decision);
         } else {
+            run_rule([this,passing]{
             const auto total = add32(player().cash, player().bank_balance);
             if (total > 0) {
                 const float ratio = static_cast<float>(player().cash) / static_cast<float>(total);
@@ -1546,13 +1761,15 @@ struct GameSession::Impl {
                     emit(GameEventKind::bank_transfer, "电脑玩家调整现金与存款");
                 }
             }
-            if (!passing) ai_bank_loan();
-            leave_bank();
+            reconcile_financing(true);
+            if (!passing && phase!=GamePhase::finished) ai_bank_loan();
+            },true,false,[this]{if(phase!=GamePhase::finished)leave_bank();});
         }
     }
     void leave_bank() {
         decision.reset();
-        if (resume_movement && remaining > 0) { resume_movement = false; start_step(); }
+        if(bank_resume_encounter){bank_resume_encounter=false;resume_movement=false;step_encounter();}
+        else if (resume_movement && remaining > 0) { resume_movement = false; start_step(); }
         else { resume_movement = false; finish_turn(); }
     }
     void land() {
@@ -1655,8 +1872,27 @@ struct GameSession::Impl {
         if (world.players[next].state.controller_flags == 0) {
             emit(GameEventKind::game_finished, "游戏结束"); set_phase(GamePhase::finished); return;
         }
-        world.header.current_player = static_cast<std::uint32_t>(next);
-        if (wrapped) {
+        if(wrapped){
+            run_rule([this]{
+                special_actors::Callbacks callbacks;
+                callbacks.pay=[this](auto from,auto to,auto amount,auto flags){(void)pay(from,to,amount,flags);};
+                callbacks.remove_object=[this](auto id){remove_object(id);};
+                callbacks.prison=[this](auto slot,auto amount){add_confinement(slot,amount,false);};
+                callbacks.hospital=[this](auto slot,auto amount){add_confinement(slot,amount,true);};
+                callbacks.voice=[this](auto slot,auto category){voice(slot,category);};
+                callbacks.game_over=[this]{return phase==GamePhase::finished;};
+                for(std::size_t slot=4;slot<8 && phase!=GamePhase::finished;++slot){
+                    const auto result=special_actors::turn(world,random,slot,callbacks);
+                    if(!result.supported)throw UnsupportedRule{result.message};
+                    for(const auto& effect:result.effects)events.push_back({GameEventKind::notice,slot,effect.amount,effect.node,"特殊角色完成行动"});
+                }
+            },true,false,[this,next]{
+                if(phase==GamePhase::finished)return;
+                world.header.current_player=static_cast<std::uint32_t>(next);advance_day();start_turn();
+            });
+        }else{world.header.current_player=static_cast<std::uint32_t>(next);start_turn();}
+    }
+    void advance_day() {
             const auto advance = calendar::next_day({world.header.date.year, world.header.date.month, world.header.date.day});
             const auto date = advance.date;
             world.header.date = {date.day, date.month, date.year};
@@ -1674,12 +1910,18 @@ struct GameSession::Impl {
                 const auto draw = lottery::draw(world,random);
                 if (draw.held) emit(GameEventKind::notice,"彩票开奖：" + std::to_string(draw.number),draw.payout);
             }
-            if (advance.month_changed) close_month();
+            if (advance.month_changed) {
+                ++world.month_counter;close_month();
+                for(const auto id:{13U,14U}){
+                    const auto old_node=world.objects[id-1].node_id;
+                    remove_object(static_cast<std::uint16_t>(id));
+                    place_existing_object(id-1,random_free_node(old_node));
+                }
+            }
             expire_properties();
             emit(GameEventKind::date_changed, std::to_string(date.year) + "年" + std::to_string(date.month) + "月" + std::to_string(date.day) + "日");
-        }
-        start_turn();
     }
+
 };
 
 GameSession::GameSession(World world, std::uint32_t seed) : impl_(std::make_unique<Impl>(std::move(world), seed)) {}
@@ -1698,6 +1940,14 @@ std::uint64_t GameSession::completed_days() const noexcept { return impl_->days;
 void GameSession::set_camera_rotation(std::uint8_t rotation) {
     if (rotation > 7) throw std::invalid_argument("camera rotation must be 0..7");
     impl_->world.camera_rotation = rotation;
+}
+std::optional<std::size_t> GameSession::winning_player() const noexcept { return impl_->winner; }
+bool GameSession::set_dice_count(unsigned count) {
+    if(impl_->phase!=GamePhase::human_ready)return false;
+    const auto traffic=impl_->player().traffic_method&3U;
+    const auto maximum=traffic==1?2U:traffic==2?3U:1U;
+    if(!count || count>maximum)return false;
+    impl_->player().dice_count=static_cast<std::uint8_t>(count);return true;
 }
 bool GameSession::roll_dice() {
     if (impl_->phase != GamePhase::human_ready) return false;
@@ -1753,6 +2003,10 @@ bool GameSession::sell_stock(std::size_t stock,std::int32_t quantity) {
     try {const auto result=stocks::sell_stock(impl_->world,impl_->actor(),stock,quantity,true);impl_->emit(GameEventKind::bank_transfer,"卖出股票",result.proceeds);return true;}
     catch(const std::invalid_argument&){return false;}catch(const std::out_of_range&){return false;}
 }
+bool GameSession::close_stock_market() {
+    if(impl_->phase!=GamePhase::human_ready)return false;
+    impl_->run_rule([this]{impl_->reconcile_financing(false);},true,false);return true;
+}
 bool GameSession::respond(std::size_t option, std::int32_t amount) {
     if (impl_->phase != GamePhase::awaiting_decision || !impl_->decision || option >= impl_->decision->options.size()) return false;
     const auto decision = *impl_->decision;
@@ -1790,12 +2044,14 @@ bool GameSession::respond(std::size_t option, std::int32_t amount) {
         if (amount <= 0) return false;
         if (value == 3) { const bool result=impl_->borrow(amount);if(result)impl_->open_bank(impl_->resume_movement);return result; }
         if (value == 4) { const bool result=impl_->repay(amount,true);if(result)impl_->open_bank(impl_->resume_movement);return result; }
+        if (value == 5 || value == 6) {const bool result=impl_->change_financing(amount,value==5);if(result)impl_->open_bank(impl_->resume_movement);return result;}
         if (value == 1 && amount <= player.cash) {
             player.cash = subtract32(player.cash, amount); player.bank_balance = add32(player.bank_balance, amount);
         } else if (value == 2 && amount <= player.bank_balance) {
             player.bank_balance = subtract32(player.bank_balance, amount); player.cash = add32(player.cash, amount);
         } else return false;
         impl_->emit(GameEventKind::bank_transfer, value == 1 ? "存款完成" : "提款完成", amount);
+        if(value==2)impl_->run_rule([this]{impl_->reconcile_financing(true);},true,false,[this]{if(impl_->phase!=GamePhase::finished)impl_->open_bank(impl_->resume_movement);});
         return true;
     }
     impl_->decision.reset();

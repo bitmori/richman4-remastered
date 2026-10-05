@@ -14,9 +14,9 @@
 
 namespace {
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
-rich4::World world(unsigned count = 4) {
+rich4::World world(unsigned count = 4, unsigned land_count = 1) {
     std::vector<std::uint8_t> map(40);
-    const std::array<unsigned, 5> counts{8, 1, 1, 0, 2}, strides{40, 52, 56, 52, 28};
+    const std::array<unsigned, 5> counts{8, land_count, 1, 1, 2}, strides{40, 52, 56, 52, 28};
     const auto put32 = [&](std::size_t offset, std::uint32_t integer) {
         for (unsigned i = 0; i < 4; ++i) map.at(offset + i) = static_cast<std::uint8_t>(integer >> (i * 8));
     };
@@ -33,9 +33,9 @@ rich4::World world(unsigned count = 4) {
     }
     rich4::NewGameOptions options; options.players.resize(count);
     auto value = rich4::World::from_map_resource(map, options);
-    for (auto& stock : value.stocks) stock.flags_4 = 0; // Synthetic map has no commercial links.
+    for (auto& stock : value.stocks) stock.flags_4 = 0; // Tests assign explicit commercial links only when needed.
     value.header = {0x26, {5, 10, 2026}, 0, 0, count, 1, 0, 200000, 1};
-    value.nodes.resize(9); value.lands.resize(2);
+    value.nodes.resize(9); value.lands.resize(land_count + 1);
     for (unsigned i = 1; i < value.nodes.size(); ++i) {
         auto& node = value.nodes[i];
         node.id = i; node.x = static_cast<std::int16_t>(64 + i * 32); node.y = 128;
@@ -45,6 +45,8 @@ rich4::World world(unsigned count = 4) {
     }
     value.players.resize(count);
     for (unsigned i = 0; i < count; ++i) {
+        value.players[i].status.card_strategy = 0;
+        value.players[i].status.stock_investment_ratio = 0;
         auto& p = value.players[i].state;
         p.slot = i; p.node_id = static_cast<std::uint16_t>(i + 1);
         p.last_node_id = static_cast<std::uint16_t>(i ? i : 8);
@@ -126,6 +128,37 @@ void property_and_rent() {
     value.players[1].status.god_info = 15;
     rich4::GameSession immune(std::move(value), 0); first_landing(immune);
     require(immune.world().players[0].state.cash == 100000, "owner god immunity ignored");
+}
+void alliance_rent() {
+    auto value = world(4, 2); property_nodes(value);
+    value.lands[1].economy.owner_code = 2;
+    value.lands[1].economy.toll_by_level.fill(1000);
+    value.lands[2] = value.lands[1]; value.lands[2].id = 2;
+    value.lands[2].economy.owner_code = 3;
+    value.lands[2].economy.toll_by_level.fill(2000);
+    value.players[1].status.allied_player = 3;
+    value.players[2].status.allied_player = 2;
+    value.lands[1].temporary_state = 0x10;
+    value.players[0].status.god_info = 5;
+    rich4::GameSession game(value, 0); first_landing(game);
+    require(game.world().players[0].state.cash == 94000 &&
+            game.world().players[1].state.bank_balance == 13000 &&
+            game.world().players[2].state.bank_balance == 13000,
+            "ally toll must be added after temporary doubling and split before god adjustment");
+    require(game.world().players[0].status.hostility[1] == 40 &&
+            game.world().players[0].status.hostility[2] == 20,
+            "ally hostility uses god-adjusted total minus original ally toll, not payment shares");
+    require(game.world().lands[1].removed_building == 6000,
+            "allied land must preserve total requested rent after both payments");
+    value.players[0].status.god_info = 0;
+    value.lands[1].temporary_state = 0;
+    value.players[0].state.cards.fill(0); value.players[0].state.cards[0] = 20;
+    rich4::GameSession free(value, 0); first_landing(free);
+    require(free.pending_decision() && free.respond(0), "allied free toll choice absent");
+    require(free.world().players[0].state.cash == 100000 &&
+            free.world().players[0].status.hostility[1] == 10 &&
+            free.world().players[0].status.hostility[2] == 20,
+            "free card must not erase original pre-defense hostility");
 }
 void bank_and_failure() {
     auto value = world(); for (auto& node : value.nodes) node.flags = (node.flags & ~0xffU) | 14;
@@ -293,6 +326,15 @@ void native_actions_and_money_spinner() {
     require(machine.world().players[0].state.node_id==1 && machine.world().header.date.day==5 &&
             machine.world().players[0].state.tool_amounts[9]==0 && machine.random_state()==before_random &&
             machine.world().camera_rotation==3,"time machine restored excluded RNG/camera or failed to consume tool after restore");
+    value = world(); value.players[0].state.tool_amounts[9] = 1;
+    value.players[0].state.tool_amounts[10] = 1;
+    rich4::GameSession teleport(value, 5);
+    require(teleport.use_tool(11, 0x8001, 5) && teleport.world().players[0].state.node_id == 5,
+            "self teleport failed");
+    require(teleport.use_tool(10) && teleport.world().players[0].state.node_id == 1 &&
+            teleport.world().players[0].state.tool_amounts[10] == 1 &&
+            teleport.world().players[0].state.tool_amounts[9] == 0,
+            "self teleport must record history before movement and consumption even after loading a save");
     value=world();value.objects[0].kind=1;value.objects[0].node_id=2;value.nodes[2].flags|=1U<<16;
     rich4::GameSession god(value,0);first_landing(god);
     require(god.pending_decision()->kind==rich4::DecisionKind::money_spinner,"god must present original decimal spinner");
@@ -320,6 +362,60 @@ void loan_and_free_toll() {
     require(free.world().players[0].state.cash==100000 && free.world().players[0].state.cards[0]==0 &&
             free.world().lands[1].removed_building==0,"free card replay charged money or failed to consume exactly once");
 }
+void special_financing() {
+    auto value=world();for(auto& node:value.nodes){node.flags=(node.flags&~255U)|14;node.type_and_index=6001;}
+    value.commercials[1].owner_code=1;value.commercials[1].commerce_type=7;
+    rich4::GameSession bank(value,0);first_landing(bank);
+    auto select=[&](int action){const auto& choices=bank.pending_decision()->options;const auto it=std::find_if(choices.begin(),choices.end(),[&](const auto& item){return item.value==action;});require(it!=choices.end(),"finance bank action absent");return static_cast<std::size_t>(it-choices.begin());};
+    require(!bank.respond(select(5),30001) && bank.respond(select(5),5000),"finance borrowing must respect other bank balances");
+    require(bank.world().players[0].state.special_finance==5000 && bank.world().players[0].state.bank_balance==15000 &&
+            bank.world().players[0].state.loan==0,"special financing must not create an ordinary dated loan");
+    require(bank.respond(select(6),1000) && bank.world().players[0].state.special_finance==4000 &&
+            bank.world().players[0].state.bank_balance==14000,"finance repayment differs");
+    value.commercials[1].owner_code=2;value.players[1].state.special_finance=25000;
+    rich4::GameSession withdrawal(value,0);first_landing(withdrawal);
+    require(withdrawal.respond(1,10000),"ATM withdrawal rejected");
+    require(withdrawal.world().players[1].state.special_finance==20000 &&
+            withdrawal.world().players[1].state.bank_balance==5000,"withdrawal must collect bank owner's uncovered financing");
+    value=world();value.players[0].state.special_finance=1000;
+    rich4::GameSession market(value,0);require(market.close_stock_market(),"market close rejected");
+    require(!market.world().players[0].state.special_finance && market.world().players[0].state.bank_balance==9000 &&
+            market.world().players[0].status.cumulative_spending==0,"lost financing ownership must collect debt without ordinary expense bookkeeping");
+}
+void lifecycle_and_finished_saves() {
+    auto value=world();
+    for(std::size_t i=1;i<value.players.size();++i)value.players[i].state.controller_flags=0;
+    rich4::GameSession winner(value,55);
+    require(winner.phase()==rich4::GamePhase::finished && winner.winning_player()==0 && winner.random_state()==55,
+            "terminal save must restore winner without starting a turn");
+    auto encoded=winner.export_save();rich4::GameSession restored(rich4::World::from_save(encoded),55);
+    require(restored.phase()==rich4::GamePhase::finished && restored.winning_player()==0 &&
+            restored.export_save().encode()==encoded.encode(),"finished save reload changed result or bytes");
+    value=world();value.players[0].state.traffic_method=2;
+    rich4::GameSession dice(value,1);require(dice.set_dice_count(3) && !dice.set_dice_count(4) && !dice.set_dice_count(0),"vehicle dice limits differ");
+    require(dice.roll_dice() && !dice.set_dice_count(1) && dice.dice().size()==3,"dice count may only change at settled human input");
+    value=world();value.header.current_player=3;value.players[0].state.loan=1100;
+    value.players[0].state.cash=100;value.players[0].state.bank_balance=1000;
+    value.players[0].status.loan_due_date=rich4::calendar::pack({2026,10,6});
+    rich4::GameSession due(value,10);
+    until(due,[&]{return due.completed_days()==1 && due.phase()==rich4::GamePhase::human_ready;});
+    require(due.world().players[0].state.cash==0 && due.world().players[0].state.bank_balance==0 &&
+            due.world().players[0].state.loan==0 && due.world().players[0].status.loan_due_date==0 &&
+            due.world().players[0].status.cumulative_spending==0,"due loan must collect bank then cash without ordinary expense bookkeeping");
+    value=world();value.nodes[7].flags=(value.nodes[7].flags&~255U)|5;
+    value.landscapes[1].x=500;value.landscapes[1].y=500;
+    value.players[0].status.attached_bomb=37;value.objects[36].kind=18;value.objects[36].node_id=1;
+    value.objects[36].attached_player=1;value.objects[36].remaining_days=1;
+    rich4::GameSession bomb(value,0);first_landing(bomb);
+    require(bomb.world().players[0].status.days_in_hospital==5 && !bomb.world().players[0].status.attached_bomb &&
+            !bomb.world().objects[36].node_id && bomb.steps_remaining()==0,"bomb fuse must explode before normal landing and hospitalize five days");
+    value=world();value.players[0].status.attached_bomb=37;value.objects[36].kind=18;value.objects[36].node_id=1;
+    value.objects[36].attached_player=1;value.objects[36].remaining_days=20;
+    rich4::GameSession transfer(value,0);first_landing(transfer);
+    require(!transfer.world().players[0].status.attached_bomb && transfer.world().players[1].status.attached_bomb==37 &&
+            transfer.world().objects[36].remaining_days==19 && transfer.world().objects[36].attached_player==2,
+            "bomb collision must decrement then transfer to first live unbombed player");
+}
 void explicit_unsupported_and_save_guard() {
     auto value = world(); for (auto& node : value.nodes) node.flags = (node.flags & ~0xffU) | 255;
     rich4::GameSession game(std::move(value), 0);
@@ -335,8 +431,8 @@ void explicit_unsupported_and_save_guard() {
 }
 int main() {
     try {
-        dice_and_paths(); property_and_rent(); bank_and_failure();
-        thirty_days_and_timing(); save_reload_and_deferred_spawn(); facilities_events_and_rescue(); service_and_auction_choices(); native_actions_and_money_spinner(); loan_and_free_toll(); explicit_unsupported_and_save_guard();
+        dice_and_paths(); property_and_rent(); alliance_rent(); bank_and_failure();
+        thirty_days_and_timing(); save_reload_and_deferred_spawn(); facilities_events_and_rescue(); service_and_auction_choices(); native_actions_and_money_spinner(); loan_and_free_toll(); special_financing(); lifecycle_and_finished_saves(); explicit_unsupported_and_save_guard();
         std::cout << "native game rule tests passed\n";
         return 0;
     } catch (const std::exception& error) {

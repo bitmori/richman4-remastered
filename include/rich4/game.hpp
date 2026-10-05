@@ -80,6 +80,8 @@ public:
     // Returns false for input that does not apply to the current phase. option
     // is an index into pending_decision().options. Bank amount must be positive.
     bool roll_dice();
+    bool set_dice_count(unsigned count);
+    [[nodiscard]] std::optional<std::size_t> winning_player() const noexcept;
     void set_camera_rotation(std::uint8_t rotation);
     [[nodiscard]] std::vector<CardTarget> card_targets(std::uint8_t card) const;
     bool use_card(const CardUse& card);
@@ -87,6 +89,7 @@ public:
     bool dismount();
     bool buy_stock(std::size_t stock, std::int32_t quantity);
     bool sell_stock(std::size_t stock, std::int32_t quantity);
+    bool close_stock_market();
     bool respond(std::size_t option, std::int32_t amount = 0);
     void tick(unsigned elapsed_ms);
     [[nodiscard]] std::vector<GameEvent> drain_events();
