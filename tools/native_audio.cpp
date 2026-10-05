@@ -181,6 +181,10 @@ struct Audio::Impl {
         if (!stream) {
             throw sdl_error("open SDL audio stream");
         }
+        if (const auto *path = std::getenv("RICH4_AUDIO_CAPTURE"); path && *path) {
+            capture_path = path;
+            capture.reserve(std::size_t(sample_rate) * channels * 60);
+        }
         initialize_music(bank);
         if (!SDL_ResumeAudioStreamDevice(stream.get())) {
             throw sdl_error("resume SDL audio stream");
@@ -191,6 +195,7 @@ struct Audio::Impl {
         // Stop the only hardware-facing object before releasing the software
         // mixer and its banks. No FluidSynth audio driver is ever constructed.
         stream.reset();
+        write_capture();
         player.reset();
         synth.reset();
         settings.reset();
@@ -389,6 +394,10 @@ struct Audio::Impl {
             play_clip(true, next, true);
         }
         for (auto &sample : output) {
+            const float magnitude = std::abs(sample);
+            stats.peak = std::max(stats.peak, magnitude);
+            if (magnitude > 1.0F)
+                ++stats.clipped_samples;
             sample = std::clamp(sample, -1.0F, 1.0F);
             if (std::abs(sample) > 0.000001F) {
                 ++stats.nonzero_samples;
@@ -401,21 +410,76 @@ struct Audio::Impl {
         if (!enabled) {
             return;
         }
+        const auto now_ns = SDL_GetTicksNS();
+        if (last_update_ns)
+            stats.max_update_gap_ms = std::max<std::uint64_t>(stats.max_update_gap_ms, (now_ns - last_update_ns) / 1000000);
+        last_update_ns = now_ns;
         int queued = SDL_GetAudioStreamQueued(stream.get());
         if (queued < 0) {
             throw sdl_error("query SDL audio queue");
+        }
+        if (queued == 0 && stats.rendered_frames > 0) {
+            ++stats.underruns;
+            const auto starved_ns = now_ns > drained_at_ns ? now_ns - drained_at_ns : 0;
+            stats.starved_ms += starved_ns / 1000000;
+            capture_silence(std::size_t(starved_ns * sample_rate / 1000000000ULL));
         }
         std::array<float, block_frames * channels> block;
         // Bounded catch-up prevents a broken device or long stall from causing
         // an unbounded main-thread loop. MIDI time follows rendered samples.
         for (int iteration = 0; iteration < 8 && queued < queue_target_frames * bytes_per_frame;
              ++iteration) {
+            const auto render_start = SDL_GetTicksNS();
             render_block(block);
+            stats.max_render_us = std::max<std::uint64_t>(stats.max_render_us, (SDL_GetTicksNS() - render_start) / 1000);
+            capture_block(block);
             const int byte_count = int(block.size() * sizeof(float));
             if (!SDL_PutAudioStreamData(stream.get(), block.data(), byte_count)) {
                 throw sdl_error("queue native mixed audio");
             }
             queued += byte_count;
+        }
+        drained_at_ns = SDL_GetTicksNS() + std::uint64_t(queued / bytes_per_frame) * 1000000000ULL / sample_rate;
+    }
+    std::uint64_t last_update_ns{}, drained_at_ns{};
+    // Dev: RICH4_AUDIO_CAPTURE=out.wav records up to 60 s of what the device was given (push mode
+    // inserts the estimated starvation as silence), written when the mixer is destroyed.
+    std::vector<float> capture;
+    std::filesystem::path capture_path;
+    void capture_block(std::span<const float> block) {
+        if (capture_path.empty())
+            return;
+        const auto room = capture.capacity() - capture.size();
+        capture.insert(capture.end(), block.begin(), block.begin() + std::ptrdiff_t(std::min(room, block.size())));
+    }
+    void capture_silence(std::size_t frames) {
+        if (capture_path.empty())
+            return;
+        const auto room = capture.capacity() - capture.size();
+        capture.resize(capture.size() + std::min(room, frames * channels), 0.0F);
+    }
+    void write_capture() const {
+        if (capture_path.empty())
+            return;
+        std::ofstream out(capture_path, std::ios::binary);
+        const auto put32 = [&out](std::uint32_t value) { out.write(reinterpret_cast<const char *>(&value), 4); };
+        const auto put16 = [&out](std::uint16_t value) { out.write(reinterpret_cast<const char *>(&value), 2); };
+        const auto data_bytes = std::uint32_t(capture.size() * 2);
+        out.write("RIFF", 4);
+        put32(36 + data_bytes);
+        out.write("WAVEfmt ", 8);
+        put32(16);
+        put16(1);
+        put16(channels);
+        put32(sample_rate);
+        put32(sample_rate * channels * 2);
+        put16(channels * 2);
+        put16(16);
+        out.write("data", 4);
+        put32(data_bytes);
+        for (const float sample : capture) {
+            const auto value = std::int16_t(std::lround(std::clamp(sample, -1.0F, 1.0F) * 32767.0F));
+            put16(std::uint16_t(value));
         }
     }
 };

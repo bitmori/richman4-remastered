@@ -19,6 +19,14 @@ struct Statistics {
     std::uint64_t voices_started{};
     std::uint64_t clips_completed{};
     std::uint64_t music_frames{};
+    // Glitch diagnostics (also in the headless report.json as audio_*).
+    std::uint64_t underruns{};         // device found starved (push mode: queue empty at refill)
+    std::uint64_t starved_ms{};        // estimated silence the device played because of underruns
+    std::uint64_t clipped_samples{};   // mixed samples beyond full scale before limiting (old: hard-clamped)
+    std::uint64_t limited_samples{};   // samples whose limiter gain was below 1
+    float peak{};                      // largest pre-limiter |sample|
+    std::uint64_t max_update_gap_ms{}; // longest gap between two main-thread update() calls
+    std::uint64_t max_render_us{};     // longest single mixing pass (callback or refill)
 };
 
 // Looping-effect channels (the original keeps one sound-preset slot per purpose, e.g. the walk
