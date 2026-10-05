@@ -142,6 +142,64 @@ void dice_effect_is_presentation_only() {
                 game.world().players[0].state.node_id == silent.world().players[0].state.node_id,
             "effect queue changed the rule outcome");
 }
+void tool_and_card_effects() {
+    const auto find = [](const std::vector<rich4::EffectEvent> &effects, rich4::EffectKind kind) {
+        return std::find_if(effects.begin(), effects.end(), [kind](const auto &e) { return e.kind == kind; });
+    };
+    // Roadblock placement flies from the actor to the chosen road node.
+    auto value = world();
+    value.players[0].state.tool_amounts[1] = 1;
+    rich4::GameSession roadblock(value, 5);
+    const auto before = roadblock.random_state();
+    require(roadblock.use_tool(2, 5), "roadblock rejected");
+    auto effects = roadblock.drain_effects();
+    const auto thrown = find(effects, rich4::EffectKind::object_throw);
+    require(thrown != effects.end() && thrown->object_kind == 16 && thrown->node == 5 && thrown->from &&
+                thrown->from->x == roadblock.world().players[0].state.x &&
+                thrown->target.x == roadblock.world().nodes[5].x,
+            "roadblock throw effect");
+    require(roadblock.random_state() == before, "throw effect consumed randomness");
+    // Missile: area damage first, then the movie centred on the target.
+    value = world();
+    value.players[0].state.tool_amounts[6] = 1;
+    rich4::GameSession missile(value, 5);
+    require(missile.use_tool(7) && missile.pending_decision(), "missile target prompt");
+    // The map target farthest from every player, so nobody is sent to the (absent) hospital.
+    std::size_t option = missile.pending_decision()->options.size();
+    int best = -1;
+    for (std::size_t i = 0; i < missile.pending_decision()->options.size(); ++i)
+        if (const auto &at = missile.pending_decision()->options[i].location) {
+            int nearest = 1 << 30;
+            for (const auto &p : missile.world().players)
+                nearest = std::min(nearest, std::abs(at->x - p.state.x) + std::abs(at->y - p.state.y));
+            if (nearest > best) {
+                best = nearest;
+                option = i;
+            }
+        }
+    require(option < missile.pending_decision()->options.size(), "missile has no map target");
+    const auto location = *missile.pending_decision()->options[option].location;
+    require(missile.respond(option), "missile target rejected");
+    effects = missile.drain_effects();
+    const auto hit = find(effects, rich4::EffectKind::missile);
+    require(hit != effects.end() && hit->target.x == location.x && hit->target.y == location.y,
+            "missile effect target");
+    // Demolish card on an owned building.
+    value = world();
+    value.players[0].state.cards[0] = 12;
+    value.lands[1].x = static_cast<std::uint16_t>(value.players[0].state.x);
+    value.lands[1].y = 160;
+    value.lands[1].economy.owner_code = 2;
+    value.lands[1].economy.level = 3;
+    rich4::GameSession demolish(value, 5);
+    const auto targets = demolish.card_targets(12);
+    require(!targets.empty(), "demolish card has no target");
+    require(demolish.use_card({12, targets[0], std::nullopt}), "demolish card rejected");
+    effects = demolish.drain_effects();
+    const auto picture = find(effects, rich4::EffectKind::demolish);
+    require(picture != effects.end() && picture->property == targets[0].value && picture->target.y == 160,
+            "demolish effect");
+}
 void property_and_rent() {
     auto value = world();
     property_nodes(value);
@@ -776,6 +834,7 @@ int main() {
     try {
         dice_and_paths();
         dice_effect_is_presentation_only();
+        tool_and_card_effects();
         property_and_rent();
         alliance_rent();
         bank_and_failure();
