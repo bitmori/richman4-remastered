@@ -3,6 +3,7 @@
 #include "rich4/random.hpp"
 #include "rich4/world.hpp"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -21,6 +22,13 @@ struct EventResult {
     bool supported = false;
     std::uint8_t event_id = 0;
     std::string message;
+    // Arguments of the original news/fortune body text (presentation only; no rule effect).
+    std::uint16_t property = 0; // Original property code (2000+land, 4000+facility) named by %s.
+    std::int32_t subject = -1;  // Player slot (awards) or stock index (news 27/28) named by %s.
+    std::int32_t company = -1;  // Commercial index (news 29..35).
+    std::int32_t value = 0;     // %d: days, amount or percent.
+    std::uint8_t players = 0;   // Bit mask of player slots shown as portrait rows.
+    std::array<std::int32_t, 4> player_amounts{}; // Per-slot tax/bonus rows (news 11..13, 23).
 };
 
 // Side effects already owned by the session, plus explicit UI choices. An event

@@ -2,8 +2,8 @@
 // See docs/ui/main-screen.md for the original layout; section numbers refer to it.
 #include "main_screen.hpp"
 
-#include "flc.hpp"
 #include "rich4/calendar.hpp"
+#include "rich4/flc.hpp"
 #include "rich4/holidays.hpp"
 #include "rich4/stocks.hpp"
 
@@ -174,7 +174,9 @@ void MainScreen::on_event(const GameEvent &event, const GameSession &session, Ar
     auto &frames = dice_animations_[dice_faces_.size()];
     if (frames.empty()) {
         try {
-            frames = decode_flc(artwork.archive('p').decode(3 + dice_faces_.size()));
+            flc::Decoder movie(artwork.archive('p').decode(3 + dice_faces_.size())); // core decoder
+            while (movie.next())
+                frames.push_back(movie.image());
         } catch (const std::exception &) {
             frames.clear(); // falls back to cycling the Panel 3 faces
         }
@@ -204,7 +206,9 @@ void MainScreen::pointer_motion(int x, int y, bool left_down) {
         minimap_drag_ = false;
         return;
     }
-    if (go_drag_) {
+    if (pending_roll_ && std::abs(x - press_point_.first) + std::abs(y - press_point_.second) > 6)
+        pending_roll_ = nullptr; // moved: this press is a drag, not a tap
+    if (go_drag_ && !pending_roll_) {
         go_x_ = std::clamp(x - go_drag_->first, 0, 568);
         go_y_ = std::clamp(y - go_drag_->second, 0, 413);
     }
@@ -216,6 +220,8 @@ void MainScreen::pointer_motion(int x, int y, bool left_down) {
 }
 
 void MainScreen::pointer_up(int x, int y, bool right_button) {
+    if (auto roll = std::exchange(pending_roll_, nullptr); roll && !right_button)
+        roll();
     go_drag_.reset();
     minimap_drag_ = false;
     if (right_button && view_mode_ != 0 && x > 440 && y > minimap_top_ && y < minimap_top_ + 200)
@@ -236,8 +242,10 @@ void MainScreen::draw(Frame &frame, const GameSession &session, unsigned rotatio
     draw_dice(frame, session, rotation);
     if (session.phase() == GamePhase::human_ready)
         draw_go(frame, session, actions);
-    else
+    else {
         go_drag_.reset();
+        pending_roll_ = nullptr;
+    }
     draw_toolbar(frame, session, actions);
     if (view_mode_ == 2) {
         draw_header(frame, world);
@@ -530,10 +538,14 @@ void MainScreen::draw_go(Frame &frame, const GameSession &session, const MainScr
         go_drag_.reset();
         actions.roll();
     });
-    frame.hit(main_ids::go_frame, {gx, gy, gx + 72, gy + 67}, [this, &frame] {
+    frame.hit(main_ids::go_frame, {gx, gy, gx + 72, gy + 67}, [this, &frame, actions] {
         const int x = frame.pointer_x, y = frame.pointer_y;
-        if (go_mask(frame, x, y) == 2)
-            go_drag_ = std::pair(x - go_x_, y - go_y_);
+        go_drag_ = std::pair(x - go_x_, y - go_y_);
+        press_point_ = {x, y};
+        pending_roll_ = [this, actions] {
+            go_drag_.reset();
+            actions.roll();
+        };
     });
 }
 
