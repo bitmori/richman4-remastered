@@ -179,6 +179,14 @@ struct GameSession::Impl {
         effect(card == 12 ? EffectKind::demolish : EffectKind::monster, actor(), property_point(target->value),
                target->value);
     }
+    // Presentation-only event for the original message boxes and announcement screens.
+    GameEvent &announce(Announcement kind, std::size_t slot, std::uint8_t id = 0) {
+        GameEvent event{GameEventKind::notice, slot, 0, world.players.at(slot).state.node_id, {}};
+        event.announcement = kind;
+        event.announcement_id = id;
+        events.push_back(std::move(event));
+        return events.back();
+    }
     void voice(std::size_t slot, std::uint8_t category) {
         events.push_back(
             {GameEventKind::notice, slot, 0, world.players.at(slot).state.node_id, {}, category});
@@ -391,6 +399,21 @@ struct GameSession::Impl {
         const auto &value = status();
         if (value.days_in_hotel || value.days_disappearing || value.days_in_prison ||
             value.days_in_hospital || value.days_sleeping) {
+            // Original turn-start status (rich4.asm:6600-6757): bubble 19/20/21, then the box.
+            const int status_kind = value.days_in_hotel        ? 0
+                                    : value.days_disappearing ? 1
+                                    : value.days_in_prison    ? 2
+                                    : value.days_in_hospital  ? 3
+                                                              : 4;
+            const unsigned raw = status_kind == 0   ? value.days_in_hotel
+                                 : status_kind == 1 ? value.days_disappearing & 0x3fU
+                                 : status_kind == 2 ? value.days_in_prison
+                                 : status_kind == 3 ? value.days_in_hospital
+                                                    : value.days_sleeping;
+            if (status_kind >= 2)
+                voice(actor(), status_kind == 2 ? 19 : status_kind == 3 ? 20 : 21);
+            announce(Announcement::absent_status, actor(), static_cast<std::uint8_t>(status_kind)).value =
+                static_cast<std::int32_t>(raw & 0x7fU);
             emit(GameEventKind::notice, player_name(actor()) + "本回合休息");
             finish_turn();
         } else if (human() && !value.days_sleep_walking)
@@ -724,6 +747,9 @@ struct GameSession::Impl {
             }
             const auto cost = upgrade ? upgrade_price(land_id) : purchase_price(land_id);
             if (cost < 0 || player().cash < cost) {
+                if (cost >= 0)
+                    announce(Announcement::cash_insufficient, actor()).property =
+                        static_cast<std::uint16_t>(2000 + land_id);
                 finish_turn();
                 return;
             }
@@ -802,7 +828,8 @@ struct GameSession::Impl {
                     ? (numeric::Extended::from(requested) * numeric::Extended::from(ally_ratio)).integer()
                     : 0;
             pay_toll(owner, requested, payer,
-                     ally_code ? std::optional<std::size_t>(ally_code - 1U) : std::nullopt, ally_amount);
+                     ally_code ? std::optional<std::size_t>(ally_code - 1U) : std::nullopt, ally_amount,
+                     static_cast<std::uint16_t>(2000 + land_id));
             world.lands.at(land_id).removed_building = static_cast<std::uint32_t>(requested);
         });
     }
@@ -894,7 +921,8 @@ struct GameSession::Impl {
                                              facility.facility_type != 1);
         if (payer == owner)
             return;
-        pay_toll(owner, toll, payer);
+        pay_toll(owner, toll, payer, std::nullopt, 0, static_cast<std::uint16_t>(4000 + id),
+                 facility.facility_type, multiplier);
         facility.removed_building = static_cast<std::uint32_t>(toll);
         if (phase == GamePhase::finished)
             return;
@@ -938,6 +966,9 @@ struct GameSession::Impl {
             const auto cost = multiply32(operation == 2 ? entry.price_per_level() : entry.land_price,
                                          world.header.price_index);
             if (cost < 0 || player().cash < cost) {
+                if (cost >= 0)
+                    announce(Announcement::cash_insufficient, actor()).property =
+                        static_cast<std::uint16_t>(4000 + id);
                 finish_turn();
                 return;
             }
@@ -1351,7 +1382,16 @@ struct GameSession::Impl {
         return payer;
     }
     void pay_toll(std::size_t owner, std::int32_t requested, std::size_t payer,
-                  std::optional<std::size_t> ally = std::nullopt, std::int32_t ally_amount = 0) {
+                  std::optional<std::size_t> ally = std::nullopt, std::int32_t ally_amount = 0,
+                  std::uint16_t property = 0, std::uint8_t facility_type = 0, int multiplier = 0) {
+        {
+            auto &box = announce(Announcement::toll, payer, facility_type);
+            box.property = property;
+            box.subject = static_cast<std::int32_t>(owner);
+            box.second_subject = ally ? static_cast<std::int32_t>(*ally) : -1;
+            box.amount = requested;
+            box.value = multiplier;
+        }
         int most_hostile = -1;
         std::int32_t largest_hostility = 0;
         for (std::size_t i = 0; i < world.players.size(); ++i) {
@@ -2090,6 +2130,7 @@ struct GameSession::Impl {
             effect(EffectKind::god_appear, slot, actor_point(slot));
             effects.back().object_kind = kind;
         };
+        callbacks.arrival = [this](auto slot, auto kind) { announce(Announcement::god_arrival, slot, kind); };
         return callbacks;
     }
     EventCallbacks event_callbacks() {
@@ -2515,12 +2556,29 @@ struct GameSession::Impl {
         if (completed && on_success)
             on_success();
     }
+    // The original shows the news/fortune screen before the handler's effects (bubbles,
+    // boxes), so the announcement is inserted ahead of the events the handler emitted.
+    void announce_event(bool news, std::size_t slot, const EventResult &result, std::size_t position) {
+        GameEvent event{GameEventKind::notice, slot, 0, world.players.at(slot).state.node_id, {}};
+        event.announcement = news ? Announcement::news : Announcement::fortune;
+        event.announcement_id = result.event_id;
+        event.property = result.property;
+        event.subject = result.subject;
+        event.company = result.company;
+        event.value = result.value;
+        event.players = result.players;
+        event.player_amounts = result.player_amounts;
+        events.insert(events.begin() + static_cast<std::ptrdiff_t>(std::min(position, events.size())),
+                      std::move(event));
+    }
     void resolve_event(bool news) {
         run_rule([this, news] {
+            const auto position = events.size();
             const auto result = news ? apply_news(world, random, event_callbacks())
                                      : apply_fortune(world, random, actor(), event_callbacks());
             if (!result.supported)
                 throw UnsupportedRule{result.message};
+            announce_event(news, actor(), result, position);
             emit(GameEventKind::notice, result.message);
         });
     }
@@ -2586,9 +2644,11 @@ struct GameSession::Impl {
     services::MagicCallbacks magic_callbacks() {
         services::MagicCallbacks callbacks;
         callbacks.fortune = [this](auto slot) {
+            const auto position = events.size();
             const auto result = apply_fortune(world, random, slot, event_callbacks());
             if (!result.supported)
                 throw UnsupportedRule{result.message};
+            announce_event(false, slot, result, position);
             emit(GameEventKind::notice, result.message);
         };
         callbacks.defense = [this](auto slot) { return try_defense_card(slot); };
@@ -2911,6 +2971,8 @@ struct GameSession::Impl {
         } else if (kind >= 10 && kind <= 12) {
             const auto amount = kind == 10 ? 50 : kind == 11 ? 30 : 10;
             player().points = static_cast<std::uint16_t>(player().points + amount);
+            // The original shows the coupon box before the speech bubble.
+            announce(Announcement::point_coupon, actor()).amount = amount;
             if (kind == 10)
                 voice(actor(), static_cast<std::uint8_t>(random.next() & 1U));
             else if (kind == 11)

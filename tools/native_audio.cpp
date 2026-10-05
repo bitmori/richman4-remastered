@@ -326,6 +326,23 @@ void Audio::play_voice(std::uint8_t character, std::uint16_t category) {
     impl_->play_clip(true, 1050U + character * 27U + category);
 }
 
+std::uint32_t Audio::play_speech(std::size_t index) {
+    if (!impl_->enabled) {
+        return 0;
+    }
+    impl_->play_clip(true, index);
+    const auto &pcm = impl_->load_clip(true, index);
+    return static_cast<std::uint32_t>(pcm.size() / channels * 1000 / sample_rate);
+}
+
+void Audio::stop_voice() {
+    std::erase_if(impl_->clips, [](const Impl::Clip &clip) { return clip.voice; });
+}
+
+bool Audio::voice_active() const noexcept {
+    return std::any_of(impl_->clips.begin(), impl_->clips.end(), [](const Impl::Clip &clip) { return clip.voice; });
+}
+
 void Audio::set_music(bool enabled) {
     impl_->music_on = enabled;
 }

@@ -22,6 +22,8 @@ struct Callbacks {
     // Optional, presentation only: the god (kind) just attached to the player, before its effect
     // runs (rich4_gods.asm:472 plays the appearance FLC here). Must not draw randomness.
     std::function<void(std::size_t, std::uint8_t)> appeared;
+    // Presentation only: the god's arrival caption (object kind), after any bad-god speech.
+    std::function<void(std::size_t, std::uint8_t)> arrival;
 };
 struct Result {
     bool supported = true, applied = false, stop_movement = false;

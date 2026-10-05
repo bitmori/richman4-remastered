@@ -5,6 +5,7 @@
 #include "native_ui.hpp"
 #include "screens/main_screen.hpp"
 #include "rich4/assets.hpp"
+#include "screens/messages.hpp"
 #include "rich4/board_renderer.hpp"
 #include "rich4/game.hpp"
 #include "rich4/services.hpp"
@@ -34,6 +35,7 @@
 namespace {
 using namespace rich4;
 namespace fs = std::filesystem;
+namespace messages = native::messages;
 using native::Artwork;
 using native::Button;
 using native::map_names;
@@ -60,7 +62,7 @@ std::string quoted(std::string_view text) {
 struct Options {
     fs::path assets, font, load, save_directory, output;
     bool headless = false, start_new = false, hidden_window = false, exercise_recovery = false;
-    bool exercise_trading = false;
+    bool exercise_trading = false, overlay_gallery = false;
     bool play_effects = false; // EFFECTS (dev): play effects in replays and dump effect-NNN.ppm frames
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
@@ -93,6 +95,8 @@ Options arguments(int argc, char **argv) {
             options.exercise_trading = true;
         else if (argument == "--play-effects")
             options.play_effects = true;
+        else if (argument == "--overlay-gallery") // Dev: dump sample bubbles/boxes/news as gallery-*.ppm
+            options.overlay_gallery = true;
         else if (argument == "--start-new")
             options.start_new = true;
         else {
@@ -201,6 +205,7 @@ class Application {
         }
         audio_ = std::make_unique<audio::Audio>(options_.assets);
         effects_.set_skip(options_.auto_rounds && !options_.play_effects); // EFFECTS: replays stay zero-duration
+        messages_.set_instant(options_.auto_rounds != 0); // Headless replay never waits on a bubble.
         if (!audio_->music_available())
             std::cerr << audio_->music_diagnostic() << '\n';
     }
@@ -262,6 +267,12 @@ class Application {
                                                     event.button.button == SDL_BUTTON_RIGHT);
                     }
                 }
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_RIGHT &&
+                    screen_ == Screen::game && session_ && !messages_.active() && session_->pending_decision() &&
+                    messages::is_yes_no(*session_->pending_decision())) {
+                    buttons_.clear();
+                    respond(yes_no_index(0)); // Right-click answers NO, like _rich4_ui_yesno.
+                }
                 if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
                     const int x = int(event.button.x), y = int(event.button.y);
                     for (const auto &button : buttons_)
@@ -272,7 +283,7 @@ class Application {
                                 inputs_ << "{\"button\":" << button.id << ",\"screen\":" << int(screen_)
                                         << ",\"day\":" << (session_ ? session_->completed_days() : 0)
                                         << "}\n";
-                            if (sound_effects_)
+                            if (sound_effects_ && button.id != messages::skip_button)
                                 audio_->play_sound(9);
                             buttons_.clear(); // Remaining events cannot invoke controls from the previous
                                               // screen/decision.
@@ -284,6 +295,12 @@ class Application {
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK)
                     event.key.key = SDLK_ESCAPE; // system Back behaves like Escape
 #endif
+                if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && screen_ == Screen::game &&
+                    messages_.active() && !editing_amount_) {
+                    buttons_.clear();
+                    messages_.skip(); // Any key skips a bubble/box/news, as in the original.
+                    continue;
+                }
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
                     buttons_.clear();
                     if (editing_amount_) {
@@ -339,8 +356,9 @@ class Application {
                 observe(); // a GO press emits the roll before the clock advances
                 if (!effects_.active()) // EFFECTS: an AI's missile/card movie plays before its roll
                     main_screen_.advance(elapsed);
-                // The original roll animation and board effects (EFFECTS) are synchronous.
-                if (!main_screen_.dice_busy() && !effects_.active())
+                // The original roll animation, board effects (EFFECTS) and every bubble/box/news popup
+                // block the game loop.
+                if (!main_screen_.dice_busy() && !effects_.active() && !messages_.active())
                     session_->tick(elapsed);
                 observe();
                 if (session_->can_save() && last_autosaved_day_ != session_->completed_days()) {
@@ -489,6 +507,7 @@ class Application {
         screen_ = Screen::game;
         last_autosaved_day_ = UINT64_MAX;
         bank_done_for_visit_ = false;
+        messages_.clear();
         observe();
     }
     bool load(const fs::path &path) {
@@ -535,10 +554,9 @@ class Application {
             ++event_counts_[event.kind];
             if (event.kind == GameEventKind::dice_rolled && event.player < dice_by_player_.size())
                 ++dice_by_player_[event.player];
+            if (auto item = messages::from_event(event, session_->world()))
+                messages_.push(std::move(*item)); // Voices play when their bubble appears.
             if (sound_effects_) {
-                if (event.voice_category && event.player < session_->world().players.size())
-                    audio_->play_voice(session_->world().players[event.player].state.character,
-                                       *event.voice_category);
                 switch (event.kind) {
                 case GameEventKind::dice_rolled:
                     audio_->play_sound(10);
@@ -590,6 +608,7 @@ class Application {
     }
     void draw() {
         buttons_.clear();
+        messages_.retire();
         canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
         frame_.ticks = SDL_GetTicks();
         if (session_) // EFFECTS: pre-mutation board for effect commit frames (only while idle)
@@ -665,6 +684,14 @@ class Application {
         } else if (screen_ == Screen::trading) {
             draw_trading();
         }
+        std::string overlay_key;
+        if (screen_ == Screen::game && session_ && messages_.active()) {
+            const auto kind = messages_.current()->kind;
+            if (messages_.draw(frame_)) {
+                static constexpr std::array<const char *, 5> kinds{"bubble", "box", "news", "fortune", "god"};
+                overlay_key = std::string("overlay-") + kinds.at(static_cast<std::size_t>(kind));
+            }
+        }
         if (!toast_.empty() && SDL_GetTicks() < toast_until_) {
             ui::fill(canvas_, {210, 439, 430, 474}, ui::paper);
             ui::border(canvas_, {210, 439, 430, 474}, ui::blue);
@@ -682,11 +709,13 @@ class Application {
             name << "frame-" << std::setw(6) << std::setfill('0') << rendered_frames_ << ".ppm";
             graphics::write_ppm(canvas_, options_.output / name.str());
         }
-        if (options_.auto_rounds && !options_.output.empty()) {
+        if (options_.auto_rounds && !options_.output.empty() && !gallery_) {
             auto key = "screen-" + std::to_string(static_cast<int>(screen_));
             if (screen_ == Screen::game && session_ && session_->pending_decision())
                 key = "decision-" + std::to_string(static_cast<int>(session_->pending_decision()->kind)) +
                       (selected_target_ ? "-selected" : "");
+            if (!overlay_key.empty()) // First few of each overlay kind, for visual review.
+                key = overlay_key + "-" + std::to_string(std::min(++overlay_captures_[overlay_key], 4U));
             if (captured_frames_.insert(key).second)
                 graphics::write_ppm(canvas_, options_.output / (key + ".ppm"));
         }
@@ -754,6 +783,8 @@ class Application {
         center = main_screen_.camera_center(center);
         if (target_center_ && session_->pending_decision())
             center = *target_center_;
+        if (const auto speaker = messages_.focus(); speaker && *speaker < world.players.size())
+            center = {world.players[*speaker].state.x, world.players[*speaker].state.y}; // Bubble speaker.
         board::Camera camera{center, static_cast<std::uint8_t>(rotation_)};
         current_camera_ = camera;
         std::vector<board::ObjectSprite> objects;
@@ -829,7 +860,7 @@ class Application {
         actions.can_save = session_->can_save();
         actions.can_load = fs::exists(load_path());
         main_screen_.draw(frame_, *session_, rotation_, actions);
-        if (screen_ == Screen::game && session_->pending_decision())
+        if (screen_ == Screen::game && session_->pending_decision() && !messages_.active())
             draw_decision();
         if (session_->phase() == GamePhase::finished) {
             buttons_.clear();
@@ -1161,6 +1192,13 @@ class Application {
             draw_map_decision();
             return;
         }
+        if (messages::is_yes_no(decision)) {
+            // Original §2.2 question box + Data.mkf 440 strip; ids stay 210+option index.
+            const auto yes = yes_no_index(1), no = yes_no_index(0);
+            messages::draw_yes_no(frame_, messages::yes_no_question(decision, session_->world()), 210 + int(yes),
+                                  [this, yes] { respond(yes); }, 210 + int(no), [this, no] { respond(no); });
+            return;
+        }
         constexpr std::size_t page_size = 8;
         const bool multiple = decision.options.size() > 3;
         const int top = multiple ? 52 : 115, bottom = multiple ? 438 : 360;
@@ -1211,6 +1249,13 @@ class Application {
                 first + page_size < decision.options.size());
         }
     }
+    std::size_t yes_no_index(std::int32_t value) const {
+        const auto &options = session_->pending_decision()->options;
+        for (std::size_t i = 0; i < options.size(); ++i)
+            if (options[i].value == value)
+                return i;
+        return 0;
+    }
     void respond(std::size_t index) {
         const auto &decision = session_->pending_decision();
         if (!decision)
@@ -1259,6 +1304,8 @@ class Application {
                 throw std::runtime_error("Native UI replay could not load its initial save");
             return;
         }
+        if (screen_ == Screen::game && messages_.active())
+            return; // An overlay is showing for exactly this frame (instant mode); controls are covered.
         if (test_cancel_pending_) {
             if (session_->phase() != GamePhase::human_ready || session_->pending_decision() ||
                 session_->world().export_save() != test_cancel_save_ ||
@@ -1340,6 +1387,8 @@ class Application {
             return;
         }
         if (test_stage_ == 1 && session_->can_save()) {
+            if (options_.overlay_gallery)
+                dump_overlay_gallery();
             ui::write_file(options_.output / "before.DAT", session_->export_save().encode());
             graphics::write_ppm(canvas_, options_.output / "before.ppm");
             test_stage_ = 2;
@@ -1551,6 +1600,79 @@ class Application {
         } else if (session_->phase() == GamePhase::finished)
             throw std::runtime_error("Match ended before the requested replay duration");
     }
+    // Renders sample overlays over the current board for visual review (headless --output only).
+    void dump_overlay_gallery() {
+        const auto &world = session_->world();
+        const auto shoot = [this](const std::string &name, std::optional<messages::Item> item) {
+            messages_.clear();
+            if (item)
+                messages_.push(std::move(*item));
+            gallery_ = true;
+            draw();
+            gallery_ = false;
+            graphics::write_ppm(canvas_, options_.output / ("gallery-" + name + ".ppm"));
+            messages_.clear();
+        };
+        const auto event = [&](Announcement kind, std::uint8_t id = 0) {
+            GameEvent sample{GameEventKind::notice, 0, 0, 0, {}};
+            sample.announcement = kind;
+            sample.announcement_id = id;
+            return sample;
+        };
+        shoot("bubble-danny", messages::speech_bubble(10, 0, 0));
+        shoot("bubble-john-3lines", messages::speech_bubble(0, 24, 0));
+        shoot("bubble-sara-mood1", messages::speech_bubble(5, 18, 0));
+        shoot("bubble-beibei-pictogram", messages::speech_bubble(11, 3, 0));
+        std::uint16_t land = 1;
+        while (land + 1U < world.lands.size() && world.lands[land].economy.street_name.empty())
+            ++land;
+        auto toll = event(Announcement::toll);
+        toll.property = static_cast<std::uint16_t>(2000 + land);
+        toll.subject = 1;
+        toll.amount = 1200;
+        shoot("box-toll", messages::from_event(toll, world));
+        toll.second_subject = 2;
+        shoot("box-toll-allied", messages::from_event(toll, world));
+        shoot("box-cash", messages::from_event(event(Announcement::cash_insufficient), world));
+        auto coupon = event(Announcement::point_coupon);
+        coupon.amount = 50;
+        shoot("box-coupon", messages::from_event(coupon, world));
+        auto absent = event(Announcement::absent_status, 2);
+        absent.value = 3;
+        shoot("box-prison", messages::from_event(absent, world));
+        for (const std::uint8_t id : {1, 5, 11, 29, 33}) {
+            auto news = event(Announcement::news, id);
+            news.property = static_cast<std::uint16_t>(2000 + land);
+            news.players = 0b1011;
+            news.player_amounts = {2940, 4185, 0, 6205};
+            news.subject = 1;
+            news.company = 1;
+            news.value = 3;
+            shoot("news-" + std::to_string(id), messages::from_event(news, world));
+        }
+        for (const std::uint8_t id : {0, 20, 33}) {
+            auto fortune = event(Announcement::fortune, id);
+            fortune.value = id == 20 ? 1000 : 3;
+            shoot("fortune-" + std::to_string(id), messages::from_event(fortune, world));
+        }
+        shoot("god-1", messages::from_event(event(Announcement::god_arrival, 1), world));
+        shoot("god-12", messages::from_event(event(Announcement::god_arrival, 12), world));
+        GameDecision buy{DecisionKind::buy_land, 0, land, 800, {}, {{"购买", 1}, {"放弃", 0}}};
+        for (const int hover : {0, 1, 2}) {
+            messages_.clear();
+            gallery_ = true;
+            draw();
+            gallery_ = false;
+            buttons_.clear();
+            frame_.pointer_x = hover == 1 ? 190 : hover == 2 ? 250 : -1;
+            frame_.pointer_y = hover ? 320 : -1;
+            messages::draw_yes_no(frame_, messages::yes_no_question(buy, world), 210, [] {}, 211, [] {});
+            frame_.pointer_x = frame_.pointer_y = -1;
+            graphics::write_ppm(canvas_, options_.output / ("gallery-yesno-" + std::to_string(hover) + ".ppm"));
+        }
+        buttons_.clear();
+        draw();
+    }
     void finish_test() {
         const bool passed =
             reload_identical_ && reload_random_identical_ &&
@@ -1639,6 +1761,10 @@ class Application {
     Uint64 effect_ticks_ = 0;                // EFFECTS: last draw_effects() time
     Uint64 effect_capture_ = 0;              // EFFECTS (--play-effects): next frame dump time
     unsigned effect_frames_ = 0;
+    messages::Overlay messages_{{[this](std::size_t entry) { return sound_effects_ ? audio_->play_speech(entry) : 0U; },
+                                 [this] { audio_->stop_voice(); }}};
+    std::map<std::string, unsigned> overlay_captures_;
+    bool gallery_ = false;
     graphics::Image canvas_;
     std::vector<Button> buttons_;
     native::Frame frame_{canvas_, artwork_, font_, buttons_};
@@ -1705,7 +1831,7 @@ class Application {
 int main(int argc, char **argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--help") {
         std::cout << "rich4-native [--assets DIR] [--font FONT] [--load SAVE.DAT] [--save-dir DIR]\n"
-                     "  --headless --auto-rounds N --output DIR [--start-new] [--seed N]\n";
+                     "  --headless --auto-rounds N --output DIR [--start-new] [--seed N] [--overlay-gallery]\n";
         return 0;
     }
     try {
