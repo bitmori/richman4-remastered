@@ -489,8 +489,8 @@ class Application {
                     }
                     if ((event.key.key == SDLK_SPACE || event.key.key == SDLK_RETURN) &&
                         screen_ == Screen::game && session_) {
-                        if (session_->phase() == GamePhase::human_ready)
-                            session_->roll_dice();
+                        if (session_->phase() == GamePhase::human_ready && presentation_.empty() && !presenting())
+                            session_->roll_dice(); // only once the previous turns have been shown
                         else if (session_->pending_decision() && presentation_.empty() &&
                                  !presenting()) { // never answer a decision that is not shown yet
                             if (map_decision()) {
@@ -1574,7 +1574,10 @@ class Application {
         };
         actions.stocks = [this] { screen_ = Screen::stocks; };
         actions.rotate = [this](unsigned increment) { rotate(increment); };
-        actions.roll = [this] { session_->roll_dice(); };
+        actions.roll = [this] {
+            if (presentation_.empty() && !presenting())
+                session_->roll_dice();
+        };
         actions.dice_count = [this](unsigned count) {
             const bool success = session_->set_dice_count(count);
             if (success)
@@ -2265,6 +2268,8 @@ class Application {
                 return;
             }
         }
+        if (session_->phase() == GamePhase::human_ready && !main_screen_.human_turn_shown(*session_))
+            return; // like a player, wait until earlier turns have been shown and GO is up
         if (session_->phase() == GamePhase::human_ready) {
             const auto &player = session_->world().active_player().state;
             if (options_.exercise_trading && (!offers_posted_ || !offers_cancelled_ || !offers_bought_)) {

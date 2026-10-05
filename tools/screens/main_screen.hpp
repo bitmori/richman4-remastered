@@ -58,6 +58,12 @@ class MainScreen {
     void set_displayed_player(std::optional<std::size_t> slot) {
         displayed_player_ = slot;
     }
+    // The core waits for a human AND the screen has caught up with every earlier turn: computer
+    // turns are resolved at once and then presented, so GO (and turn-only toolbar icons) must not
+    // appear while an earlier player's turn is still being shown.
+    [[nodiscard]] bool human_turn_shown(const GameSession &session) const {
+        return session.phase() == GamePhase::human_ready && !displayed_player_;
+    }
     [[nodiscard]] std::size_t displayed_player(const World &world) const {
         const auto slot = displayed_player_.value_or(world.header.current_player);
         return std::min<std::size_t>(slot, world.players.size() - 1);

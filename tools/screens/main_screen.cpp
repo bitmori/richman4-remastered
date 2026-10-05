@@ -279,7 +279,7 @@ std::uint8_t MainScreen::go_mask(Frame &frame, int x, int y) {
 void MainScreen::draw(Frame &frame, const GameSession &session, unsigned rotation, const MainScreenActions &actions) {
     const auto &world = session.world();
     draw_dice(frame, session, rotation, actions);
-    if (session.phase() == GamePhase::human_ready)
+    if (human_turn_shown(session))
         draw_go(frame, session, actions);
     else {
         go_drag_.reset();
@@ -312,7 +312,7 @@ void MainScreen::draw_toolbar(Frame &frame, const GameSession &session, const Ma
     if (hover != hover_ && hover >= 0 && hover < 11 && actions.sound)
         actions.sound(0);
     hover_ = hover;
-    const bool ready = session.phase() == GamePhase::human_ready;
+    const bool ready = human_turn_shown(session);
     struct Icon {
         int id;
         std::function<void()> action;
