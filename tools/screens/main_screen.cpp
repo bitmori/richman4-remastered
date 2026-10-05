@@ -2,8 +2,8 @@
 // See docs/ui/main-screen.md for the original layout; section numbers refer to it.
 #include "main_screen.hpp"
 
-#include "flc.hpp"
 #include "rich4/calendar.hpp"
+#include "rich4/flc.hpp"
 #include "rich4/holidays.hpp"
 #include "rich4/stocks.hpp"
 
@@ -174,7 +174,9 @@ void MainScreen::on_event(const GameEvent &event, const GameSession &session, Ar
     auto &frames = dice_animations_[dice_faces_.size()];
     if (frames.empty()) {
         try {
-            frames = decode_flc(artwork.archive('p').decode(3 + dice_faces_.size()));
+            flc::Decoder movie(artwork.archive('p').decode(3 + dice_faces_.size())); // core decoder
+            while (movie.next())
+                frames.push_back(movie.image());
         } catch (const std::exception &) {
             frames.clear(); // falls back to cycling the Panel 3 faces
         }
