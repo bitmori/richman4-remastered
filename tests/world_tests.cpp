@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "rich4/world.hpp"
+#include "rich4/random.hpp"
 
 #include <algorithm>
 #include <array>
@@ -83,7 +84,7 @@ void lossless_and_patching() {
             "Original purchase +1c base/+1e building offsets (upstream struct labels reversed)");
     require(world.nodes[1].neighbors[0] == 4 && world.nodes[1].ground_sprite == 0x21,
             "Node topology and original ground SPR code");
-    require(world.facilities[1].land_price == 4700 && world.facilities[1].price_per_level == 1300 &&
+    require(world.facilities[1].land_price == 4700 && world.facilities[1].price_per_level() == 1300 &&
             world.facilities[1].direction == 7 && world.commercials[1].commerce_type == 11 &&
             world.commercials[1].sprite_index == 19 && world.landscapes[1].sprite_index == 444,
             "All five original map tables retain their own layouts");
@@ -96,10 +97,26 @@ void lossless_and_patching() {
     world.players[1].status.cumulative_income = 0xffaabcde; put32(expected, 0x10 + 104 + 96, 0xffaabcde);
     world.players[1].state.cards[0] = 30; expected[0x654 + 15] = 30;
     world.card_supply[29] = 0xff; expected[0x6cc + 29] = 0xff;
+    world.news_deck[1] = 35; expected[0x26fa + 1] = 35;
+    world.fortune_cursor = 36; put32(expected, 0x26f6, 36);
+    world.hospital_roster[7] = 1; expected[0x26ea + 7] = 1;
+    world.players[1].status.money_fortune_modifier = -123; put16(expected, 0x10 + 104 + 70, 0xff85);
+    world.players[1].stocks[4].amount = -9; put32(expected, 0x21f6 + 96 + 4 * 8, 0xfffffff7);
+    world.stocks[3].float_bits[2] = 0x7fa12345; put32(expected, 0x2376 + 3 * 36 + 20, 0x7fa12345);
+    world.stock_history_bits[2][143] = 0xffc56789; put32(expected, 0x6f6 + 2 * 576 + 143 * 4, 0xffc56789);
+    world.public_fund = -1; put32(expected, 0x26ba, 0xffffffff);
+    world.lease_mode = 4; put32(expected, 0x267e, 4);
+    world.special_actors[4].inactive_state = 3; expected[0x1b4 + 4 * 16 + 10] = 3;
     const auto land = map_offset + u32(input, map_offset + 12) + 52;
     world.lands[1].economy.owner_code = 2; expected[land + 25] = 2;
     world.lands[1].economy.level = 5; expected[land + 26] = 5;
     world.lands[1].land_price = 3200; put16(expected, land + 28, 3200);
+    const auto company = map_offset + u32(input, map_offset + 28) + 52;
+    world.commercials[1].funds = -1; put32(expected, company + 40, 0xffffffff);
+    world.commercials[1].shareholder_order = {3, 1, 0, 0};
+    std::copy_n(world.commercials[1].shareholder_order.begin(), 4, expected.begin() + static_cast<std::ptrdiff_t>(company + 28));
+    const auto facility = map_offset + u32(input, map_offset + 20) + 56;
+    world.facilities[1].toll_by_level[2] = 321; put16(expected, facility + 40, 321);
     require(world.export_save() == expected, "Mutations change exactly their documented bytes, no snapshot or padding drift");
     auto loaded = World::from_save(SaveFile::decode(expected));
     require(loaded.active_player().state.cash == -123 && loaded.lands[1].economy.owner_code == 2,
@@ -128,8 +145,17 @@ void fresh_world() {
     auto world = World::from_map_resource(map, options);
     require(world.players.size() == 4 && world.header.human_player_count == 1 &&
             world.active_player().state.character == 10, "Default new game has chosen human and three opponents");
-    require(world.has_initial_random_state() && world.initial_random_state() == 0,
-            "Deferred spawn consumes no PRNG values and seed zero is represented");
+    Random after_decks(0);
+    for (int i = 0; i < 73; ++i) (void)after_decks.next();
+    require(world.has_initial_random_state() && world.initial_random_state() == after_decks.state(),
+            "Only the 36+37 original deck draws precede deferred spawning; seed zero is valid");
+    auto sorted_news = world.news_deck; auto sorted_fortune = world.fortune_deck;
+    std::sort(sorted_news.begin(), sorted_news.end()); std::sort(sorted_fortune.begin(), sorted_fortune.end());
+    for (std::size_t i = 0; i < sorted_news.size(); ++i) require(sorted_news[i] == i, "News is a complete permutation");
+    for (std::size_t i = 0; i < sorted_fortune.size(); ++i) require(sorted_fortune[i] == i, "Fortune is a complete permutation");
+    require(world.prison_roster[4] == 1 && world.prison_roster[5] == 1 &&
+            world.hospital_roster[6] == 1 && world.hospital_roster[7] == 1,
+            "Original special-actor prison/hospital roster defaults");
     for (const auto& player : world.players) require(player.state.node_id == 0 && player.state.last_node_id == 0,
                                                     "Default placement waits for each player's first turn");
     require(world.players[0].state.cash == 100000 && world.players[1].state.cash == 120000 &&
@@ -169,8 +195,12 @@ void verify_asset(const std::string& kind, const std::string& path) {
     } else if (kind == "--map") {
         const auto world = World::from_map_resource(bytes);
         const auto output = world.export_save();
-        require(std::equal(bytes.begin(), bytes.end(), output.begin() + map_offset),
-                "Every decoded original map record, including fifth table, preserved in a fresh world");
+        auto expected_map = bytes;
+        for (std::size_t id = 1; id < world.commercials.size(); ++id)
+            put32(expected_map, world.map_summary().commercials.byte_offset + id * 52 + 48,
+                  static_cast<std::uint32_t>(world.commercials[id].shares_remaining));
+        require(std::equal(expected_map.begin(), expected_map.end(), output.begin() + map_offset),
+                "Original map records preserved except explicitly initialized commercial remaining shares");
         require(World::from_save(SaveFile::decode(output)).export_save() == output, "Original map fresh export/reload");
     } else throw std::runtime_error("Usage: world_tests [--save SAVE.DAT] [--map decoded-map.bin] ...");
     std::cout << "Verified " << kind << ' ' << path << '\n';

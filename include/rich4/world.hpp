@@ -15,7 +15,10 @@ namespace rich4 {
 
 // Runtime values, never overlays of the original packed 32-bit structures.
 struct PlayerStatus {
+    std::uint8_t rescue_strategy = 0; // Original profile byte +23.
     std::uint8_t init_cash_ratio = 50;
+    std::uint8_t saved_direction = 0; // +27, saved facing while absent/in a facility.
+    std::uint32_t loan_due_date = 0;
     std::uint8_t days_in_hotel = 0;
     std::uint8_t days_disappearing = 0;
     std::uint8_t days_in_prison = 0;
@@ -29,8 +32,12 @@ struct PlayerStatus {
     std::uint8_t allied_days = 0;
     std::uint8_t days_assurance = 0;
     std::uint8_t god_info = 0;
+    std::uint8_t attached_bomb = 0;
     std::uint8_t allied_player = 0; // One-based owner code, zero means none.
     std::uint8_t total_winter_sleep_days = 0;
+    std::int16_t money_fortune_modifier = 0; // Original signed word +70.
+    std::int16_t other_fortune_modifier = 0; // Original signed word +72.
+    std::uint16_t facility_id = 0; // Original word +74.
     std::array<std::uint32_t, 4> hostility{};
     std::uint32_t cumulative_spending = 0;
     std::uint32_t cumulative_income = 0;
@@ -40,9 +47,34 @@ struct PlayerStatus {
     std::uint8_t flags_103 = 0;
 };
 
+struct StockHolding {
+    std::int32_t amount = 0;
+    std::uint32_t raw_cost_basis = 0; // Original second word, preserved as bits.
+};
+
+struct StockState {
+    std::uint16_t flags_4 = 0;
+    std::uint8_t suspension_days = 0;
+    std::uint8_t news_movement = 0;
+    std::uint16_t shares_available = 0;
+    std::uint16_t flags_10 = 0;
+    // Exact original binary32 encodings at offsets 12,16,20,24,28. Keeping
+    // bits avoids canonicalizing NaNs during an unchanged round trip.
+    std::array<std::uint32_t, 5> float_bits{};
+    std::uint32_t raw_32 = 0;
+};
+
 struct WorldPlayer {
     PlayerState state{};
     PlayerStatus status{};
+    std::array<StockHolding, 12> stocks{};
+};
+
+struct SpecialActor {
+    std::uint16_t x = 0, y = 0, node_id = 0, last_node_id = 0;
+    std::uint8_t owner = 0, direction = 0, inactive_state = 0, flags = 0;
+    std::uint8_t days_sleeping = 0, days_sleep_walking = 0;
+    std::uint8_t days_stopping = 0, days_tortoise_walking = 0;
 };
 
 struct MapNode {
@@ -79,7 +111,9 @@ struct Facility {
     std::uint8_t direction = 0;
     std::uint8_t temporary_state = 0;
     std::uint16_t land_price = 0;
-    std::uint16_t price_per_level = 0;
+    std::array<std::uint16_t, 6> toll_by_level{};
+    [[nodiscard]] std::uint16_t price_per_level() const noexcept { return toll_by_level[0]; }
+    [[nodiscard]] std::uint16_t& price_per_level() noexcept { return toll_by_level[0]; }
     std::uint32_t removed_building = 0;
     std::uint32_t expired_date = 0;
 };
@@ -93,6 +127,12 @@ struct Commercial {
     std::uint8_t direction = 0;
     std::uint16_t sprite_index = 0;
     std::uint16_t toll_fee = 0;
+    std::uint8_t stock_index = 0;
+    std::int32_t funds = 0; // +0x28, company balance.
+    std::int32_t funds_change = 0; // +0x2c, original running cash-flow counter.
+    std::int32_t shares_remaining = 0; // +0x30.
+    std::array<std::uint8_t, 4> shareholder_order{}; // +0x1c, stable original rank order.
+    std::int32_t valuation = 0; // +0x24.
 };
 
 // Fifth map table. Only rendering placement fields are interpreted; all other
@@ -118,6 +158,7 @@ struct NewGameOptions {
     std::uint16_t map_id = 0;
     std::uint16_t stage_id = 0;
     std::int32_t initial_fund = 200000;
+    std::uint32_t lease_mode = 0; // Original 0..5 packed-calendar lease options.
     std::uint32_t random_seed = 1;
     std::vector<NewGamePlayer> players{{10, 1, 0, 0}, {3, 2, 0, 0},
                                        {0, 2, 0, 0}, {6, 2, 0, 0}};
@@ -140,6 +181,19 @@ public:
     std::vector<Landscape> landscapes;
     CardSupply card_supply{};
     ToolSupply tool_supply{};
+    std::array<std::uint8_t, 36> news_deck{};
+    std::array<std::uint8_t, 37> fortune_deck{};
+    std::uint32_t news_cursor = 0;
+    std::uint32_t fortune_cursor = 0;
+    std::array<std::uint8_t, 8> prison_roster{};
+    std::array<std::uint8_t, 8> hospital_roster{};
+    std::array<SpecialActor, 5> special_actors{};
+    std::array<StockState, 12> stocks{};
+    std::array<std::array<std::uint32_t, 144>, 12> stock_history_bits{};
+    std::int32_t stock_history_cursor = 0;
+    std::int32_t public_fund = 0; // Original recipient -1 payment accumulator.
+    std::int32_t news_effect_days = 0; // Original 0x4990dc, news event 26.
+    std::uint32_t lease_mode = 0; // Original 0x499110, not inferred from expiry dates.
 
     [[nodiscard]] WorldPlayer& active_player();
     [[nodiscard]] const WorldPlayer& active_player() const;

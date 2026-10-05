@@ -101,7 +101,7 @@ An option's `start_node == 0` leaves that player's node, previous node and x/y a
 zero for the turn engine to spawn on its first turn. This preserves the original
 placement timing: routine `0x40829d` chooses a free connected node using one
 random draw, chooses a nonzero neighbor using another, sets direction and marks
-occupancy. The factory consumes no spawn draws for these deferred players. An
+occupancy. The factory consumes no spawn draws for these deferred players. It now initializes the news and fortune decks with the original 73 draws; see migration 014. An
 explicit nonzero start is a caller-selected setup option: it sets coordinates,
 chooses a linked previous node, computes direction and sets the player's occupancy
 bit immediately. `has_initial_random_state()` distinguishes a fresh RNG state
@@ -111,10 +111,7 @@ Fresh worlds serialize the complete legacy-shaped layout, including all required
 snapshot regions. Unknown state and historical snapshots begin at zero; original
 name/stock pointers are not fabricated. This makes them loadable by the portable
 codec and session, but is **not** a promise that a fresh portable save is already
-safe to restore in the original Windows executable. Original stock initialization,
-46 object records, placement of gods/objects (including eight RNG draws before
-the first player), special players and their initialization side effects have not
-been migrated here. Consequently this factory does not claim a seed-for-seed match
+safe to restore in the original Windows executable. Stock scalar templates, stock holdings, event decks, special-player records and confinement rosters are now decoded or initialized in migration 014. Complete stock startup, 46 object records, placement of gods/objects (including eight RNG draws before the first player), and their remaining initialization side effects have not been migrated here. Consequently this factory does not claim a seed-for-seed match
 with the entire original new-game menu sequence. These omissions must be addressed
 as those gameplay systems are migrated, rather than faking RNG consumption alone.
 
@@ -129,8 +126,8 @@ fresh save reload. It passes with address/undefined sanitizers and strict warnin
 
 Optional `--save PATH` and `--map PATH` arguments are repeatable. Local validation
 read the user's `SAVE0.DAT` and `SAVE1.DAT` without changes and confirmed exact
-world export equality. All eight decoded original metadata entries (1, 3, 5, 7,
-9, 11, 13 and 15) passed fresh creation, complete map-byte preservation, export
-and reload. Those decoded entries were produced by the original-executable asset
+world export equality. All eight decoded original metadata entries (1, 3, 5, 7, 9, 11, 13 and 15) passed fresh creation, export and reload. Map bytes are preserved except the explicitly initialized commercial remaining-share words introduced in migration 014. Those decoded entries were produced by the original-executable asset
 oracle; no commercial saves or assets are committed with the tests. This verifies
 the state/data boundary, not the original game's complete rules or playability.
+
+Event-driven state extensions, stock/special-actor serialization, original deck shuffles and the facility toll/build-price alias are recorded in [migration 014](014-events.md).
