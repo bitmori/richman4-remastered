@@ -208,6 +208,8 @@ Result attach(World &world, Random &random, std::size_t actor, std::uint16_t id,
     player.status.god_luck_modifier = add16(player.status.god_luck_modifier, luck[kind]);
     player.status.money_fortune_modifier = add16(player.status.money_fortune_modifier, money[kind]);
     player.status.other_fortune_modifier = add16(player.status.other_fortune_modifier, physical[kind]);
+    if (callbacks.appeared)
+        callbacks.appeared(actor, kind);
     if (kind == 1 || kind == 5) {
         if (kind == 5)
             voice(callbacks, actor, 22);

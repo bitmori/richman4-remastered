@@ -124,6 +124,24 @@ void dice_and_paths() {
     require(fallback.world().players[0].state.node_id == 2 && fallback.random_state() == once.state(),
             "fallback must return to last node without consuming randomness");
 }
+void dice_effect_is_presentation_only() {
+    rich4::GameSession game(world(), 1), silent(world(), 1);
+    require(game.roll_dice(), "human roll rejected");
+    const auto effects = game.drain_effects();
+    require(effects.size() == 1 && effects[0].kind == rich4::EffectKind::dice_roll, "dice effect missing");
+    require(effects[0].dice == game.dice() && effects[0].player == 0, "dice effect values differ from roll");
+    require(effects[0].target.x == game.world().players[0].state.x, "dice effect anchor is not the actor");
+    require(game.drain_effects().empty(), "effects drain once");
+    // Draining (or never draining) effects must not change rules or randomness.
+    until(game, [&] {
+        return game.phase() == rich4::GamePhase::awaiting_decision ||
+               game.phase() == rich4::GamePhase::advancing_turn || game.phase() == rich4::GamePhase::finished;
+    });
+    first_landing(silent);
+    require(game.random_state() == silent.random_state() &&
+                game.world().players[0].state.node_id == silent.world().players[0].state.node_id,
+            "effect queue changed the rule outcome");
+}
 void property_and_rent() {
     auto value = world();
     property_nodes(value);
@@ -757,6 +775,7 @@ void explicit_unsupported_and_save_guard() {
 int main() {
     try {
         dice_and_paths();
+        dice_effect_is_presentation_only();
         property_and_rent();
         alliance_rent();
         bank_and_failure();
