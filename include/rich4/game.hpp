@@ -217,7 +217,12 @@ enum class EffectKind : std::uint8_t {
     truck_demolish,    // 工程車 pose 12 swing + Data 526 puff (player_utils state 3); object_kind =
                        // facing direction, previous_level = building level before the demolition
     holiday_fireworks, // Data 523 on New Year / national day (holiday table 0x47ff4c)
-    christmas          // Data 554 on Dec 25 (holiday table 0x47ff4c)
+    christmas,         // Data 554 on Dec 25 (holiday table 0x47ff4c)
+    // No picture: the original movement state machine (fcn_0040d7c4, rich4_player_utils.asm:587-625)
+    // counts byte 0x498ea5 down once per game tick before acting. `object_kind` = ticks (80 ms at the
+    // default speed): 5 between the last step and the landing handler (loc_0040d916), 8 after a
+    // property landing (core_actions:2347 `mov byte [esp+0xf4], 0x88`) before the next player.
+    pause
 };
 
 // Figures of the monthly-cycle screens (docs/ui/finance-menus.md §4 dividend, §7.2 lottery draw,

@@ -657,6 +657,8 @@ void god_spinner_presentation_order() {
             }
         for (const auto *list : {&before_effects, &after_effects})
             for (const auto &effect : *list) {
+                if (effect.kind == rich4::EffectKind::pause) // later timed holds, not in the baseline
+                    continue;
                 hash = fnv(hash, std::to_string(int(effect.kind)) + ':' + std::to_string(effect.object_kind) + ';');
                 appear += effect.kind == rich4::EffectKind::god_appear;
             }
@@ -1225,8 +1227,33 @@ void ai_settings_autopilot() {
     require(rolling.world().players[0].state.controller_flags == 5,
             "autopilot not applied at the turn boundary");
 }
+// The original movement-state countdowns (EffectKind::pause): 5 ticks between the last step and the
+// landing handler, 8 more after a property landing before the next player. Presentation only.
+void landing_pauses() {
+    auto value = world();
+    property_nodes(value);
+    rich4::GameSession game(std::move(value), 1);
+    first_landing(game);
+    require(game.pending_decision() && game.pending_decision()->kind == rich4::DecisionKind::buy_land,
+            "landing on unowned land must offer the purchase");
+    const auto before = game.drain_effects();
+    const auto paused = [](const std::vector<rich4::EffectEvent> &effects, std::uint8_t ticks) {
+        return std::count_if(effects.begin(), effects.end(), [&](const auto &effect) {
+            return effect.kind == rich4::EffectKind::pause && effect.object_kind == ticks;
+        });
+    };
+    require(paused(before, 5) == 1 && paused(before, 8) == 0, "walk end must hold 5 ticks before landing");
+    require(game.respond(0), "purchase rejected");
+    const auto events = game.drain_events();
+    const auto after = game.drain_effects();
+    require(paused(after, 8) == 1 && std::any_of(events.begin(), events.end(), [](const auto &event) {
+                return event.kind == rich4::GameEventKind::land_purchased;
+            }) && after.back().kind == rich4::EffectKind::pause && after.back().after_events == events.size(),
+            "property landing must hold 8 ticks after the purchase, before the next player");
+}
 int main() {
     try {
+        landing_pauses();
         dice_and_paths();
         dice_effect_is_presentation_only();
         parachute_marks_a_spawned_player();

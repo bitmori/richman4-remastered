@@ -96,6 +96,7 @@ struct GameSession::Impl {
     unsigned spinner_elapsed = 0;
     CardAiMemory card_ai_memory{};
     bool property_pending = false, purchased_property = false;
+    bool property_landing = false; // presentation: the 8-tick hold after a property landing (pause)
     bool interactive_mini_games = false; // RICH4.CFG[1]; off = closed mode (replay harness)
     // AI settings (託管) requested mid-turn; applied at the next turn boundary (next_turn).
     std::array<std::optional<AiSettings>, 4> pending_ai_settings;
@@ -347,7 +348,16 @@ struct GameSession::Impl {
         }
         decision.reset();
         animation.reset();
+        if (property_landing) { // the landing handler returned 0x88: 8 ticks before the next player
+            property_landing = false;
+            pause(8);
+        }
         set_phase(GamePhase::advancing_turn);
+    }
+    // Presentation-only wait of `ticks` movement-state ticks (EffectKind::pause).
+    void pause(std::uint8_t ticks) {
+        effect(EffectKind::pause, actor(), actor_point(actor()));
+        effects.back().object_kind = ticks;
     }
     void unsupported(std::string description, GamePhase resume = GamePhase::advancing_turn) {
         unsupported_resume = resume;
@@ -501,6 +511,7 @@ struct GameSession::Impl {
         }
     }
     void start_turn(bool update = true) {
+        property_landing = false;
         spawn_if_needed();
         decision.reset();
         animation.reset();
@@ -675,6 +686,7 @@ struct GameSession::Impl {
         if (player().controller_flags & 0x30U)
             remaining = 1;
         else if (status().days_stopping) {
+            pause(2); // fcn_0040dd1f: state 0 with counter 2 (rich4_player_utils.asm:1020)
             land();
             return;
         } else if (forced_roll) {
@@ -815,8 +827,10 @@ struct GameSession::Impl {
                 }
                 if (remaining > 0)
                     start_step();
-                else
+                else {
+                    pause(5); // loc_0040d916: the walk ends, 5 ticks before the landing handler
                     land();
+                }
             });
     }
     std::int32_t purchase_price(std::size_t land_id) const {
@@ -3272,6 +3286,7 @@ struct GameSession::Impl {
         if (kind == 0) {
             property_pending = true;
             purchased_property = false;
+            property_landing = node.type_and_index != 0; // core_actions loc_0041b111 (0x88)
             if (node.type_and_index > 2000 && node.type_and_index < 4000)
                 property(node.type_and_index - 2000);
             else if (node.type_and_index > 4000 && node.type_and_index < 6000)

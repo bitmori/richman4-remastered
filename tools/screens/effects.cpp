@@ -35,6 +35,34 @@ board::PlayerSprite player_sprite(const World &world, std::size_t slot, std::uin
 }
 } // namespace
 
+std::vector<board::ObjectSprite> object_sprites(const World &world, const std::vector<board::PlayerSprite> &players,
+                                                std::uint8_t frame) {
+    std::vector<board::ObjectSprite> objects;
+    for (const auto &object : world.objects) {
+        if (object.attached_player) { // drawn at the carrier, offset behind it (board_renderer)
+            const auto carrier = std::size_t(object.attached_player - 1U);
+            for (const auto &player : players)
+                if (player.slot == carrier) {
+                    const bool far = object.kind == 18 && carrier < world.players.size() &&
+                                     world.players[carrier].status.god_info; // rich4.asm:2016
+                    objects.push_back({player.position, object.kind, player.direction, frame,
+                                       static_cast<std::uint8_t>(far ? 2 : 1)});
+                }
+        } else if (object.node_id && object.node_id < world.nodes.size()) {
+            const auto &node = world.nodes[object.node_id];
+            objects.push_back({{node.x, node.y}, object.kind, object.direction, frame});
+        }
+    }
+    return objects;
+}
+
+void hide_objects(std::vector<board::ObjectSprite> &objects,
+                  const std::function<bool(board::Point, std::uint8_t)> &hidden) {
+    std::erase_if(objects, [&](const board::ObjectSprite &object) {
+        return !object.follow && hidden(object.position, object.kind);
+    });
+}
+
 SceneData make_scene(const World &world, std::uint64_t ticks, const std::array<std::uint8_t, 4> &costumes) {
     SceneData scene;
     const auto frame = static_cast<std::uint8_t>((ticks / 120) % 6);
@@ -51,19 +79,7 @@ SceneData make_scene(const World &world, std::uint64_t ticks, const std::array<s
         scene.facilities.push_back({facility.id, facility.owner_code, facility.level, facility.facility_type,
                                     facility.temporary_state});
     }
-    for (const auto &object : world.objects) {
-        std::optional<board::Point> position;
-        if (object.attached_player) {
-            for (const auto &player : scene.players)
-                if (player.slot + 1 == object.attached_player)
-                    position = player.position;
-        } else if (object.node_id && object.node_id < world.nodes.size()) {
-            const auto &node = world.nodes[object.node_id];
-            position = board::Point{node.x, node.y};
-        }
-        if (position)
-            scene.objects.push_back({*position, object.kind, object.direction, frame});
-    }
+    scene.objects = object_sprites(world, scene.players, frame);
     for (std::size_t index = 0; index < world.special_actors.size(); ++index) {
         const auto &actor = world.special_actors[index];
         if (actor.inactive_state || !actor.node_id || actor.node_id >= world.nodes.size())
@@ -108,7 +124,7 @@ EffectSpec effect_spec(const EffectEvent &effect) {
                                                    {9, 548, 110}, {10, 549, 112}, {12, 550, 111}, {15, 551, 113}}};
         for (const auto &god : gods)
             if (god.kind == effect.object_kind)
-                return {'d', god.entry, 0, god.sound, 0, 0, true};
+                return {'d', god.entry, 0, god.sound, 0, 0, true, 0, 40, EffectSpec::Actor::world, false, true};
         return {'d', -1, 0, -1, 0, 0, true}; // 11/13/14: no appearance movie
     }
     case EffectKind::demon_puff: // §6 Data 526 at building anchor - (55,55), flags 0x30001
@@ -165,8 +181,44 @@ EffectSpec effect_spec(const EffectEvent &effect) {
         return {'d', 523, 0, 90, 0, 0, false};
     case EffectKind::christmas:
         return {'d', 554, 0, 114, 0, 0, false};
+    case EffectKind::pause: // a timed hold, run by the app's presentation queue (never queued here)
+        return {'p', -1, 0, -1, 0, 0, false};
     }
     return {};
+}
+
+void add_pending_actor(std::vector<PendingActor> &pending, const EffectEvent &effect) {
+    using Actor = EffectSpec::Actor;
+    const auto spec = effect_spec(effect);
+    if (std::any_of(pending.begin(), pending.end(), [&](const auto &entry) { return entry.slot == effect.player; }))
+        return;
+    if ((spec.actor == Actor::leave || spec.actor == Actor::stay) && effect.from)
+        pending.push_back({effect.player, board::Point{effect.from->x, effect.from->y}, spec.injured});
+    else if (spec.actor == Actor::arrive || spec.actor == Actor::hide)
+        pending.push_back({effect.player, std::nullopt, false});
+}
+
+void apply_pending_actors(std::vector<board::PlayerSprite> &players, const World &world,
+                          const std::vector<PendingActor> &pending, std::uint8_t frame,
+                          const std::array<std::uint8_t, 4> &costumes) {
+    for (const auto &entry : pending) {
+        if (entry.slot >= world.players.size())
+            continue;
+        std::optional<board::PlayerSprite> sprite;
+        for (const auto &player : players)
+            if (player.slot == entry.slot)
+                sprite = player;
+        std::erase_if(players, [&](const auto &player) { return player.slot == entry.slot; });
+        if (!entry.position)
+            continue;
+        if (!sprite)
+            sprite = player_sprite(world, entry.slot, frame, entry.slot < 4 ? costumes[entry.slot] : 0);
+        sprite->position = *entry.position;
+        sprite->walking = sprite->tossing = false;
+        sprite->on_water = false;
+        sprite->injured = sprite->injured || entry.injured;
+        players.push_back(*sprite);
+    }
 }
 
 void EffectPlayer::remember(const World &world, const void *owner, std::uint64_t ticks) {
@@ -191,9 +243,28 @@ void EffectPlayer::enqueue(std::vector<EffectEvent> effects, const void *owner) 
             queue_.push_back(std::move(effect));
 }
 
+bool EffectPlayer::throw_pending(board::Point node, std::uint8_t kind) const {
+    const auto matches = [&](const EffectEvent &effect) {
+        return effect.kind == EffectKind::object_throw && effect.object_kind == kind && effect.target.x == node.x &&
+               effect.target.y == node.y;
+    };
+    return (current_ && matches(current_->event)) || std::any_of(queue_.begin(), queue_.end(), matches);
+}
+
+void EffectPlayer::draw_linger(graphics::Image &canvas, board::Renderer &board, const World &world,
+                               std::uint8_t rotation, std::uint64_t ticks) {
+    if (!lingering_)
+        return;
+    const auto &play = *lingering_;
+    const board::Camera camera{{play.event.target.x, play.event.target.y}, static_cast<std::uint8_t>(rotation & 7U)};
+    board.render(canvas, make_scene(world, ticks, costumes_).view(), camera);
+    graphics::blit(canvas, play.frame, play.spec.x, play.spec.y, {0, 40, 440, 480});
+}
+
 void EffectPlayer::clear() {
     queue_.clear();
     current_.reset();
+    lingering_.reset();
     snapshot_.reset();
 }
 
@@ -205,6 +276,7 @@ std::vector<std::uint8_t> &EffectPlayer::movie_bytes(char archive, int entry) {
 }
 
 void EffectPlayer::start(EffectEvent event) {
+    lingering_.reset(); // the next picture replaces it
     Playing playing{std::move(event), {}, nullptr, {}, 0, 100, false, {}};
     playing.spec = effect_spec(playing.event);
     if (playing.spec.entry >= 0) {
@@ -299,6 +371,12 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
             committed = false;
         }
         if (finished) {
+            if (play.spec.linger && play.movie && play.frame.width) {
+                lingering_ = std::move(*current_);
+                current_.reset();
+                draw_linger(canvas, board, world, rotation, ticks);
+                return;
+            }
             current_.reset();
             return; // draw_board already painted the live world this frame
         }
@@ -311,6 +389,19 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
             scene = make_scene(world, ticks, costumes_);
         } else
             scene = *snapshot_;
+        { // movies still to come that take a player away or bring them back (see PendingActor)
+            auto pending = pending_actors_;
+            for (const auto &later : queue_)
+                add_pending_actor(pending, later);
+            if (play.spec.actor != EffectSpec::Actor::world || truck) // this movie draws its own actor
+                std::erase_if(pending, [&](const auto &entry) { return entry.slot == event.player; });
+            if (!pending.empty()) {
+                const auto frame = static_cast<std::uint8_t>((ticks / 120) % 6);
+                apply_pending_actors(scene.players, world, pending, frame, costumes_);
+                scene.objects = object_sprites(world, scene.players, frame);
+            }
+        }
+        hide_objects(scene.objects, [this](board::Point node, std::uint8_t kind) { return throw_pending(node, kind); });
         // The acting player as the movie shows them (the world already moved or hid them).
         using Actor = EffectSpec::Actor;
         const auto mode = play.spec.actor;

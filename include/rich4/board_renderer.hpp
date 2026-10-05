@@ -54,6 +54,12 @@ struct ObjectSprite {
     std::uint8_t kind{}; // Original object kind 1 through 20.
     std::uint8_t direction{};
     std::uint8_t animation_frame{};
+    // Carried by a player (god, carried time bomb; fcn_0040829d rich4.asm:1944-2024): `position` and
+    // `direction` are then the carrier's (interpolated) point and heading. With d = (direction + 8 -
+    // rotation) & 7 the sprite is drawn at the projected point plus the screen offset
+    // ref_00474951[d] (1, near) or ref_00474991[d] (2, far: a time bomb when a god is attached too),
+    // i.e. trailing behind the carrier, with frame (d + 4) & 7 and that offset point as depth.
+    std::uint8_t follow{};
 };
 
 struct SpecialPlayerSprite {
