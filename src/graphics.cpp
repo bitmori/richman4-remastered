@@ -77,14 +77,17 @@ void blit(Image& destination, const Image& source, int x, int y, Rect clip, Tran
     // Source may alias destination; snapshot only when necessary.
     const std::vector<std::uint16_t> snapshot = &destination == &source ? source.pixels : std::vector<std::uint16_t>{};
     const auto& input = &destination == &source ? snapshot : source.pixels;
+    const std::vector<std::uint8_t> mask_snapshot = &destination == &source ? source.opaque_pixels : std::vector<std::uint8_t>{};
+    const auto& opacity = &destination == &source ? mask_snapshot : source.opaque_pixels;
     for (auto row = start_y; row < end_y; ++row) {
         for (auto column = start_x; column < end_x; ++column) {
             const auto source_index = static_cast<std::size_t>((row - top) * source.width + column - left);
             const auto color = input[source_index];
-            const bool visible = source.opaque_pixels.empty() ? color != 0 : source.opaque_pixels[source_index] != 0;
+            const bool visible = opacity.empty() ? color != 0 : opacity[source_index] != 0;
             if (transparency == Transparency::opaque || visible) {
                 const auto destination_index = static_cast<std::size_t>(row * destination.width + column);
                 destination.pixels[destination_index] = color;
+                if (!destination.opaque_pixels.empty()) destination.opaque_pixels[destination_index] = 1;
             }
         }
     }

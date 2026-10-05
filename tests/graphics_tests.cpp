@@ -33,6 +33,17 @@ void sprite_tests() {
     check(destination.pixels == std::vector<std::uint16_t>({9, 0}), "SPR transparent index zero, opaque black");
     blit(destination, source, -1, 3, Transparency::opaque);
     check(destination.pixels == source.pixels, "SPR opaque mode preserves palette zero");
+    auto composed = make_canvas(2, 1, 123);
+    composed.opaque_pixels = {0, 0};
+    blit(composed, source, -1, 3);
+    check(composed.opaque_pixels == std::vector<std::uint8_t>({0, 1}), "compositing must update destination opacity");
+    destination = make_canvas(2, 1, 9);
+    blit(destination, composed, 0, 0);
+    check(destination.pixels == std::vector<std::uint16_t>({9, 0}), "composited opaque black must remain visible");
+    Image overlap{3, 1, 0, 0, {1, 2, 3}, {1, 0, 1}};
+    blit(overlap, overlap, 1, 0);
+    check(overlap.pixels == std::vector<std::uint16_t>({1, 1, 3}), "self-copy must snapshot sprite opacity");
+    check(overlap.opaque_pixels == std::vector<std::uint8_t>({1, 1, 1}), "self-copy must update destination opacity");
     bytes.resize(28); bytes[1] = 'M'; bytes[2] = 'P'; bytes[20] = 4;
     set_word(bytes, 24, 0x1234); set_word(bytes, 26, 0x5678);
     const auto raw = decode_frame(bytes, 0);

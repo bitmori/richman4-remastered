@@ -4,6 +4,7 @@
 #include <charconv>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -35,16 +36,25 @@ void compare_original(const char* path) {
         throw std::runtime_error("unexpected RNG golden header");
     rich4::Random random(0);
     std::uint32_t seed{}, step{};
-    std::size_t cases{}, streams{};
+    constexpr std::array<std::uint32_t, 12> seeds{
+        0, 1, 2, 3, 42, 12345, 0x7fffffffU, 0x80000000U,
+        0xfffffffeU, 0xffffffffU, 0x12345678U, 0xdeadbeefU};
+    std::set<std::uint32_t> remaining(seeds.begin(), seeds.end());
+    std::size_t cases{};
     while (std::getline(input, line)) {
         const auto row = parse_row(line);
-        if (row[1] == 0) { random.seed(row[0]); seed = row[0]; step = 0; ++streams; }
+        if (row[1] == 0) {
+            check(cases == 0 || step == 1024, "truncated original RNG stream");
+            check(remaining.erase(row[0]) == 1, "duplicate or unknown original RNG seed");
+            random.seed(row[0]); seed = row[0]; step = 0;
+        }
         check(row[0] == seed && row[1] == step, "nonsequential original RNG corpus");
+        check(step < 1024, "too many steps in original RNG stream");
         check(random.next() == row[2], "original RNG result differs");
         check(random.state() == row[3], "original RNG state differs");
         ++step; ++cases;
     }
-    check(streams >= 8 && cases >= 8192, "incomplete original RNG corpus");
+    check(remaining.empty() && step == 1024 && cases == 12288, "incomplete original RNG corpus");
     std::cout << cases << " original random steps matched\n";
 }
 }
