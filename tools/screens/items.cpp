@@ -703,15 +703,8 @@ constexpr std::array<MagicEffect, 12> magic_table{{{"變賣所有卡片", 9, 208
                                                    {"拍賣當格土地", 9, 122, 154, 225, 83}}};
 } // namespace
 
-std::size_t Screens::magic_choice(const GameSession &session) const {
-    const auto &decision = session.pending_decision();
-    if (!decision || decision->kind != DecisionKind::magic_category || decision->options.empty())
-        return 0;
-    // The witch picks the group (§7.3). Derived from, but never advancing, the game RNG state.
-    return std::size_t(session.random_state() >> 7) % decision->options.size();
-}
-
 void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision &decision, const Host &host) {
+    (void)session;
     const auto now = this->now(frame);
     if (!magic_.active) {
         magic_ = {};
@@ -730,22 +723,38 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         centred(frame, text, 320, 384, 18, ui::color(250, 240, 210));
     };
     if (decision.kind == DecisionKind::magic_category) {
-        const auto choice = magic_choice(session);
-        const auto elapsed = now - magic_.opened;
-        if (elapsed >= 3200 && !magic_.scheduled) {
-            magic_.category = decision.options.at(choice).value;
-            magic_.scheduled = true;
-            deferred_.push_back([host, choice] { host.respond(choice); });
-        }
+        // The original witch draws the group at random (§7.3); the native rules let the player
+        // choose it, so the twelve group icons (18:11-22) are offered on a plate instead.
         shot = "magic-category";
         keyed(frame, art(frame, 'p', 18, 1), 241, 140);
-        if (elapsed >= 1800)
-            keyed(frame, art(frame, 'p', 18, 3), 286, 188);
-        balloon(elapsed < 1800 ? "進來魔法屋，就得\n完全照我的指示！" : "我選出符合條件的人。");
-        frame.hit(option_id + int(choice), {0, 0, 640, 480}, [this, host, choice, &decision] {
-            magic_.category = decision.options.at(choice).value;
-            host.respond(choice);
-        });
+        const Rect panel{18, 300, 622, 474};
+        ui::fill(frame.canvas, panel, ui::color(74, 34, 12));
+        ui::border(frame.canvas, panel, ui::color(232, 196, 96));
+        ui::border(frame.canvas, {panel.left + 3, panel.top + 3, panel.right - 3, panel.bottom - 3},
+                   ui::color(150, 96, 40));
+        centred(frame, "進來魔法屋，就得完全照我的指示！請選出施法的對象：", 320, 318, 16, ui::color(250, 240, 210));
+        for (int group = 0; group < 12; ++group) {
+            const int x = panel.left + 50 + (group % 6) * 100, y = panel.top + 66 + (group / 6) * 70;
+            const Rect cell{x - 48, y - 34, x + 48, y + 34};
+            const auto index = option_of(decision, group);
+            keyed(frame, art(frame, 'p', 18, std::size_t(11 + group)), x, y - 10);
+            centred(frame, magic_groups[std::size_t(group)], x, y + 25, 13,
+                    index ? ui::color(250, 240, 210) : ui::color(120, 100, 80));
+            if (!index) {
+                for (int yy = cell.top; yy < cell.bottom; ++yy) // dim groups with nobody in them
+                    for (int xx = cell.left; xx < cell.right; ++xx) {
+                        auto &pixel = frame.canvas.pixels[std::size_t(yy * frame.canvas.width + xx)];
+                        pixel = static_cast<std::uint16_t>((pixel >> 1) & 0x3def);
+                    }
+                continue;
+            }
+            if (frame.pointer_down && frame.pointer_in(cell))
+                sink(frame.canvas, cell);
+            frame.hit(option_id + int(*index), cell, [this, host, group, index = *index] {
+                magic_.category = group;
+                host.respond(index);
+            });
+        }
         return;
     }
     // Effect choice: tap a triangle to light it and read its label, tap it again to cast.
@@ -770,7 +779,7 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         keyed(frame, art(frame, 'p', 18, 2), 182, 142);
         if (group >= 0 && group < 12)
             keyed(frame, art(frame, 'p', 18, std::size_t(11 + group)), 326, 296);
-        balloon("天靈靈地靈靈∼");
+        balloon("天靈靈地靈靈～");
         const int effect = magic_.selected;
         if (now >= magic_.casting + 1000)
             schedule_effect(effect);
@@ -792,16 +801,24 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         if (sound)
             sound(0x27);
     };
+    // The balloon would cover the lower icons once the choice is open, so the prompt sits on a
+    // small plate over the MAGIC lettering instead (touch has no hover to reveal the labels).
+    const auto prompt = [&frame](std::string_view text) {
+        const Rect plate{150, 444, 490, 476};
+        ui::fill(frame.canvas, plate, ui::color(74, 34, 12));
+        ui::border(frame.canvas, plate, ui::color(232, 196, 96));
+        centred(frame, text, 320, 460, 16, ui::color(250, 240, 210));
+    };
     if (magic_.selected >= 0) {
         const auto &effect = magic_table[std::size_t(magic_.selected)];
         keyed(frame, art(frame, 'p', 18, std::size_t(23 + magic_.selected)), effect.icon_x, effect.icon_y);
         keyed(frame, art(frame, 'p', 18, effect.plate), effect.label_x, effect.label_y);
         centred(frame, effect.text, effect.label_x, effect.label_y, 14, ui::color(224, 224, 224), true,
                 ui::color(32, 32, 32));
-        balloon(std::string(effect.text) + "？\n再點一次就施法");
+        prompt(std::string(effect.text) + "？再點一次就施法");
     } else
-        balloon(std::string(group >= 0 && group < 12 ? magic_groups[std::size_t(group)] : "") +
-                "\n嘿∼輪到你了！請點選魔法");
+        prompt(std::string(group >= 0 && group < 12 ? magic_groups[std::size_t(group)] : "") +
+               "：嘿～輪到你了！請點選魔法");
     for (std::size_t i = 0; i < decision.options.size(); ++i) {
         const auto value = decision.options[i].value;
         if (value < 0 || value > 11)
@@ -810,6 +827,10 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         frame.hit(option_id + int(i), {effect.icon_x - 24, effect.icon_y - 24, effect.icon_x + 24, effect.icon_y + 24},
                   [tap, value] { tap(value); });
     }
+    if (const auto reselect = option_of(decision, -1))
+        frame.button(option_id + int(*reselect), {520, 440, 630, 472}, "重選對象", [host, index = *reselect] {
+            host.respond(index);
+        });
     frame.hit(magic_mask_id, {0, 0, 640, 480}, [this, &frame, tap] {
         const int x = frame.pointer_x, y = frame.pointer_y;
         if (x < 0 || y < 0 || x >= 640 || y >= 480 || magic_mask_.size() < 640U * 480U)
@@ -927,6 +948,128 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
         frame.button(option_id + int(*leave), hospital ? Rect{110, 440, 260, 474} : Rect{20, 440, 170, 474},
                      "離開", [host, index = *leave] { host.respond(index); });
     frame.hit(63, {0, 0, 640, 480}, [this] { rescue_.selected = -1; });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Developer gallery: every screen above with synthetic state, for visual comparison with the spec.
+void Screens::gallery(Frame &frame, const World &base, const std::function<void()> &background,
+                      const std::function<void(const std::string &)> &save) {
+    World world = base;
+    auto &player = world.players.at(world.header.current_player).state;
+    player.cards.fill(0);
+    constexpr std::array<std::uint8_t, 13> hand{1, 4, 9, 14, 14, 17, 13, 20, 22, 26, 28, 30, 11};
+    std::copy(hand.begin(), hand.end(), player.cards.begin());
+    for (std::size_t i = 0; i < 13; ++i)
+        player.tool_amounts[i] = static_cast<std::uint8_t>(i % 4 + 1);
+    player.traffic_method = 2;
+    player.points = 480;
+    world.prison_roster = {0, 3, 0, 0, 0, 2, 0, 4};
+    world.hospital_roster = {2, 0, 0, 0, 3, 0, 0, 1};
+    GameSession game(world, 1);
+    const Host host{[] {}, [](bool, std::string_view) {}, [](std::size_t) { return false; }};
+    const auto shoot = [&](const std::string &name, const std::function<void()> &draw) {
+        const auto shop = shop_;
+        const auto magic = magic_;
+        const auto rescue = rescue_;
+        background(); // the board ends visits when no decision is pending
+        shop_ = shop;
+        magic_ = magic;
+        rescue_ = rescue;
+        frame.buttons.clear();
+        draw();
+        save(name);
+    };
+    const auto saved_clock = clock;
+    clock = 100000;
+    frame.pointer_x = frame.pointer_y = -1;
+    frame.pointer_down = false;
+    shoot("cards", [&] { draw_inventory(frame, game, true, host); });
+    shoot("cards-pressed", [&] {
+        press_ = Press{"cards", grid_tile(14, 130, 2), [] {}, 9};
+        frame.pointer_down = true;
+        draw_inventory(frame, game, true, host);
+        frame.pointer_down = false;
+        press_.reset();
+    });
+    shoot("tools", [&] { draw_inventory(frame, game, false, host); });
+    shoot("tools-pressed", [&] {
+        press_ = Press{"tools", grid_tile(14, 130, 6), [] {}, 7};
+        frame.pointer_down = true;
+        draw_inventory(frame, game, false, host);
+        frame.pointer_down = false;
+        press_.reset();
+    });
+    for (const std::uint8_t card : {1, 9, 14, 17, 20}) {
+        popups_.push_back({card, *clock + 1000, {}});
+        shoot("popup-" + std::to_string(card), [&] { draw_popup(frame); });
+        popups_.clear();
+    }
+    // Shop: the same option layout as the core's shop prompt.
+    GameDecision shop{DecisionKind::shop, world.header.current_player, 0, 0, "", {}};
+    for (const std::uint8_t card : {7, 5, 25, 12, 11, 19, 16, 4, 16, 12, 7})
+        shop.options.push_back({"", 100 + card});
+    for (int tool = 1; tool <= 8; ++tool)
+        shop.options.push_back({"", 200 + tool});
+    for (const auto card : hand)
+        if (!option_of(shop, 300 + card))
+            shop.options.push_back({"", 300 + card});
+    for (int tool = 1; tool <= 13; ++tool)
+        shop.options.push_back({"", 400 + tool});
+    shop.options.push_back({"", 0});
+    for (int mode = 0; mode < 2; ++mode) {
+        shop_ = {};
+        draw_shop(frame, game, shop, host); // initialise the visit
+        shop_.opened = 0;
+        shop_.mode = mode;
+        shop_.balloon.clear();
+        (mode ? shop_.tools_bought : shop_.cards_bought).at(1) = true;
+        shoot(mode ? "shop-tool" : "shop-card", [&] { draw_shop(frame, game, shop, host); });
+        shop_.balloon = shop_lines[std::size_t(mode)][1];
+        shop_.balloon_until = *clock + 1000;
+        shoot(mode ? "shop-tool-balloon" : "shop-card-balloon", [&] { draw_shop(frame, game, shop, host); });
+    }
+    shop_.leaving = true;
+    shop_.leave_at = *clock + 1000;
+    shop_.balloon = shop_lines[0][4];
+    shop_.mode = 0;
+    shoot("shop-leaving", [&] { draw_shop(frame, game, shop, host); });
+    shop_ = {};
+    // Magic house.
+    GameDecision category{DecisionKind::magic_category, world.header.current_player, 0, 0, "", {}};
+    for (const int group : {0, 1, 2, 3, 4, 5, 6, 9, 10, 11})
+        category.options.push_back({"", group});
+    shoot("magic-category", [&] { draw_magic(frame, game, category, host); });
+    GameDecision effect{DecisionKind::magic_effect, world.header.current_player, 0, 0, "", {}};
+    for (int i = 0; i < 12; ++i)
+        effect.options.push_back({"", i});
+    effect.options.push_back({"", -1});
+    magic_.category = 3;
+    shoot("magic-effect", [&] { draw_magic(frame, game, effect, host); });
+    magic_.selected = 10;
+    shoot("magic-selected", [&] { draw_magic(frame, game, effect, host); });
+    magic_.casting = *clock;
+    shoot("magic-casting", [&] { draw_magic(frame, game, effect, host); });
+    magic_ = {};
+    // Bail screens.
+    for (const bool hospital : {false, true}) {
+        GameDecision rescue{DecisionKind::rescue, world.header.current_player, 0, 0,
+                            hospital ? "探望住院角色" : "探望入狱角色", {}};
+        const auto &roster = hospital ? world.hospital_roster : world.prison_roster;
+        for (int i = 0; i < 8; ++i)
+            if (roster[std::size_t(i)] && (i >= 4 || std::size_t(i) < world.players.size()))
+                rescue.options.push_back({"", i});
+        rescue.options.push_back({"", -1});
+        const std::string name = hospital ? "hospital" : "prison";
+        rescue_ = {};
+        shoot(name, [&] { draw_rescue(frame, game, rescue, host); });
+        rescue_.selected = hospital ? 4 : 5;
+        shoot(name + "-selected", [&] { draw_rescue(frame, game, rescue, host); });
+        rescue_.selected = -1;
+        rescue_.poor_until = *clock + 1000;
+        shoot(name + "-poor", [&] { draw_rescue(frame, game, rescue, host); });
+        rescue_ = {};
+    }
+    clock = saved_clock;
 }
 
 } // namespace rich4::native::items

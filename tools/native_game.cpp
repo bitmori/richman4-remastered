@@ -61,6 +61,7 @@ struct Options {
     fs::path assets, font, load, save_directory, output;
     bool headless = false, start_new = false, hidden_window = false, exercise_recovery = false;
     bool exercise_trading = false;
+    bool items_gallery = false; // dev: render every card/tool/shop screen into OUTPUT/gallery
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
     unsigned auto_rounds = 0;
@@ -90,6 +91,8 @@ Options arguments(int argc, char **argv) {
             options.exercise_recovery = true;
         else if (argument == "--exercise-trading")
             options.exercise_trading = true;
+        else if (argument == "--items-gallery")
+            options.items_gallery = true;
         else if (argument == "--start-new")
             options.start_new = true;
         else {
@@ -224,6 +227,23 @@ class Application {
     }
 
     int run() {
+        if (options_.items_gallery) {
+            if (options_.output.empty())
+                throw std::invalid_argument("--items-gallery requires --output DIR");
+            new_game();
+            fs::create_directories(options_.output / "gallery");
+            items_.gallery(
+                frame_, session_->world(),
+                [this] {
+                    buttons_.clear();
+                    canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
+                    draw_board();
+                },
+                [this](const std::string &name) {
+                    graphics::write_ppm(canvas_, options_.output / "gallery" / (name + ".ppm"));
+                });
+            return 0;
+        }
         auto last_tick = SDL_GetTicks();
         for (unsigned iteration = 0; running_; ++iteration) {
             draw();
@@ -665,7 +685,8 @@ class Application {
         } else if (screen_ == Screen::trading) {
             draw_trading();
         }
-        if (items_.popup_active() && session_) {
+        if (items_.popup_active() && session_ &&
+            (screen_ == Screen::game || screen_ == Screen::cards || screen_ == Screen::tools)) {
             buttons_.clear();
             items_.draw_popup(frame_);
         }
@@ -1494,8 +1515,6 @@ class Application {
                     }
                     shop_done_for_visit_ = true;
                 }
-            } else if (decision->kind == DecisionKind::magic_category) {
-                choice = items_.magic_choice(*session_); // the witch picks the group
             } else if (decision->kind == DecisionKind::magic_effect) {
                 const auto desired = static_cast<int>((options_.seed + session_->completed_days()) % 12);
                 for (std::size_t i = 0; i < decision->options.size(); ++i)

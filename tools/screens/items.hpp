@@ -60,9 +60,13 @@ class Screens {
     // A new game or loaded save: drop everything that refers to the old session.
     void reset();
 
-    // Replay support: the option the witch chose, and showing the shop shelf of an option.
-    [[nodiscard]] std::size_t magic_choice(const GameSession &) const;
+    // Replay support: show the card or tool shelf that holds a shop option.
     bool shop_show_option(std::int32_t value); // true when the shelf had to switch
+
+    // Developer gallery: draws each screen with synthetic state; `background` paints the board and
+    // `save` stores the canvas under a name.
+    void gallery(Frame &, const World &, const std::function<void()> &background,
+                 const std::function<void(const std::string &)> &save);
 
     std::function<void(std::size_t)> sound; // Effect.mkf entry; may be empty
     // Replay runs use a synthetic clock so timed balloons and popups advance per frame.
