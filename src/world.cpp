@@ -198,6 +198,16 @@ World World::from_save(const SaveFile& save) {
     world.stock_market_index = std::bit_cast<std::int32_t>(u32(bytes, 0x26a2));
     world.stock_market_movement_bits = u32(bytes, 0x26a6);
     world.stock_history_cursor = std::bit_cast<std::int32_t>(u32(bytes, 0x6f2));
+    for (std::size_t seller = 0; seller < world.offers.size(); ++seller) {
+        for (std::size_t index = 0; index < world.offers[seller].size(); ++index) {
+            const auto offset = 0x2526 + seller * 84 + index * 12;
+            auto& offer = world.offers[seller][index];
+            offer.kind = static_cast<OfferKind>(bytes[offset]); offer.flags = bytes[offset + 1];
+            offer.item = u16(bytes, offset + 2); offer.price = std::bit_cast<std::int32_t>(u32(bytes, offset + 4));
+            offer.quantity = u16(bytes, offset + 8); offer.property_type = bytes[offset + 10];
+            offer.property_level = bytes[offset + 11];
+        }
+    }
     for (std::size_t id = 0; id < world.special_actors.size(); ++id) {
         const auto offset = 0x1b4 + id * 16;
         world.special_actors[id] = {u16(bytes, offset), u16(bytes, offset + 2), u16(bytes, offset + 4),
@@ -368,6 +378,16 @@ std::vector<std::uint8_t> World::export_save() const {
     put32(bytes, 0x26a2, std::bit_cast<std::uint32_t>(stock_market_index));
     put32(bytes, 0x26a6, stock_market_movement_bits);
     put32(bytes, 0x6f2, std::bit_cast<std::uint32_t>(stock_history_cursor));
+    for (std::size_t seller = 0; seller < offers.size(); ++seller) {
+        for (std::size_t index = 0; index < offers[seller].size(); ++index) {
+            const auto offset = 0x2526 + seller * 84 + index * 12;
+            const auto& offer = offers[seller][index];
+            bytes[offset] = static_cast<std::uint8_t>(offer.kind); bytes[offset + 1] = offer.flags;
+            put16(bytes, offset + 2, offer.item); put32(bytes, offset + 4, std::bit_cast<std::uint32_t>(offer.price));
+            put16(bytes, offset + 8, offer.quantity); bytes[offset + 10] = offer.property_type;
+            bytes[offset + 11] = offer.property_level;
+        }
+    }
     for (std::size_t id = 0; id < special_actors.size(); ++id) {
         const auto offset = 0x1b4 + id * 16; const auto& actor = special_actors[id];
         put16(bytes, offset, actor.x); put16(bytes, offset + 2, actor.y); put16(bytes, offset + 4, actor.node_id);

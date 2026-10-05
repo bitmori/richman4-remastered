@@ -107,6 +107,15 @@ void lossless_and_patching() {
     world.players[1].status.money_fortune_modifier = -123; put16(expected, 0x10 + 104 + 70, 0xff85);
     world.players[1].stocks[4].amount = -9; put32(expected, 0x21f6 + 96 + 4 * 8, 0xfffffff7);
     world.stocks[3].float_bits[2] = 0x7fa12345; put32(expected, 0x2376 + 3 * 36 + 20, 0x7fa12345);
+    auto& offer = world.offers[3][6];
+    constexpr std::size_t offer_offset = 0x2526 + 3 * 84 + 6 * 12;
+    offer.kind = OfferKind::property; expected[offer_offset] = 2;
+    offer.flags = 0xde; expected[offer_offset + 1] = 0xde;
+    offer.item = 4001; put16(expected, offer_offset + 2, 4001);
+    offer.price = -123456; put32(expected, offer_offset + 4, 0xfffe1dc0);
+    offer.quantity = 0xfedc; put16(expected, offer_offset + 8, 0xfedc);
+    offer.property_type = 4; expected[offer_offset + 10] = 4;
+    offer.property_level = 5; expected[offer_offset + 11] = 5;
     world.stock_history_bits[2][143] = 0xffc56789; put32(expected, 0x6f6 + 2 * 576 + 143 * 4, 0xffc56789);
     world.public_fund = -1; put32(expected, 0x26ba, 0xffffffff);
     world.lease_mode = 4; put32(expected, 0x267e, 4);
@@ -141,6 +150,7 @@ void lossless_and_patching() {
     auto loaded = World::from_save(SaveFile::decode(expected));
     require(loaded.active_player().state.cash == -123 && loaded.lands[1].economy.owner_code == 2,
             "Edited runtime state survives original-format reload");
+    require(loaded.offers[3][6] == world.offers[3][6], "All twelve listing bytes survive reload");
     world.lands[1].economy.street_name = "new";
     const auto renamed = world.export_save();
     require(renamed[land + 4] == 'n' && renamed[land + 7] == 0 && renamed[land + 19] == 0,

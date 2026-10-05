@@ -56,6 +56,20 @@ struct StockHolding {
     std::uint32_t raw_cost_basis = 0; // Original second word, preserved as bits.
 };
 
+enum class OfferKind : std::uint8_t { empty = 0, stock = 1, property = 2, tool = 3, card = 4 };
+
+// Original player-to-player sale table: VA 0x4967e0, four lists of seven
+// twelve-byte records. Kept as values rather than an ABI-packed overlay.
+struct TradeOffer {
+    OfferKind kind = OfferKind::empty;
+    std::uint8_t flags = 0;
+    std::uint16_t item = 0; // Stock zero-based; card/tool one-based; property 2001+/4001+.
+    std::int32_t price = 0;
+    std::uint16_t quantity = 0; // Stock quantity; unused for other kinds.
+    std::uint8_t property_type = 0, property_level = 0;
+    friend bool operator==(const TradeOffer&, const TradeOffer&) = default;
+};
+
 struct StockState {
     std::uint16_t flags_4 = 0;
     std::uint8_t suspension_days = 0;
@@ -205,6 +219,7 @@ public:
     std::array<MapObject, 46> objects{};
     std::array<std::uint8_t, 36> lottery_tickets{}; // Number 1..36: owner slot+1, zero unowned.
     std::array<StockState, 12> stocks{};
+    std::array<std::array<TradeOffer, 7>, 4> offers{};
     std::array<std::array<std::uint32_t, 144>, 12> stock_history_bits{};
     std::int32_t stock_history_cursor = 0;
     std::int32_t stock_market_index = 0; // Original 0x499078.
