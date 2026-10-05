@@ -967,6 +967,64 @@ void explicit_unsupported_and_save_guard() {
     require(explicit_gap, "unported compulsory event must never silently pass");
 }
 } // namespace
+void interactive_mini_games() {
+    auto value = world();
+    for (auto &node : value.nodes)
+        node.flags = (node.flags & ~0xffU) | 6; // every tile is 企鵝挖寶
+    rich4::GameSession closed(value, 4);
+    require(!closed.interactive_mini_games(), "closed mode is the default");
+    first_landing(closed);
+    const auto closed_points = closed.world().players[0].state.points;
+    require(!closed.pending_decision() && closed_points >= 50 && closed_points < 70,
+            "closed mode awards rand()%20+50 points");
+
+    rich4::GameSession game(value, 4);
+    game.set_interactive_mini_games(true);
+    first_landing(game);
+    const auto &decision = game.pending_decision();
+    require(decision && decision->kind == rich4::DecisionKind::mini_game && decision->mini_game,
+            "a human gets the interactive mini-game");
+    require(decision->mini_game->game == 0 && decision->mini_game->seed == game.random_state() &&
+                decision->mini_game->character == game.world().players[0].state.character,
+            "mini-game state carries the game, character and current random state");
+    // The closed-mode session drew exactly two more numbers (reward + speech) than the open one.
+    rich4::Random expected(game.random_state());
+    (void)expected.next();
+    (void)expected.next();
+    require(expected.state() == closed.random_state(), "interactive landing must not draw the closed-mode numbers");
+    require(!game.respond(0) && !game.can_save(), "a mini-game cannot be answered with respond or saved");
+    require(!game.submit_mini_game(-1, 0), "negative scores are rejected");
+    const auto seed = decision->mini_game->seed;
+    const auto before = game.world().players[0].state.points;
+    require(game.submit_mini_game(123, 28), "submit rejected");
+    rich4::Random advanced(seed);
+    for (int i = 0; i < 28; ++i)
+        (void)advanced.next();
+    require(game.random_state() == advanced.state(), "submit must advance the stream by the game's draws");
+    require(game.world().players[0].state.points == before + 123, "score added to points");
+    require(!game.pending_decision() && !game.submit_mini_game(1, 0), "decision ends once");
+    const auto events = game.drain_events();
+    require(std::any_of(events.begin(), events.end(),
+                        [](const auto &event) {
+                            return event.kind == rich4::GameEventKind::points_received && event.amount == 123 &&
+                                   !event.voice_category;
+                        }),
+            "points event without speech");
+    // 16-bit word add, as `add word [player+48], ax`.
+    rich4::GameSession wrap(value, 4);
+    wrap.set_interactive_mini_games(true);
+    first_landing(wrap);
+    const auto start = wrap.world().players[0].state.points;
+    require(wrap.submit_mini_game(70000, 0), "large score accepted");
+    require(wrap.world().players[0].state.points == static_cast<std::uint16_t>(start + 70000U), "word wrap");
+    // Computers always use the closed mode.
+    value.players[0].state.controller_flags = 2;
+    value.players[1].state.controller_flags = 1; // keep one human so the game goes on
+    rich4::GameSession computer(value, 4);
+    computer.set_interactive_mini_games(true);
+    until(computer, [&] { return computer.world().players[0].state.points != 0 || computer.pending_decision(); });
+    require(!computer.pending_decision(), "computers never get the interactive game");
+}
 int main() {
     try {
         dice_and_paths();
@@ -988,6 +1046,7 @@ int main() {
         direct_trading();
         lifecycle_and_finished_saves();
         explicit_unsupported_and_save_guard();
+        interactive_mini_games();
         std::cout << "native game rule tests passed\n";
         return 0;
     } catch (const std::exception &error) {

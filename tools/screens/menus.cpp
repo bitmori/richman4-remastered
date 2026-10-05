@@ -413,6 +413,8 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
         frame.picture('d', 3, 9, ox + 66, oy + 82);
     if (state_.sound)
         frame.picture('d', 3, 9, ox + 66, oy + 114);
+    if (state_.animation) // fcn_0040fd49: cfg+1 on mark at ref_00474c22/26 = (98, 50)
+        frame.picture('d', 3, 9, ox + 98, oy + 50);
     frame.picture('d', 3, 9, ox + 98, oy + 146); // the native game always autosaves daily
     constexpr std::array<const char *, 8> songs{"1.星際總動員", "2.重回侏儸紀", "3.夢幻伊甸園", "4.打拼為將來",
                                                 "5.椰林風情畫", "6.浪漫月世界", "7.熱情的夏夜", "8.漫步星空下"};
@@ -454,6 +456,7 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
     hit(host, ids::options_volume + 1, at(89, 106, 160, 137), click_sound, [this] { state_.sound = true; });
     hit(host, ids::options_music, at(4, 74, 89, 105), click_sound, [this] { state_.music = !state_.music; });
     hit(host, ids::options_sound, at(4, 106, 89, 137), click_sound, [this] { state_.sound = !state_.sound; });
+    hit(host, ids::options_animation, at(4, 42, 160, 73), click_sound, [this] { state_.animation = !state_.animation; });
     hit(host, ids::options_song, at(18, 226, 177, 346), click_sound, [actions, frame_pointer] {
         const int index = std::clamp((frame_pointer->pointer_y - oy - 226) / 15, 0, 7);
         if (actions.play_song)
