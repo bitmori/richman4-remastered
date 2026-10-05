@@ -219,8 +219,13 @@ bool news_eligible(const World &world, std::uint8_t id) {
                            [](auto value) { return value != 0; });
     case 4:
     case 5:
-    case 15:
         return !matching_properties(world, [](const auto &p) { return p.level != 0; }).empty();
+    case 15:
+        // The original's eligibility counts built facilities too, but its handler
+        // (rich4_news.asm fcn_0044a453) only picks built ordinary land and divides by that
+        // count, crashing when there is none. Matching the handler only changes crash cases.
+        return !matching_properties(world, [](const auto &p) { return p.level != 0 && p.code < 4000; })
+                    .empty();
     case 7:
         return !matching_properties(world, [](const auto &p) { return p.owner == 0; }).empty();
     case 8:
@@ -339,18 +344,32 @@ EventSelection select_fortune(const World &world, std::size_t actor) {
     throw SaveError("Fortune deck has no eligible event");
 }
 
+// A handler that cannot run (a `missing()` guard: no candidate, or an unwired callback) is
+// treated like an ineligible card: the deck advances past it and the next eligible card is
+// drawn, so a failed event can never stick at the cursor and repeat. Every guard returns
+// before consuming RNG, and on shipped data the guards only cover cases where the original
+// divides by zero, so no outcome reachable in the original changes. A NeedChoice exception
+// still leaves the cursor in place so the same card re-runs with the answer.
 EventResult apply_news(World &world, Random &random, const EventCallbacks &callbacks) {
-    const auto selected = select_news(world);
-    auto result = apply_news_id(world, random, selected.event_id, callbacks);
-    if (result.supported)
+    EventResult result;
+    for (std::size_t attempt = 0; attempt < world.news_deck.size(); ++attempt) {
+        const auto selected = select_news(world);
+        result = apply_news_id(world, random, selected.event_id, callbacks);
         world.news_cursor = selected.next_cursor;
+        if (result.supported)
+            break;
+    }
     return result;
 }
 EventResult apply_fortune(World &world, Random &random, std::size_t actor, const EventCallbacks &callbacks) {
-    const auto selected = select_fortune(world, actor);
-    auto result = apply_fortune_id(world, random, actor, selected.event_id, callbacks);
-    if (result.supported)
+    EventResult result;
+    for (std::size_t attempt = 0; attempt < world.fortune_deck.size(); ++attempt) {
+        const auto selected = select_fortune(world, actor);
+        result = apply_fortune_id(world, random, actor, selected.event_id, callbacks);
         world.fortune_cursor = selected.next_cursor;
+        if (result.supported)
+            break;
+    }
     return result;
 }
 

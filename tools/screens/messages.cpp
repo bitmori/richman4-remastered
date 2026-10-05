@@ -5,6 +5,7 @@
 #include "messages.hpp"
 
 #include "../native_stock_names.hpp"
+#include "rich4/services.hpp"
 
 #include <SDL3/SDL_timer.h>
 
@@ -291,6 +292,10 @@ std::optional<Item> from_event(const GameEvent &event, const World &world) {
 }
 
 bool is_yes_no(const GameDecision &decision) {
+    // Free card (0x465388) and single-target frame card (0x46534e) also use the yes/no box;
+    // the core lists their YES option first.
+    if (decision.kind == DecisionKind::card_target)
+        return decision.options.size() == 2;
     const bool kind = decision.kind == DecisionKind::buy_land || decision.kind == DecisionKind::upgrade_land ||
                       decision.kind == DecisionKind::buy_facility ||
                       decision.kind == DecisionKind::upgrade_facility;
@@ -304,11 +309,60 @@ bool is_yes_no(const GameDecision &decision) {
 }
 
 std::string yes_no_question(const GameDecision &decision, const World &world) {
+    if (decision.kind == DecisionKind::card_target) {
+        const auto shown = localized(decision, world);
+        return shown.prompt;
+    }
     const bool facility = decision.kind == DecisionKind::buy_facility || decision.kind == DecisionKind::upgrade_facility;
     const auto place = property_name(world, static_cast<std::uint16_t>((facility ? 4000 : 2000) + decision.land_id));
     const bool upgrade = decision.kind == DecisionKind::upgrade_land || decision.kind == DecisionKind::upgrade_facility;
     return format(upgrade ? "%s\n\n升級費用:%d元\n\n是否升級？" : "%s\n\n費用:%d元\n\n是否買下此地？",
                   {place, std::int64_t(decision.amount)});
+}
+
+std::string subject_name(const World &world, const CardTarget &subject) {
+    static constexpr std::array<std::string_view, 4> special_actors{"小偷", "強盜", "流氓", "間諜"};
+    switch (subject.kind) {
+    case CardTargetKind::actor:
+        return subject.value < 4 ? player_name(world, subject.value)
+                                 : subject.value < 8 ? std::string(special_actors[subject.value - 4]) : "";
+    case CardTargetKind::property:
+        return property_name(world, subject.value);
+    case CardTargetKind::stock:
+        return stock_name(world, subject.value);
+    case CardTargetKind::object: {
+        // Placed tools keep kind = tool + 14 (src/tools.cpp place()).
+        if (subject.value == 0 || subject.value > world.objects.size())
+            return "";
+        const unsigned kind = world.objects[subject.value - 1U].kind;
+        return kind >= 15 && kind - 15 < services::tool_names.size() ? std::string(services::tool_names[kind - 15])
+                                                                     : "";
+    }
+    case CardTargetKind::card:
+        return subject.value >= 1 && subject.value <= services::card_names.size()
+                   ? std::string(services::card_names[subject.value - 1U])
+                   : "";
+    case CardTargetKind::tool:
+        return subject.value >= 1 && subject.value <= services::tool_names.size()
+                   ? std::string(services::tool_names[subject.value - 1U])
+                   : "";
+    }
+    return "";
+}
+
+GameDecision localized(const GameDecision &decision, const World &world) {
+    GameDecision shown = decision;
+    for (auto &option : shown.options)
+        if (option.subject)
+            if (auto name = subject_name(world, *option.subject); !name.empty())
+                option.label = decision.kind == DecisionKind::card_target ? "嫁禍給" + name : std::move(name);
+    if (decision.kind == DecisionKind::card_target) {
+        if (decision.options.size() == 2 && decision.options[0].subject) // 0x46534e
+            shown.prompt = format("是否嫁禍給%s？", {subject_name(world, *decision.options[0].subject)});
+        else if (decision.options.size() == 2) // 0x465388
+            shown.prompt = format("%s\n\n是否使用免費卡？", {player_name(world, std::int64_t(decision.player))});
+    }
+    return shown;
 }
 
 void draw_text(Frame &frame, std::string_view text, int x, int y, int mode, const ui::TextStyle &style) {

@@ -164,6 +164,19 @@ void tool_and_card_effects() {
     value.players[0].state.tool_amounts[6] = 1;
     rich4::GameSession missile(value, 5);
     require(missile.use_tool(7) && missile.pending_decision(), "missile target prompt");
+    // Target options carry the subject the app names (players, lands); roads stay 道路, and the
+    // prompt keeps no "目的" (items.cpp picks the destination cursor on it).
+    for (const auto &target : missile.pending_decision()->options) {
+        if (target.value >= 2000 && target.value < 6000)
+            require(target.subject && target.subject->kind == rich4::CardTargetKind::property &&
+                        target.subject->value == target.value,
+                    "property target lacks its subject");
+        else if (target.value > 0 && target.value < 2000)
+            require(!target.subject && target.label == "道路", "road target label");
+        else if (target.value & 0x8000)
+            require(target.subject.has_value(), "actor/object target lacks its subject");
+    }
+    require(missile.pending_decision()->prompt == "選擇目標", "tool target prompt is Traditional");
     // The map target farthest from every player, so nobody is sent to the (absent) hospital.
     std::size_t option = missile.pending_decision()->options.size();
     int best = -1;
@@ -1044,12 +1057,33 @@ void explicit_unsupported_and_save_guard() {
         rejected = true;
     }
     require(rejected, "saving an in-flight move must not lose queued state");
-    until(game, [&] { return game.pending_decision().has_value(); });
-    bool explicit_gap = false;
+    // Original core_actions:361 (`cmp ebx,0x10; ja loc_0041b3d0`) ends the turn silently on
+    // node kinds above 16, so no dialog and no unsupported event.
+    until(game, [&] {
+        return game.phase() == rich4::GamePhase::advancing_turn || game.pending_decision().has_value();
+    });
+    require(!game.pending_decision(), "unknown node kind must end the turn without a dialog");
     for (const auto &event : game.drain_events())
-        if (event.kind == rich4::GameEventKind::unsupported_event)
-            explicit_gap = true;
-    require(explicit_gap, "unported compulsory event must never silently pass");
+        require(event.kind != rich4::GameEventKind::unsupported_event, "unknown node kind is not a rule gap");
+}
+void hospital_and_prison_buildings() {
+    // Map nodes 8001/8002 (hospital/prison building tiles) fall into the original's
+    // empty-property tail (core_actions:369 -> loc_0041b077) and end the turn: no dialog.
+    for (const std::uint16_t code : {std::uint16_t(8001), std::uint16_t(8002)}) {
+        auto value = world();
+        for (auto &node : value.nodes) {
+            node.flags &= ~0xffU;
+            node.type_and_index = code;
+        }
+        rich4::GameSession game(std::move(value), 0);
+        first_landing(game);
+        require(!game.pending_decision() && game.phase() == rich4::GamePhase::advancing_turn,
+                "hospital/prison building tile must not open a dialog");
+        for (const auto &event : game.drain_events())
+            require(event.kind != rich4::GameEventKind::unsupported_event,
+                    "hospital/prison building tile reported as an unported rule");
+        require(game.world().players[0].state.cash == 100000, "building tile must not charge the player");
+    }
 }
 } // namespace
 void interactive_mini_games() {
@@ -1133,6 +1167,7 @@ int main() {
         lifecycle_and_finished_saves();
         explicit_unsupported_and_save_guard();
         interactive_mini_games();
+        hospital_and_prison_buildings();
         std::cout << "native game rule tests passed\n";
         return 0;
     } catch (const std::exception &error) {

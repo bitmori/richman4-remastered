@@ -76,6 +76,7 @@ add_library(main SHARED
   "${RICH4_REPO}/tools/screens/endgame.cpp"
   "${RICH4_REPO}/tools/screens/help.cpp"
   "${RICH4_REPO}/tools/screens/minigames.cpp"
+  "${RICH4_REPO}/tools/screens/tile_popup.cpp"
   rich4_android.cpp)
 add_dependencies(main libiconv_build)
 target_include_directories(main PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${ICONV_PREFIX}/include")

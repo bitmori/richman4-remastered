@@ -270,8 +270,9 @@ struct GameSession::Impl {
         unsupported_resume = resume;
         emit(GameEventKind::unsupported_event, description);
         if (human()) {
-            decision =
-                GameDecision{DecisionKind::notice, actor(), 0, 0, std::move(description), {{"继续", 0}}};
+            // The developer description stays in the event log only; the player sees a
+            // neutral Traditional notice (docs/audit/rules-text-hover.md §2).
+            decision = GameDecision{DecisionKind::notice, actor(), 0, 0, "本次事件略過。", {{"繼續", 0}}};
             set_phase(GamePhase::awaiting_decision);
         } else
             finish_turn();
@@ -799,8 +800,8 @@ struct GameSession::Impl {
                                         actor(),
                                         static_cast<std::uint16_t>(land_id),
                                         cost,
-                                        upgrade ? "升级这块房产？" : "购买这块房产？",
-                                        {{upgrade ? "升级" : "购买", 1}, {"放弃", 0}}};
+                                        upgrade ? "升級這塊房產？" : "購買這塊房產？",
+                                        {{upgrade ? "升級" : "購買", 1}, {"放棄", 0}}};
                 set_phase(GamePhase::awaiting_decision);
             } else {
                 const auto reserve =
@@ -1016,18 +1017,18 @@ struct GameSession::Impl {
             if (human()) {
                 std::vector<DecisionOption> options;
                 if (operation == 1)
-                    options = {{"旅馆", 1}, {"百货公司", 2}, {"加油站", 3}, {"研究所", 4}};
+                    options = {{"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}};
                 else
-                    options = {{operation == 0 ? "购买" : "升级", 1}, {"放弃", 0}};
+                    options = {{operation == 0 ? "購買" : "升級", 1}, {"放棄", 0}};
                 decision = GameDecision{operation == 0   ? DecisionKind::buy_facility
                                         : operation == 1 ? DecisionKind::construct_facility
                                                          : DecisionKind::upgrade_facility,
                                         actor(),
                                         static_cast<std::uint16_t>(id),
                                         cost,
-                                        operation == 0   ? "购买设施用地？"
-                                        : operation == 1 ? "选择要建设的设施"
-                                                         : "升级设施？",
+                                        operation == 0   ? "購買設施用地？"
+                                        : operation == 1 ? "請選擇設施類別" // 0x465289
+                                                         : "升級設施？",
                                         std::move(options)};
                 set_phase(GamePhase::awaiting_decision);
             } else if (operation != 0 || ai_can_purchase(cost)) {
@@ -1070,9 +1071,9 @@ struct GameSession::Impl {
                                 actor(),
                                 static_cast<std::uint16_t>(id),
                                 0,
-                                entry.facility_type == 1 ? "转盘决定住宿天数，按停止选定"
-                                                         : "转盘决定消费倍数，按停止选定",
-                                {{"停止转盘", 0}}};
+                                entry.facility_type == 1 ? "轉盤決定住宿天數，按停止選定"
+                                                         : "轉盤決定消費倍數，按停止選定",
+                                {{"停止轉盤", 0}}};
         decision->spinner = wheel;
         set_phase(GamePhase::awaiting_decision);
     }
@@ -1123,14 +1124,14 @@ struct GameSession::Impl {
         }
         if (human()) {
             GameDecision prompt{
-                DecisionKind::rescue, actor(), 0, 0, hospital ? "探望住院角色" : "探望入狱角色", {}};
+                DecisionKind::rescue, actor(), 0, 0, hospital ? "探望住院角色" : "探望入獄角色", {}};
             for (std::size_t i = 0; i < roster.size(); ++i)
                 if (roster[i] && (i >= 4 || i < world.players.size()))
                     prompt.options.push_back(
-                        {(i < 4 ? "救援" + player_name(i) : "释放特殊角色" + std::to_string(i - 3)) +
-                             (i < 4 ? "（30点）" : "（300点）"),
+                        {(i < 4 ? "救援" + player_name(i) : "釋放特殊角色" + std::to_string(i - 3)) +
+                             (i < 4 ? "（30點）" : "（300點）"),
                          static_cast<std::int32_t>(i)});
-            prompt.options.push_back({"离开", -1});
+            prompt.options.push_back({"離開", -1});
             decision = std::move(prompt);
             set_phase(GamePhase::awaiting_decision);
             return;
@@ -1184,7 +1185,7 @@ struct GameSession::Impl {
         roulette_kind = kind;
         roulette_cursor = static_cast<unsigned>(initial);
         roulette_elapsed = 0;
-        GameDecision prompt{DecisionKind::roulette, actor(), 0, 0, "按停止选定转盘结果", {{"停止转盘", 0}}};
+        GameDecision prompt{DecisionKind::roulette, actor(), 0, 0, "按停止選定轉盤結果", {{"停止轉盤", 0}}};
         prompt.spinner = wheel;
         throw NeedChoice{std::move(prompt), key};
     }
@@ -1193,14 +1194,20 @@ struct GameSession::Impl {
             const auto key = choice_sequence++;
             if (const auto answer = event_choices.find(key); answer != event_choices.end())
                 return static_cast<std::uint16_t>(answer->second);
-            GameDecision prompt{DecisionKind::property_target, actor(), 0, 0, "选择工程公司建设的地产", {}};
+            // Original 0x463a4a "%s\n\n請選擇欲加蓋地點" (core_actions:1776); the side panel
+            // shows the street/facility names via `subject`. 取消 is the panel's cancel button.
+            GameDecision prompt{DecisionKind::property_target, actor(), 0, 0, "請選擇欲加蓋地點", {}};
             for (std::size_t i = 1; i < world.lands.size(); ++i)
-                prompt.options.push_back({"房产" + std::to_string(i), static_cast<std::int32_t>(2000 + i),
-                                          DecisionLocation{world.lands[i].x, world.lands[i].y}});
+                prompt.options.push_back(
+                    {"房產" + std::to_string(i), static_cast<std::int32_t>(2000 + i),
+                     DecisionLocation{world.lands[i].x, world.lands[i].y},
+                     CardTarget{CardTargetKind::property, static_cast<std::uint16_t>(2000 + i)}});
             for (std::size_t i = 1; i < world.facilities.size(); ++i)
-                prompt.options.push_back({"设施" + std::to_string(i), static_cast<std::int32_t>(4000 + i),
-                                          DecisionLocation{world.facilities[i].x, world.facilities[i].y}});
-            prompt.options.push_back({"放弃选择", 0});
+                prompt.options.push_back(
+                    {"設施" + std::to_string(i), static_cast<std::int32_t>(4000 + i),
+                     DecisionLocation{world.facilities[i].x, world.facilities[i].y},
+                     CardTarget{CardTargetKind::property, static_cast<std::uint16_t>(4000 + i)}});
+            prompt.options.push_back({"取消", 0});
             throw NeedChoice{std::move(prompt), key};
         }
         std::uint16_t selected = 0;
@@ -1246,7 +1253,7 @@ struct GameSession::Impl {
                                               price,
                                               "认购原始股：每股" + std::to_string(price) + "元，最多" +
                                                   std::to_string(maximum) + "股",
-                                              {{"认购", 1}, {"放弃", 0}},
+                                              {{"認購", 1}, {"放棄", 0}},
                                               maximum},
                                  key};
         } else {
@@ -1344,11 +1351,11 @@ struct GameSession::Impl {
             return;
         }
         GameDecision prompt{DecisionKind::lottery,        actor(), 0, lottery::ticket_price,
-                            "选择彩票号码（每张1000元）", {}};
+                            "選擇彩票號碼（每張1000元）", {}};
         if (player().cash >= lottery::ticket_price)
             for (auto number : lottery::available_numbers(world))
                 prompt.options.push_back({std::to_string(number), number});
-        prompt.options.push_back({"离开", 0});
+        prompt.options.push_back({"離開", 0});
         decision = std::move(prompt);
         set_phase(GamePhase::awaiting_decision);
     }
@@ -1707,12 +1714,14 @@ struct GameSession::Impl {
             const auto key = choice_sequence++;
             const auto answer = event_choices.find(key);
             if (answer == event_choices.end())
+                // Original yes/no box 0x465388 "%s\n\n是否使用免費卡？" (card_passive:409); the
+                // app prefixes the holder's name and draws it with the Data.mkf 440 strip.
                 throw NeedChoice{GameDecision{DecisionKind::card_target,
                                               slot,
                                               0,
                                               amount,
-                                              "使用免费卡免除这笔费用？",
-                                              {{"使用免费卡", 1}, {"保留卡片", 0}}},
+                                              "是否使用免費卡？",
+                                              {{"使用免費卡", 1}, {"保留卡片", 0}}},
                                  key};
             accepted = answer->second != 0;
         } else {
@@ -1721,7 +1730,7 @@ struct GameSession::Impl {
         }
         if (accepted) {
             (void)consume_card(entry.state.cards, world.card_supply, 20);
-            events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id, "使用免费卡"});
+            events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id, "使用免費卡"});
             events.back().card = 20;
             // _rich4_try_use_card_mianfeika: holder (mood 0), then the recipient if any (mood 1).
             card_speech(slot, 0, 20, 0);
@@ -1740,10 +1749,16 @@ struct GameSession::Impl {
             if (found != event_choices.end())
                 target = found->second;
             else {
-                GameDecision prompt{DecisionKind::card_target, slot, 0, amount, "使用嫁祸卡？", {}};
+                // Original: one target -> yes/no box 0x46534e "是否嫁禍給%s？"; several ->
+                // picker 0x46535d "請選擇嫁禍對象..." (card_passive:170/202). The app shows names.
+                GameDecision prompt{DecisionKind::card_target, slot, 0, amount, "請選擇嫁禍對象...", {}};
                 for (std::size_t i = 0; i < world.players.size(); ++i)
                     if (i != slot && world.players[i].state.controller_flags)
-                        prompt.options.push_back({"嫁祸给" + player_name(i), static_cast<std::int32_t>(i)});
+                        prompt.options.push_back(
+                            {"嫁禍給" + player_name(i), static_cast<std::int32_t>(i), std::nullopt,
+                             CardTarget{CardTargetKind::actor, static_cast<std::uint16_t>(i)}});
+                if (prompt.options.size() == 1)
+                    prompt.prompt = "是否嫁禍給" + player_name(static_cast<std::size_t>(prompt.options[0].value)) + "？";
                 prompt.options.push_back({"保留卡片", -1});
                 throw NeedChoice{std::move(prompt), key};
             }
@@ -1780,7 +1795,7 @@ struct GameSession::Impl {
         if (target >= 0) {
             (void)consume_card(entry.state.cards, world.card_supply, 19);
             events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id,
-                              "使用嫁祸卡，目标是" + player_name(static_cast<std::size_t>(target))});
+                              "使用嫁禍卡，目標是" + player_name(static_cast<std::size_t>(target))});
             events.back().card = 19;
             // _rich4_try_use_card_jiahuoka: holder (mood 0), then the framed player (mood 2).
             card_speech(slot, 0, 19, 0);
@@ -1806,7 +1821,7 @@ struct GameSession::Impl {
         const auto found = event_choices.find(key);
         if (found != event_choices.end())
             return static_cast<std::uint8_t>(found->second);
-        GameDecision prompt{DecisionKind::choose_card, slot, 0, 0, "选择一张卡片", {}};
+        GameDecision prompt{DecisionKind::choose_card, slot, 0, 0, "請選擇一張卡片", {}};
         for (auto card : world.players.at(victim).state.cards)
             if (card)
                 if (std::none_of(prompt.options.begin(), prompt.options.end(),
@@ -1814,7 +1829,7 @@ struct GameSession::Impl {
                     prompt.options.push_back({std::string(services::card_names.at(card - 1)), card});
         if (prompt.options.empty())
             return 0;
-        prompt.options.push_back({"放弃", 0});
+        prompt.options.push_back({"放棄", 0});
         throw NeedChoice{std::move(prompt), key};
     }
     void release_hotel_guests() {
@@ -1853,8 +1868,8 @@ struct GameSession::Impl {
                                              actor(),
                                              static_cast<std::uint16_t>(code - 4000),
                                              0,
-                                             "选择魔法建设的设施",
-                                             {{"旅馆", 1}, {"百货公司", 2}, {"加油站", 3}, {"研究所", 4}}},
+                                             "請選擇設施類別", // 0x465289
+                                             {{"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}},
                                 key};
                         entry.facility_type = static_cast<std::uint8_t>(answer->second);
                     }
@@ -1919,8 +1934,8 @@ struct GameSession::Impl {
     }
     AuctionResult auction(std::uint16_t property_code, int seller = -1) {
         AuctionSession auction_session(world, random, property_code, seller);
-        static constexpr const char *labels[]{"不加价",   "加价100",   "加价500", "加价1000",
-                                              "加价5000", "加价10000", "退出拍卖"};
+        static constexpr const char *labels[]{"不加價",   "加價100",   "加價500", "加價1000",
+                                              "加價5000", "加價10000", "退出拍賣"};
         for (unsigned count = 0; !auction_session.finished(); ++count) {
             if (count >= 100000)
                 throw std::runtime_error("auction action limit reached");
@@ -1932,7 +1947,7 @@ struct GameSession::Impl {
                                         bidder->player,
                                         property_code,
                                         bidder->price,
-                                        "地产拍卖：当前出价" + std::to_string(bidder->price),
+                                        "地產拍賣：當前出價" + std::to_string(bidder->price),
                                         {}};
                     for (auto action : bidder->actions)
                         prompt.options.push_back(
@@ -2163,7 +2178,7 @@ struct GameSession::Impl {
         money_spinner.emplace(kind);
         spinner_random.seed(random.state());
         spinner_elapsed = 0;
-        GameDecision prompt{DecisionKind::money_spinner, actor(), 0, 0, "按停止决定金额", {{"停止", 1}}};
+        GameDecision prompt{DecisionKind::money_spinner, actor(), 0, 0, "按停止決定金額", {{"停止", 1}}};
         prompt.spinner = SpinnerState{kind, {}, 0}; // phase 0: machine drawn, reels not started
         throw NeedChoice{std::move(prompt), key};
     }
@@ -2251,15 +2266,16 @@ struct GameSession::Impl {
     std::string target_label(CardTarget target) const {
         switch (target.kind) {
         case CardTargetKind::actor:
+            // Fallback labels; the app shows original names from DecisionOption::subject.
             return target.value < 4 ? player_name(target.value)
                                     : "特殊角色" + std::to_string(target.value - 3);
         case CardTargetKind::property:
-            return target.value < 4000 ? "房产" + std::to_string(target.value - 2000)
-                                       : "设施" + std::to_string(target.value - 4000);
+            return target.value < 4000 ? "房產" + std::to_string(target.value - 2000)
+                                       : "設施" + std::to_string(target.value - 4000);
         case CardTargetKind::stock:
             return "股票" + std::to_string(target.value + 1);
         case CardTargetKind::object:
-            return "地图物件" + std::to_string(target.value);
+            return "地圖物件" + std::to_string(target.value);
         case CardTargetKind::card:
             return std::string(services::card_names.at(target.value - 1));
         case CardTargetKind::tool:
@@ -2282,7 +2298,7 @@ struct GameSession::Impl {
         }
         GameDecision prompt{DecisionKind::action_target, actor(), 0, 0, title, {}};
         for (auto value : options) {
-            DecisionOption option{target_label(value), encode(value)};
+            DecisionOption option{target_label(value), encode(value), std::nullopt, value};
             std::optional<std::uint16_t> code;
             if (value.kind == CardTargetKind::actor)
                 code = static_cast<std::uint16_t>(0x8000U | (1U << value.value));
@@ -2312,8 +2328,8 @@ struct GameSession::Impl {
                          slot,
                          0,
                          0,
-                         "选择设施类型",
-                         {{"空置", 0}, {"旅馆", 1}, {"百货公司", 2}, {"加油站", 3}, {"研究所", 4}}},
+                         "請選擇設施類別", // 0x465289
+                         {{"空地", 0}, {"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}},
             key};
     }
     CardLookahead lookahead(std::size_t slot, std::size_t count) {
@@ -2353,7 +2369,7 @@ struct GameSession::Impl {
             return auction(code, seller).winner.has_value();
         };
         callbacks.choose_target = [this](auto card, auto options) {
-            auto chosen = choose_target(options, std::string(services::card_names.at(card - 1)) + "：选择目标");
+            auto chosen = choose_target(options, std::string(services::card_names.at(card - 1)) + "：選擇目標");
             chosen_card_target = chosen; // Presentation only (card_effect).
             return chosen;
         };
@@ -2368,7 +2384,7 @@ struct GameSession::Impl {
             for (std::size_t i = 0; i < 13; ++i)
                 if (world.players[victim].state.tool_amounts[i])
                     choices.push_back({CardTargetKind::tool, static_cast<std::uint16_t>(i + 1)});
-            return choose_target(choices, "选择要取得的卡片或道具");
+            return choose_target(choices, "請選擇要搶的卡片或道具");
         };
         callbacks.choose_facility_type = [this](auto slot) { return choose_facility_type(slot); };
         callbacks.say = [this](auto slot, auto row, auto card, auto mood) {
@@ -2468,26 +2484,30 @@ struct GameSession::Impl {
         const auto key = choice_sequence++;
         if (const auto answer = event_choices.find(key); answer != event_choices.end())
             return static_cast<std::uint16_t>(answer->second);
-        GameDecision prompt{
-            DecisionKind::action_target, actor(), 0, 0, source ? "选择目的地" : "选择道具目标", {}};
+        // items.cpp matches "目的" to pick the destination cursor; keep it in that prompt.
+        GameDecision prompt{DecisionKind::action_target,
+                            actor(),
+                            0,
+                            0,
+                            source ? "選擇目的地" : tool == 8 ? "選擇點數" : "選擇目標",
+                            {}};
         if (tool == 8)
             for (int value = 1; value <= 6; ++value)
-                prompt.options.push_back({std::to_string(value) + "点", value});
+                prompt.options.push_back({std::to_string(value) + "點", value});
         else
             for (auto code : tool_targets(tool, source)) {
-                std::string label;
-                if (code < 2000)
-                    label = "道路" + std::to_string(code);
-                else if (code < 6000)
-                    label = target_label({CardTargetKind::property, code});
-                else if (code & 0xffU)
-                    label = target_label({CardTargetKind::actor, static_cast<std::uint16_t>(std::countr_zero(
-                                                                     static_cast<unsigned>(code & 0xffU)))});
-                else
-                    label = target_label(
-                        {CardTargetKind::object, static_cast<std::uint16_t>((code >> 8U) & 0x3fU)});
+                std::optional<CardTarget> subject; // nullopt: a road node
+                if (code >= 2000 && code < 6000)
+                    subject = CardTarget{CardTargetKind::property, code};
+                else if (code >= 6000 && (code & 0xffU))
+                    subject = CardTarget{CardTargetKind::actor, static_cast<std::uint16_t>(std::countr_zero(
+                                                                    static_cast<unsigned>(code & 0xffU)))};
+                else if (code >= 6000)
+                    subject =
+                        CardTarget{CardTargetKind::object, static_cast<std::uint16_t>((code >> 8U) & 0x3fU)};
                 const auto point = instance_position(code);
-                prompt.options.push_back({std::move(label), code, DecisionLocation{point.x, point.y}});
+                prompt.options.push_back({subject ? target_label(*subject) : std::string("道路"), code,
+                                          DecisionLocation{point.x, point.y}, subject});
             }
         prompt.options.push_back({"取消", 0});
         throw NeedChoice{std::move(prompt), key};
@@ -2750,25 +2770,25 @@ struct GameSession::Impl {
         });
     }
     void shop_prompt() {
-        GameDecision prompt{DecisionKind::shop, actor(), 0, 0, "商店：选择购买或出售的物品", {}};
+        GameDecision prompt{DecisionKind::shop, actor(), 0, 0, "商店：選擇購買或出售的物品", {}};
         for (auto card : shop->cards)
-            prompt.options.push_back({"买 " + std::string(services::card_names.at(card - 1)) + " " +
-                                          std::to_string(services::card_prices.at(card - 1)) + "点",
+            prompt.options.push_back({"買 " + std::string(services::card_names.at(card - 1)) + " " +
+                                          std::to_string(services::card_prices.at(card - 1)) + "點",
                                       100 + card});
         for (auto tool : shop->tools)
-            prompt.options.push_back({"买 " + std::string(services::tool_names.at(tool - 1)) + " " +
-                                          std::to_string(services::tool_prices.at(tool - 1)) + "点",
+            prompt.options.push_back({"買 " + std::string(services::tool_names.at(tool - 1)) + " " +
+                                          std::to_string(services::tool_prices.at(tool - 1)) + "點",
                                       200 + tool});
         for (auto card : player().cards)
             if (card && std::none_of(prompt.options.begin(), prompt.options.end(),
                                      [&](const auto &option) { return option.value == 300 + card; }))
                 prompt.options.push_back(
-                    {"卖 " + std::string(services::card_names.at(card - 1)), 300 + card});
+                    {"賣 " + std::string(services::card_names.at(card - 1)), 300 + card});
         for (std::size_t tool = 0; tool < services::tool_names.size(); ++tool)
             if (player().tool_amounts[tool])
                 prompt.options.push_back(
-                    {"卖 " + std::string(services::tool_names[tool]), static_cast<std::int32_t>(401 + tool)});
-        prompt.options.push_back({"离开", 0});
+                    {"賣 " + std::string(services::tool_names[tool]), static_cast<std::int32_t>(401 + tool)});
+        prompt.options.push_back({"離開", 0});
         decision = std::move(prompt);
         set_phase(GamePhase::awaiting_decision);
     }
@@ -2847,10 +2867,10 @@ struct GameSession::Impl {
     }
     void magic_effect_prompt(unsigned category) {
         magic_category = category;
-        GameDecision prompt{DecisionKind::magic_effect, actor(), 0, 0, "选择魔法效果", {}};
+        GameDecision prompt{DecisionKind::magic_effect, actor(), 0, 0, "選擇魔法效果", {}};
         for (std::size_t i = 0; i < services::magic_effects.size(); ++i)
             prompt.options.push_back({std::string(services::magic_effects[i]), static_cast<std::int32_t>(i)});
-        prompt.options.push_back({"重新选择角色", -1});
+        prompt.options.push_back({"重新選擇角色", -1});
         decision = std::move(prompt);
         set_phase(GamePhase::awaiting_decision);
     }
@@ -2865,7 +2885,7 @@ struct GameSession::Impl {
             magic_effect(selected->effect);
             return;
         }
-        GameDecision prompt{DecisionKind::magic_category, actor(), 0, 0, "选择魔法作用的角色", {}};
+        GameDecision prompt{DecisionKind::magic_category, actor(), 0, 0, "選擇魔法作用的角色", {}};
         for (std::size_t i = 0; i < services::magic_categories.size(); ++i)
             if (!services::magic_targets(world, static_cast<unsigned>(i)).empty())
                 prompt.options.push_back(
@@ -3031,18 +3051,18 @@ struct GameSession::Impl {
                 options.push_back({"提款", 2});
             if (!passing) {
                 if (!status().days_bank_no_loans)
-                    options.push_back({"贷款", 3});
+                    options.push_back({"貸款", 3});
                 if (player().loan > 0)
-                    options.push_back({"还贷", 4});
+                    options.push_back({"還貸", 4});
                 if (owns_current_bank()) {
                     if (!status().days_bank_no_loans && financing_limit() > 0)
-                        options.push_back({"银行融资", 5});
+                        options.push_back({"銀行融資", 5});
                     if (player().special_finance > 0)
-                        options.push_back({"归还融资", 6});
+                        options.push_back({"歸還融資", 6});
                 }
             }
-            options.push_back({"离开", 0});
-            decision = GameDecision{DecisionKind::bank, actor(), 0, 0, "办理存款或提款", std::move(options)};
+            options.push_back({"離開", 0});
+            decision = GameDecision{DecisionKind::bank, actor(), 0, 0, "辦理存款或提款", std::move(options)};
             set_phase(GamePhase::awaiting_decision);
         } else {
             run_rule(
@@ -3111,7 +3131,12 @@ struct GameSession::Impl {
             else if (node.type_and_index == 0)
                 finish_turn();
             else
-                unsupported("这个设施的规则尚未完成");
+                // Hospital/prison buildings 8001/8002 (any code outside the three ranges):
+                // the original falls into the common property tail
+                // (core_actions:369-371 -> loc_0041b077: after-property god check + flight
+                // bombardment), then ends the turn. finish_turn() runs that tail because
+                // property_pending is set.
+                finish_turn();
         } else if (kind == 1)
             finish_turn();
         else if (kind == 2 || kind == 3)
@@ -3155,18 +3180,10 @@ struct GameSession::Impl {
             finish_turn();
         } else if (kind == 14)
             open_bank(false);
-        else {
-            const char *name = kind == 2    ? "新闻"
-                               : kind == 3  ? "命运"
-                               : kind == 4  ? "监狱"
-                               : kind == 5  ? "医院"
-                               : kind == 9  ? "彩票"
-                               : kind == 13 ? "卡片"
-                               : kind == 15 ? "商店"
-                               : kind == 16 ? "魔法屋"
-                                            : "特殊地点";
-            unsupported(std::string(name) + "规则尚未完成；继续将略过本次事件");
-        }
+        else
+            // Node kind > 16: the original's `cmp ebx,0x10; ja loc_0041b3d0`
+            // (core_actions:361) ends the turn silently. No shipped map has one.
+            finish_turn();
     }
     std::int32_t wealth(std::size_t slot) const {
         return stocks::player_wealth(world, slot);

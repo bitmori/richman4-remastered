@@ -87,6 +87,12 @@ struct RenderStats {
 // original 29-by-29 camera neighborhood return nullopt, as the game culls them.
 [[nodiscard]] std::optional<Point> project(Point world, const Camera &camera);
 
+// Inverse of project() at ground-tile resolution: the world centre (tile * 32 + 16) of the
+// ground tile whose projected centre is nearest to `screen`, among the 29-by-29 tiles project()
+// draws. nullopt when `screen` lies outside the viewport. Used for board hit-testing
+// (the original's _rich4_get_instance_from_position reads an ID buffer of the same view).
+[[nodiscard]] std::optional<Point> unproject(Point screen, const Camera &camera);
+
 class Renderer {
   public:
     // map_id is global: stage * 4 + map, in [0, 7]. MAP.MKF and DATA.MKF are

@@ -67,6 +67,9 @@ struct DecisionOption {
     std::string label;
     std::int32_t value;
     std::optional<DecisionLocation> location = std::nullopt;
+    // Presentation only: what the option names, so the app can show the original name
+    // (character, street, facility, company, special actor, object) instead of `label`.
+    std::optional<CardTarget> subject = std::nullopt;
 };
 
 // Presentation state of the original number-roll UIs (docs/ui/messages.md §2.3), mirrored by the

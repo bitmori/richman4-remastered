@@ -103,13 +103,31 @@ void boundaries_are_explicit() {
     Random random(12);
     world.news_deck[0] = 7;
     const auto before = random.state();
-    require(!apply_news(world, random).supported && world.news_cursor == 0 && random.state() == before,
-            "Missing mandatory auction remains an explicit gate and does not consume the deck/RNG");
+    require(!apply_news_id(world, random, 7).supported && random.state() == before,
+            "Missing mandatory auction remains an explicit gate in the handler and does not consume RNG");
+    {
+        auto deck = world;
+        Random deck_random(12);
+        const auto result = apply_news(deck, deck_random);
+        require(result.supported && result.event_id != 7 && deck.news_cursor != 0,
+                "A news card whose handler cannot run is skipped like an ineligible card, never repeated");
+    }
     world.facilities[1].level = 1;
-    require(news_eligible(world, 15) && !apply_news_id(world, random, 15).supported &&
+    require(!news_eligible(world, 15) && !apply_news_id(world, random, 15).supported &&
                 random.state() == before,
-            "Original event15 facility/land inconsistency is reported instead of divide-by-zero or invented "
-            "target");
+            "News 15 eligibility matches its handler (built ordinary land), so built facilities alone no "
+            "longer select the original's divide-by-zero case");
+    world.lands[1].economy.level = 1;
+    require(news_eligible(world, 15), "News 15 stays eligible once an ordinary land is built");
+    world.lands[1].economy.level = 0;
+    world.news_deck[0] = 15;
+    world.news_deck[1] = 15;
+    {
+        Random deck_random(12);
+        const auto result = apply_news(world, deck_random);
+        require(result.supported && result.event_id != 15 && world.news_cursor > 2,
+                "Facility-only boards skip news 15 and the deck moves on");
+    }
     world = fixture();
     world.players[1].state.cards[0] = 3;
     require(!apply_fortune_id(world, random, 0, 5).supported && world.players[1].state.cards[0] == 3,
