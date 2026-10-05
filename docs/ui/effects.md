@@ -286,13 +286,35 @@ This is not an in-board asset. It is the new-game flow:
 - Entries 0–7: raw 640×480 RGB555 backgrounds, used by `_rich4_init_new_game`
   (rich4_new_game.asm:3766).
 - Entries 8–44: SPR/SMP character-selection art.
-- After the map loads, `fcn_00415872` (rich4.asm:7166, called rich4_main.asm:376)
-  plays the "players jump in" intro:
-  1. Background SMP 45.
-  2. FLC 46 (220×240 at (180,60), flags 3, sound preset 25).
-  3. For each player, FLC `47 + character` (640×480, 28 ms, flags `0x14000003`:
-     skippable, sound preset 26 at frame 20).
-  4. For each player, FLC `59 + character` (42 ms, flags 3).
+- After the map loads, `fcn_00415872` (rich4.asm:7166–7710, called rich4_main.asm:376)
+  plays the "players jump in" intro. It is full screen and never touches the board.
+  Native: `tools/screens/intro.{hpp,cpp}`, started by `Application::install_session` for
+  a new game only. Main-loop order for a new game (rich4_main.asm:367–384):
+  `_rich4_init_new_game` → `_rich4_show_loading_scene` (raw Data 601 "Loading" card,
+  music stopped) → `_rich4_load_map` → `_rich4_init_panel_resources` → `fcn_004291d6`
+  → `fcn_00415872` → `_rich4_start_game_loop(0)`. Loading a save (loc_00401d08) goes
+  straight to the game loop with no loading card and no intro.
+  1. AVI first (`fcn_00451677`): `AIRPLANE.AVI` when `0x4991b6` is set, else
+     `FLY{TW,CHINA,JP,US}.AVI` by `0x4991b8`. A non-zero result (the video was
+     interrupted) skips the whole intro. All shipped AVIs are 5 112-byte Indeo stubs, so
+     the native port plays nothing here. Music track 1 starts (`fcn_00454d91(1)`).
+  2. Jump 45 is an SPR set: 0 = airplane side with the door open (640×480), 1 = sky
+     (640×480), 2 = left door-frame overlay (96×240), 3–14 = each character standing.
+     Sprite 0 is drawn full screen, Effect 25 plays once, then FLC 46 (door opening,
+     220×240, 15 × 71 ms) overlays at (180,60), flags 3.
+  3. Loop `i = 0..N` (N = player count, turn order): restore (180,60,220×240) from
+     sprite 0; if `i < N`, darken sprite `3 + character[i]` in place with brightness
+     level −20 (`fcn_004552b7`) and draw it at (270,220), then sprite 2 at (150,60) (the
+     next player waits in the doorway, in shadow, behind the frame); if `i > 0`, play FLC
+     `47 + character[i−1]` (640×480, 40 × 28 ms) at (0,0), flags `0x14000003`: overlay,
+     skippable, Effect 26 at frame 20 (`fcn_00450cda(ref_00475100, 0)`). Afterwards the
+     bottom-right (320,400)–(640,480) is restored, which erases the jumper's last frame.
+  4. Sprite 1 (sky) full screen; for each player FLC `59 + character` (parachute,
+     640×480, 37 × 42 ms) at (0,0), flags 3; the bottom strip (0,440)–(640,480) is
+     restored after each.
+  Every FLC is skippable (mouse-up or key-up); a skip jumps to the cleanup, ending the
+  whole intro. With 4 players it lasts about 1.1 + 4 × 1.1 + 4 × 1.55 ≈ 11.7 s.
+  The native port still places each player on their first turn (unchanged, no RNG impact).
 
 ## 8. Card / tool asm quick index
 
