@@ -393,7 +393,8 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
                                                      : std::array<const char *, 3>{"日期更改", "熱鍵設定", "遊戲說明"};
     const std::array<graphics::Rect, 3> big_rects{at(227, 14, 327, 49), at(227, 68, 327, 103), at(227, 119, 327, 154)};
     for (std::size_t i = 0; i < 3; ++i) {
-        const bool enabled = in_game_ && i != 1;
+        // Out of a game only 遊戲說明 (fcn_00411a96 -> _rich4_ui_help_entry(-1, -1)) is ported.
+        const bool enabled = in_game_ ? i != 1 : i == 2 && bool(actions.help);
         text(frame, big[i], (big_rects[i].left + big_rects[i].right) / 2, (big_rects[i].top + big_rects[i].bottom) / 2,
              2, enabled ? Style{16, 0x101010, 0, bold} : Style{16, 0x8a8070, 0, bold});
         if (enabled && frame.pointer_down && frame.pointer_in(big_rects[i]) && confirm_ < 0)
@@ -460,8 +461,14 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
             actions.play_song(unsigned(index + 1));
     });
     for (int i = 0; i < 3; ++i)
-        hit(host, ids::options_big[std::size_t(i)], big_rects[std::size_t(i)], click_sound, [this, i] { confirm_ = i; },
-            in_game_ && i != 1);
+        hit(host, ids::options_big[std::size_t(i)], big_rects[std::size_t(i)], click_sound,
+            [this, i, actions] {
+                if (in_game_)
+                    confirm_ = i;
+                else if (actions.help)
+                    actions.help(); // 遊戲說明
+            },
+            in_game_ ? i != 1 : i == 2 && bool(actions.help));
     hit(host, ids::options_cancel, at(190, 308, 261, 352), exit_sound, actions.close);
     hit(host, ids::options_ok, at(262, 308, 336, 352), click_sound, [this, actions] {
         actions.apply(state_);

@@ -21,6 +21,8 @@
 #include "screens/intro.hpp"   // new-game airplane / parachute intro
 #include "screens/spinners.hpp" // SPINNERS: god slot machine / cupid wheels
 #include "screens/monthly.hpp"  // MONTHLY: dividend table, lottery draw, month-end report
+#include "screens/endgame.hpp"  // END SCREENS: PLAY AGAIN / stage clear
+#include "screens/help.hpp"     // HELP: the original Help window
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -467,7 +469,8 @@ class Application {
                            : 500)
                                      : static_cast<unsigned>(std::min<Uint64>(now - last_tick, 100)) * speed_;
             last_tick = now;
-            if (session_ && screen_ == Screen::game && !items_.popup_active()) { // the card popup is modal
+            if (session_ && screen_ == Screen::game && !items_.popup_active() &&
+                !help_.active()) { // the card popup and the Help window are modal
                 observe(); // a GO press emits the roll before the clock advances
                 if (!effects_.active() && !messages_.active() && !intro_.active()) // only the step shown advances
                     main_screen_.advance(elapsed);
@@ -561,13 +564,17 @@ class Application {
     }
     // Screens where right-click / Escape / Android Back mean "cancel" in the original.
     bool cancellable() const {
-        return pad_.active() || screen_ == Screen::new_game || screen_ == Screen::settings ||
+        return help_.active() || pad_.active() || screen_ == Screen::new_game || screen_ == Screen::settings ||
                screen_ == Screen::wealth || screen_ == Screen::stocks || screen_ == Screen::load ||
                screen_ == Screen::trading ||
                screen_ == Screen::save || (screen_ == Screen::game && bank_pending());
     }
     void cancel_screen() {
         auto host = make_host();
+        if (help_.active()) { // HELP: right-click / Back / Escape close it
+            help_.cancel(host);
+            return;
+        }
         if (pad_.active()) {
             pad_.cancel(host);
             return;
@@ -599,7 +606,9 @@ class Application {
     }
     // Where settings / save / load / player info return to: the menu they came from, else the game.
     Screen back_screen() const {
-        return session_ && previous_screen_ != Screen::menu ? Screen::game : Screen::menu;
+        return session_ && session_->phase() != GamePhase::finished && previous_screen_ != Screen::menu
+                   ? Screen::game
+                   : Screen::menu;
     }
     // Answers the pending decision with the option whose value is `value`.
     bool respond_value(std::int32_t value, std::int32_t amount) {
@@ -784,6 +793,11 @@ class Application {
             initial_random_state_ = session_->random_state();
         rotation_ = session_->world().camera_rotation % 8;
         screen_ = Screen::game;
+        endgame_.close(); // END SCREENS
+        endgame_session_ = nullptr;
+        humans_at_start_ = 0;
+        for (const auto &player : session_->world().players)
+            humans_at_start_ += (player.state.controller_flags & 1U) != 0;
         last_autosaved_day_ = UINT64_MAX;
         bank_done_for_visit_ = false;
         messages_.clear();
@@ -982,6 +996,7 @@ class Application {
         if (session_ && screen_ == Screen::game)
             draw_intro();
         if (screen_ == Screen::menu) {
+            cleared_maps_ = 0; // END SCREENS: the main menu ends a campaign (loc_00401c8c)
             main_menu_.draw(host, {[this] {
                                        if (session_ && session_->phase() != GamePhase::finished)
                                            screen_ = Screen::game;
@@ -1013,7 +1028,8 @@ class Application {
                        },
                        audio_->music_enabled() ? audio_->music_track() : 0,
                        [this] { open_setup(selected_stage_); },
-                       [this] { running_ = false; }});
+                       [this] { running_ = false; },
+                       [this] { help_.open(-1, -1); }}); // HELP: Options 遊戲說明, centred
         } else if (screen_ == Screen::load || screen_ == Screen::save) {
             buttons_.clear();
             slots_.draw(host, [this](int slot) { choose_slot(slot); }, [this] { screen_ = back_screen(); });
@@ -1045,6 +1061,10 @@ class Application {
         if (pad_.active()) { // The number pad is modal over every screen.
             buttons_.clear();
             pad_.draw(host);
+        }
+        if (help_.active()) { // HELP: modal window over the current screen
+            buttons_.clear();
+            help_.draw(host);
         }
         if (!toast_.empty() && SDL_GetTicks() < toast_until_) {
             ui::fill(canvas_, {210, 439, 430, 474}, ui::paper);
@@ -1231,7 +1251,7 @@ class Application {
                 companies.push_back({company.id, company.owner_code, 0, 0});
         board_->render(canvas_, {players, objects, lands, facilities, special_players, companies}, camera);
         native::MainScreenActions actions;
-        actions.help = [this] { notify_action(false, "說明功能尚未提供"); };
+        actions.help = [this] { help_.open(20, 60); }; // HELP: toolbar "?" opens at (20, 60)
         actions.options = [this] { screen_ = Screen::settings; };
         actions.ai = [this] { notify_action(false, "託管功能尚未提供"); };
         actions.load = [this] { open_load(); };
@@ -1266,17 +1286,64 @@ class Application {
         if (screen_ == Screen::game && session_->pending_decision() && !messages_.active() &&
             presentation_.empty() && !presenting())
             draw_decision();
-        if (session_->phase() == GamePhase::finished) {
-            buttons_.clear();
-            dialog({95, 125, 545, 350}, "遊戲結束");
-            const auto winner = session_->winning_player();
-            const auto result =
-                winner ? std::string(names.at(world.players.at(*winner).state.character)) + "獲勝！"
-                       : "本局已結束";
-            font_.draw(canvas_, result, 120, 190, 18, ui::ink, 395);
-            button(71, {125, 280, 275, 322}, "存檔", [this] { save(); });
-            button(110, {295, 280, 515, 322}, "返回主選單", [this] { screen_ = Screen::menu; });
+        draw_endgame(); // END SCREENS
+    }
+    // END SCREENS (screens/endgame.hpp): once a finished session's last presentation has played,
+    // the original end sequence runs over the board. Exit codes as rich4_main.asm's 0x46caf8.
+    void draw_endgame() {
+        if (session_->phase() != GamePhase::finished || screen_ != Screen::game)
+            return;
+        if (endgame_session_ != session_.get()) {
+            if (!presentation_.empty() || presenting())
+                return;
+            endgame_session_ = session_.get();
+            start_endgame();
         }
+        if (!endgame_.active())
+            return;
+        buttons_.clear();
+        auto host = make_host();
+        endgame_.draw(host, messages_.active(), endgame_actions());
+    }
+    void start_endgame() {
+        const auto &world = session_->world();
+        const auto stage = world.header.stage_id % 2U, map = world.header.map_id % 4U;
+        if (const auto winner = session_->winning_player()) {
+            // Winner's line (event slot 24), then fcn_004075c1 (exit code 2 with one human, else 3).
+            const auto character = world.players.at(*winner).state.character;
+            messages_.push(messages::speech_bubble(character, 24, std::nullopt));
+            if (cleared_stage_ != stage)
+                cleared_maps_ = 0;
+            cleared_stage_ = stage;
+            cleared_maps_ = static_cast<std::uint8_t>(cleared_maps_ | (1U << map));
+            endgame_.open_stage_clear({stage, map, character, cleared_maps_, humans_at_start_ <= 1,
+                                       options_.seed ^ static_cast<std::uint32_t>(session_->completed_days())});
+        } else if (humans_at_start_ <= 1) {
+            // TODO(audio): the bankruptcy context music (MIDI03) keeps playing here via Audio::push_music.
+            endgame_.open_play_again(); // the only human went bankrupt: fcn_00407842(0)
+        } else {
+            screen_ = Screen::menu; // several humans, all bankrupt: exit code 1
+        }
+    }
+    screens::EndgameActions endgame_actions() {
+        return {[this] {
+                    // Game-over line (event slot 26) of the player whose turn ended the game.
+                    const auto &world = session_->world();
+                    const auto character =
+                        world.players.at(world.header.current_player % world.players.size()).state.character;
+                    messages_.push(messages::speech_bubble(character, 26, std::nullopt));
+                },
+                [this](bool load) {
+                    screen_ = Screen::menu;
+                    if (load)
+                        open_load(); // exit code 4: the load screen; without saves the menu stays
+                },
+                [this](unsigned map) { // exit code 2: the campaign continues on the picked map
+                    selected_stage_ = cleared_stage_;
+                    selected_map_ = map;
+                    open_setup(cleared_stage_);
+                },
+                [this] { screen_ = Screen::menu; }};
     }
     native::items::Host item_host() {
         return {[this] { screen_ = Screen::game; },
@@ -1568,7 +1635,7 @@ class Application {
             test_stage_ = 1;
             return;
         }
-        if (screen_ == Screen::new_game) {
+        if (screen_ == Screen::new_game && test_stage_ != 5) { // stage 5: leaving the end screens
             if (setup_.map() != selected_map_)
                 push_button(screens::ids::setup_map + int(selected_map_));
             else if (setup_.picks().empty())
@@ -1734,24 +1801,35 @@ class Application {
             expected_random_ = session_->random_state();
             ui::write_file(options_.output / "after.DAT", expected_reload_);
             graphics::write_ppm(canvas_, options_.output / "after.ppm");
-            push_button(71);
+            if (test_finished_)
+                save(); // END SCREENS: the original end screens offer no save control
+            else
+                push_button(71);
             test_stage_ = 3;
             return;
         }
         if (test_stage_ == 3) {
             test_load_count_before_reload_ = loads_;
             if (test_finished_) {
-                push_button(110);
-                test_stage_ = 5;
+                test_stage_ = 5; // leave the end screen below, then reload through the main menu
             } else {
                 push_button(72);
                 test_stage_ = 4;
             }
             return;
         }
-        if (test_stage_ == 5) {
-            push_button(2);
-            test_stage_ = 4;
+        if (test_stage_ == 5) { // END SCREENS: the stage-clear map pick opens the setup; EXIT returns to the
+                                // menu. PLAY AGAIN opens Load, whose slot the load branch above picks.
+            if (loads_ != test_load_count_before_reload_)
+                test_stage_ = 4;
+            else if (screen_ == Screen::menu) {
+                push_button(screens::ids::menu_load);
+                test_stage_ = 4;
+            } else if (screen_ == Screen::new_game) {
+                if (!setup_.busy())
+                    push_button(screens::ids::setup_exit);
+            } else if (endgame_.exit_button() >= 0)
+                push_button(endgame_.exit_button());
             return;
         }
         if (test_stage_ == 4) {
@@ -2144,11 +2222,91 @@ class Application {
         point(406, 229, true);
         decision_shot(world, auction, "auction");
         point(-1, -1);
+        gallery_help_endgame(shot, point); // HELP / END SCREENS
+        { // Festival calendar pictures (Christmas) on the main screen and the bank side panel.
+            auto christmas = session_->world();
+            christmas.header.date = {25, 12, 2026};
+            install_session(std::move(christmas), options_.seed);
+            main_screen_.cycle_view_mode();
+            main_screen_.cycle_view_mode(); // view 0: info panel + calendar
+            shot("calendar-festival");
+            main_screen_.cycle_view_mode(); // back to the default view
+            bank_screen_.reset();
+            const std::function<void()> redraw_festival = [&] { render(session_->world(), bank); };
+            redraw_festival();
+            press(screens::ids::atm_exit, redraw_festival);
+            press(screens::ids::desk_loan, redraw_festival); // the loan pad shows the side-panel calendar
+            decision_shot(session_->world(), bank, "bank-festival");
+            pad_.close();
+        }
         session_.reset();
         screen_ = Screen::settings;
         shot("options-menu");
+        press(screens::ids::options_big[2]); // HELP: 遊戲說明 out of a game, centred
+        shot("help-options");
+        help_.close();
         std::cout << "Gallery written to " << options_.gallery << '\n';
         return 0;
+    }
+    // HELP / END SCREENS gallery shots over the current board; endgame time advances 50 ms per step.
+    template <typename Shot, typename Point> void gallery_help_endgame(const Shot &shot, const Point &point) {
+        screen_ = Screen::game;
+        help_.open(20, 60);
+        shot("help-toolbar");
+        press(screens::ids::help_category + 3); // 房地產 / 公司企業: three pages
+        press(screens::ids::help_page_next);
+        shot("help-paged");
+        press(screens::ids::help_category + 6); // 卡片: 30 topics
+        press(screens::ids::help_list_down);
+        press(screens::ids::help_topic + 1);
+        point(320, 64, true); // holding the next-page arrow
+        shot("help-cards-scrolled");
+        point(-1, -1);
+        help_.close();
+        std::uint64_t ticks = SDL_GetTicks();
+        const auto run = [&](unsigned steps, bool redraw_board) {
+            auto host = make_host();
+            host.instant = false;
+            for (unsigned i = 0; i < steps; ++i) {
+                if (redraw_board)
+                    draw();
+                ticks += 50;
+                frame_.ticks = ticks;
+                buttons_.clear();
+                endgame_.draw(host, false, {});
+            }
+        };
+        const auto save_shot = [&](const std::string &name) {
+            graphics::write_ppm(canvas_, options_.gallery / (name + ".ppm"));
+        };
+        endgame_.open_play_again();
+        run(2, true);
+        save_shot("endgame-play-again");
+        run(70, true);
+        save_shot("endgame-play-again-later");
+        for (const auto &button : buttons_)
+            if (button.id == screens::ids::endgame_play_again)
+                button.action();
+        run(2, true);
+        save_shot("endgame-movie-early");
+        run(8, true);
+        save_shot("endgame-movie-late");
+        endgame_.open_stage_clear({0, 1, 10, 0b0011, true, 7});
+        run(8, false);
+        save_shot("endgame-stage-clear-drop");
+        point(330, 385); // over JAPAN (uncleared): highlighted
+        run(40, false);
+        save_shot("endgame-stage-clear-hover");
+        for (const auto &button : buttons_)
+            if (button.id == screens::ids::endgame_plate + 2)
+                button.action();
+        run(3, false);
+        save_shot("endgame-stage-clear-picked");
+        point(-1, -1);
+        endgame_.open_stage_clear({1, 2, 3, 0b0100, false, 9});
+        run(30, false);
+        save_shot("endgame-stage-clear-multi");
+        endgame_.close();
     }
     // Renders sample overlays over the current board for visual review (headless --output only).
     void dump_overlay_gallery() {
@@ -2358,6 +2516,14 @@ class Application {
     screens::NewGameSetup setup_;
     screens::SaveLoadScreen slots_;
     screens::OptionsScreen options_screen_;
+    // END SCREENS: shown once per finished session (endgame_session_); cleared_maps_ is the
+    // original 0x4990f0 campaign record of the stage (reset on the main menu, as loc_00401c8c).
+    screens::EndgameScreen endgame_;
+    const GameSession *endgame_session_ = nullptr;
+    std::uint8_t cleared_maps_ = 0;
+    unsigned cleared_stage_ = 0;
+    unsigned humans_at_start_ = 1; // _num_human_players, counted when a session is installed
+    screens::HelpScreen help_; // HELP: modal over any screen
     screens::PlayerInfo info_;
     screens::TradingBoard trading_board_;
     native::items::Screens items_;

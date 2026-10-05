@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "draw.hpp"
 
+#include "rich4/holidays.hpp"
+
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <tuple>
 #include <vector>
 
@@ -137,6 +140,24 @@ graphics::Image raw_picture(Artwork &artwork, char archive, std::size_t entry, i
     for (std::size_t i = 0; i < count; ++i)
         image.pixels[i] = static_cast<std::uint16_t>((bytes[2 * i] | bytes[2 * i + 1] << 8) & 0x7fff);
     return image;
+}
+
+const graphics::Image *festival_picture(Artwork &artwork, const World &world) {
+    const auto &date = world.header.date;
+    std::optional<std::size_t> entry;
+    try {
+        entry = holidays::festival_picture({date.year, date.month, date.day}, world.header.map_id,
+                                           world.header.stage_id);
+    } catch (const std::exception &) { // invalid date or map: keep the season picture
+        return nullptr;
+    }
+    if (!entry)
+        return nullptr;
+    static std::map<std::pair<const Artwork *, std::size_t>, graphics::Image> cache;
+    auto &image = cache[{&artwork, *entry}];
+    if (image.pixels.empty())
+        image = raw_picture(artwork, 'd', *entry, 200, 200);
+    return &image;
 }
 
 void blit_part(graphics::Image &canvas, const graphics::Image &image, graphics::Rect source, int x, int y) {

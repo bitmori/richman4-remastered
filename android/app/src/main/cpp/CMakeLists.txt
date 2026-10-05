@@ -73,6 +73,8 @@ add_library(main SHARED
   "${RICH4_REPO}/tools/screens/items.cpp"
   "${RICH4_REPO}/tools/screens/spinners.cpp"
   "${RICH4_REPO}/tools/screens/monthly.cpp"
+  "${RICH4_REPO}/tools/screens/endgame.cpp"
+  "${RICH4_REPO}/tools/screens/help.cpp"
   rich4_android.cpp)
 add_dependencies(main libiconv_build)
 target_include_directories(main PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${ICONV_PREFIX}/include")

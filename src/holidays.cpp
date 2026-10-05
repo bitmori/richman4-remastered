@@ -145,15 +145,17 @@ std::optional<calendar::Date> lunar_date(calendar::Date date) {
     return calendar::unpack(run.first_date + static_cast<std::uint32_t>(day - run.first_day));
 }
 
-bool is_closed(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
+// fcn_004521f0: index of the first matching holiday-table row whose flags lack 0x80, else nullopt
+// (the original returns -1). The row also selects the festival picture (festival_picture).
+std::optional<std::size_t> festival_row(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
     if (map > 3 || stage > 1)
         throw std::invalid_argument("Holiday map/stage is outside the original eight maps");
-    const auto weekday = calendar::weekday(date); // Also validates the date.
-    if (weekday == 0)
-        return true;
+    (void)calendar::weekday(date); // Validates the date.
     const auto lunar = lunar_date(date);
     auto compared = calendar::pack(date) & 0xffffU;
-    for (const auto &rule : rules[stage * 4U + map]) {
+    const auto &table = rules[stage * 4U + map];
+    for (std::size_t row = 0; row < table.size(); ++row) {
+        const auto &rule = table[row];
         std::uint32_t target = 0;
         if (rule.calendar == 0) {
             target = (std::uint32_t(rule.month) << 8U) | rule.day_or_nth;
@@ -177,9 +179,28 @@ bool is_closed(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
                 target = (std::uint32_t(rule.month) << 8U) | static_cast<std::uint32_t>(day);
         }
         if (compared == target && (rule.flags & 0x80U) == 0)
-            return rule.flags != 0;
+            return row;
     }
-    return false;
+    return std::nullopt;
+}
+
+// fcn_004523d5: Sunday, or a matched row with non-zero flags.
+bool is_closed(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
+    if (map > 3 || stage > 1)
+        throw std::invalid_argument("Holiday map/stage is outside the original eight maps");
+    if (calendar::weekday(date) == 0) // Also validates the date.
+        return true;
+    const auto row = festival_row(date, map, stage);
+    return row && rules[stage * 4U + map][*row].flags != 0;
+}
+
+std::optional<std::size_t> festival_picture(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
+    // ref_00475208: first Data.mkf picture of each stage*4+map table (Data 4..127).
+    static constexpr std::array<std::uint16_t, 8> first_picture{4, 28, 47, 67, 87, 108, 95, 118};
+    const auto row = festival_row(date, map, stage);
+    if (!row)
+        return std::nullopt;
+    return std::size_t(first_picture[stage * 4U + map]) + *row;
 }
 
 calendar::Date loan_due_date(calendar::Date current, std::uint16_t map, std::uint16_t stage) {
