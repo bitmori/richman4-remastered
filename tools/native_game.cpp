@@ -63,7 +63,7 @@ struct Options {
 Options arguments(int argc, char **argv) {
     const fs::path home = std::getenv("HOME") ? std::getenv("HOME") : ".";
     Options options;
-    options.assets = home / "Downloads/rich4-original-game";
+    options.assets = RICH4_DEFAULT_ASSETS;
     options.save_directory = home / "Library/Application Support/Rich4Native/saves";
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];

@@ -262,7 +262,7 @@ def coverage(cases, results):
 
 
 def run(*, binary=playability.DEFAULT_BINARY, fixture_binary=DEFAULT_FIXTURE_BINARY,
-        game=Path.home() / "Downloads/rich4-original-game", output=None, workers=2, turns=30, timeout=180):
+        game=(Path(__file__).resolve().parents[1] / "game-assets"), output=None, workers=2, turns=30, timeout=180):
     if workers not in (1, 2) or turns < 1 or timeout < 1:
         raise ValueError("workers must be 1 or 2; turns and timeout must be positive")
     binary, fixture_binary, game = (Path(value).expanduser().resolve() for value in (binary, fixture_binary, game))
@@ -338,7 +338,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=playability.DEFAULT_BINARY)
     parser.add_argument("--fixture-binary", type=Path, default=DEFAULT_FIXTURE_BINARY)
-    parser.add_argument("--game", type=Path, default=Path.home() / "Downloads/rich4-original-game")
+    parser.add_argument("--game", type=Path, default=(Path(__file__).resolve().parents[1] / "game-assets"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--workers", type=int, choices=(1, 2), default=2)
     parser.add_argument("--turns", type=int, default=30)

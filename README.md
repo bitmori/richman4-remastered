@@ -24,7 +24,7 @@ Mac 资源查看器使用 SDL3，实际程序为 ARM64：
 
 ```sh
 build/native/rich4-resource-viewer.app/Contents/MacOS/rich4-resource-viewer \
-  ~/Downloads/rich4-original-game/Data.mkf 1 0
+  game-assets/Data.mkf 1 0
 ```
 
 左右键切换帧，PageUp/PageDown 切换资源，Escape 退出。这个窗口是资源检查工具，背景中的原版菜单按钮尚不执行游戏动作。
@@ -32,9 +32,9 @@ build/native/rich4-resource-viewer.app/Contents/MacOS/rich4-resource-viewer \
 命令行工具可以检查所有图片、导出资源/帧、读取并无损重写存档。例如：
 
 ```sh
-build/native/rich4-tool inspect ~/Downloads/rich4-original-game/Data.mkf
-build/native/rich4-tool frame ~/Downloads/rich4-original-game/Data.mkf 1 0 artifacts/menu.ppm
-build/native/rich4-tool terrain ~/Downloads/rich4-original-game/map.mkf 0 artifacts/taiwan.ppm
+build/native/rich4-tool inspect game-assets/Data.mkf
+build/native/rich4-tool frame game-assets/Data.mkf 1 0 artifacts/menu.ppm
+build/native/rich4-tool terrain game-assets/map.mkf 0 artifacts/taiwan.ppm
 ```
 
 地面导出是按 tile 索引拼接的俯视源纹理，不是游戏中的投影相机画面。
@@ -85,7 +85,7 @@ python3 scripts/run_native_playability.py --turns 30 --seed 42
 
 ```sh
 python3 scripts/test_android_core.py --serial emulator-5554 \
-  --oracle .local/oracle/latest --game ~/Downloads/rich4-original-game
+  --oracle .local/oracle/latest --game game-assets
 ```
 
 这是原生库/命令行测试，不会安装 APK。报告位于 `artifacts/android-core/`。后续 Android 应用仍需要 SDL 窗口集成、素材导入、触摸输入、音频与生命周期处理。
@@ -117,7 +117,7 @@ Big5 保持不变。已从本机 Microsoft Word 的字体目录安装 `mingliu.t
 ```sh
 brew install mingw-w64 nasm
 ./scripts/build_upstream.sh
-python3 scripts/setup_mac.py ~/Downloads/rich4-original-game
+python3 scripts/setup_mac.py game-assets
 ./scripts/run_mac.sh rich4.exe
 ```
 
@@ -125,7 +125,7 @@ python3 scripts/setup_mac.py ~/Downloads/rich4-original-game
 也可使用 `--font /path/to/mingliu.ttc` 指定本机字体。找不到时采用开源 Noto Serif CJK TC；替代字体的字形不与原版完全相同。
 
 Boxedwine 官方 Mac 应用启用了沙盒，因此游戏、字体、Wine 文件系统均放在其容器内；不需要关闭系统或应用沙盒。
-原始 Downloads 文件夹保持不变。安装脚本不覆盖已有游戏素材或存档。
+原始素材文件夹保持不变。安装脚本不覆盖已有游戏素材或存档。
 
 ## 存档位置
 

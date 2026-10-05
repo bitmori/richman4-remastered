@@ -158,7 +158,7 @@ SPR 114 组逐像素一致。Terrain 与 RNG 的最新验证结果见各自迁�
 前置：按 README 准备本机 Boxedwine/Wine 和 MinGW；原版资源只需用户本机持有。
 
 ```sh
-# 创建新的原版捕获；默认 ~/Downloads/rich4-original-game
+# 创建新的原版捕获；默认 game-assets
 python3 scripts/run_asset_oracle.py
 
 # 捕获并立即与原生工具逐字节比较

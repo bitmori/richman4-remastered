@@ -97,7 +97,7 @@ def words(o, trades):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--game', type=Path, default=Path.home() / 'Downloads/rich4-original-game')
+    parser.add_argument('--game', type=Path, default=(Path(__file__).resolve().parents[1] / "game-assets"))
     parser.add_argument('--scenarios', type=int, default=512)
     args = parser.parse_args()
     executable = next(p for p in args.game.iterdir() if p.name.lower() == 'rich4.exe').read_bytes()

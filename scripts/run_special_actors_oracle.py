@@ -100,7 +100,7 @@ class Actors(Spinner):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('game',type=Path,nargs='?',default=Path.home()/'Downloads/rich4-original-game')
+    parser.add_argument('game',type=Path,nargs='?',default=(Path(__file__).resolve().parents[1] / "game-assets"))
     parser.add_argument('--native-test',type=Path)
     args=parser.parse_args()
     source=next(p for p in args.game.iterdir() if p.name.lower()=='rich4.exe'); executable=source.read_bytes()

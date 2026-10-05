@@ -59,7 +59,7 @@ def audit(directory):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("directory", type=Path, nargs="?", default=Path.home() / "Downloads/rich4-original-game")
+    parser.add_argument("directory", type=Path, nargs="?", default=(Path(__file__).resolve().parents[1] / "game-assets"))
     args = parser.parse_args()
     result = audit(args.directory.expanduser().resolve())
     print(json.dumps(result, ensure_ascii=False, indent=2))

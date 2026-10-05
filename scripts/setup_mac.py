@@ -36,7 +36,7 @@ def verify_registry(family, font_name):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("game", type=Path, nargs="?", default=Path.home() / "Downloads/rich4-original-game")
+    parser.add_argument("game", type=Path, nargs="?", default=(Path(__file__).resolve().parents[1] / "game-assets"))
     parser.add_argument("--font", type=Path, help="Local MingLiU TTC file (never redistributed)")
     args = parser.parse_args()
     if subprocess.run(["pgrep", "-x", "Boxedwine"], stdout=subprocess.DEVNULL).returncode == 0:

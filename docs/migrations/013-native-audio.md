@@ -65,7 +65,7 @@ FluidSynth 设置 `player.timing-source=sample`，MIDI 时间由实际生成的 
 `tests/native_audio_tests.cpp` 在创建任何音频对象之前，用 `SDL_HINT_OVERRIDE` 强制 dummy 驱动。即使调用者环境选择硬件设备，测试也不会发出声音。不创建窗口或使用桌面自动化。
 
 ```sh
-build/native/native_audio_tests ~/Downloads/rich4-original-game
+build/native/native_audio_tests game-assets
 # 非 Mac 或覆盖默认音色库：
 build/native/native_audio_tests /path/to/original-assets /path/to/general-midi.sf2
 ```

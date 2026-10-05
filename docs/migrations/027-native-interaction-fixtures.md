@@ -11,10 +11,10 @@ the original EXE.
 ```sh
 cmake --build build/native --target rich4-native-fixture rich4-native
 build/native/rich4-native-fixture \
-  --assets "$HOME/Downloads/rich4-original-game" \
+  --assets "game-assets" \
   --output .local/native-interaction-fixtures
 build/native/rich4-native.app/Contents/MacOS/rich4-native \
-  --assets "$HOME/Downloads/rich4-original-game" \
+  --assets "game-assets" \
   --load .local/native-interaction-fixtures/cards-01-15.DAT
 ```
 

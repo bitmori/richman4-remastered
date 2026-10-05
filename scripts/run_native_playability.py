@@ -40,7 +40,7 @@ def verify_result(result, turns):
             raise RuntimeError(f"No actual progress for {name}")
 
 
-def run(*, binary=DEFAULT_BINARY, game=Path.home() / "Downloads/rich4-original-game", turns=30,
+def run(*, binary=DEFAULT_BINARY, game=(Path(__file__).resolve().parents[1] / "game-assets"), turns=30,
         seed=42, map_id=0, timeout=180, load=None, output=None, exercise_card=0, exercise_tool=0,
         exercise_recovery=False, exercise_trading=False):
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
@@ -127,7 +127,7 @@ def run(*, binary=DEFAULT_BINARY, game=Path.home() / "Downloads/rich4-original-g
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
-    parser.add_argument("--game", type=Path, default=Path.home() / "Downloads/rich4-original-game")
+    parser.add_argument("--game", type=Path, default=(Path(__file__).resolve().parents[1] / "game-assets"))
     parser.add_argument("--load", type=Path)
     parser.add_argument("--turns", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)

@@ -81,7 +81,7 @@ python3 scripts/generate_board_projection.py .local/upstream/asm/rich4.asm
 测试与图像证据：
 
 ```sh
-build/native/board_renderer_tests ~/Downloads/rich4-original-game artifacts/board-renderer
+build/native/board_renderer_tests game-assets artifacts/board-renderer
 ```
 
 `artifacts/board-renderer/map-0-view-0.png`、`map-0-view-3.png` 是本机生成并检查过的原始资源场景图。其余 PPM 也在同一忽略目录；这些商业美术图像不提交仓库。测试第三个可选参数预留原版投影 CSV 对照，字段为 `center_x,center_y,rotation,world_x,world_y,screen_x,screen_y`；未提供金标时不会报告 EXE 对照通过。

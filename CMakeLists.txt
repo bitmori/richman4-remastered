@@ -14,6 +14,7 @@ add_library(rich4_core src/assets.cpp src/graphics.cpp src/save.cpp src/calendar
   src/stocks.cpp src/services.cpp src/auction.cpp src/tools.cpp src/lottery.cpp src/holidays.cpp src/cards.cpp src/cards_ai.cpp src/gods.cpp src/tools_ai.cpp src/special_actors.cpp src/stocks_ai.cpp
   src/trading.cpp src/world_validation.cpp)
 target_include_directories(rich4_core PUBLIC include)
+target_compile_definitions(rich4_core PUBLIC RICH4_DEFAULT_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/game-assets")
 target_compile_options(rich4_core PRIVATE
   $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wsign-conversion>)
 if(RICH4_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

@@ -459,8 +459,7 @@ void save_fixture(const fs::path &directory, const std::string &label, const Wor
 } // namespace
 int main(int argc, char **argv) {
     try {
-        const fs::path home = std::getenv("HOME") ? std::getenv("HOME") : ".";
-        fs::path assets = home / "Downloads/rich4-original-game", output, source_save;
+        fs::path assets = RICH4_DEFAULT_ASSETS, output, source_save;
         unsigned map = 0;
         for (int i = 1; i < argc; ++i) {
             const std::string key = argv[i];

@@ -8,5 +8,5 @@ cmake -S "$REPO_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
 cmake --build "$BUILD_DIR" --target rich4-native --parallel
 mkdir -p "$REPO_DIR/artifacts"
 exec "$BUILD_DIR/rich4-native.app/Contents/MacOS/rich4-native" \
-  --assets "${RICH4_ASSETS:-$HOME/Downloads/rich4-original-game}" "$@" \
+  --assets "${RICH4_ASSETS:-$REPO_DIR/game-assets}" "$@" \
   > "$REPO_DIR/artifacts/native-runtime.log" 2>&1

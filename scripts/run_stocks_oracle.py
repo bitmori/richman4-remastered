@@ -22,7 +22,7 @@ def sha256(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("game", type=Path, nargs="?", default=Path.home() / "Downloads/rich4-original-game")
+    parser.add_argument("game", type=Path, nargs="?", default=(Path(__file__).resolve().parents[1] / "game-assets"))
     parser.add_argument("--native-test", type=Path)
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()

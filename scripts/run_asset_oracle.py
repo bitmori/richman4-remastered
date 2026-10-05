@@ -60,7 +60,7 @@ def compare_native(tool, work, game):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("game", nargs="?", type=Path,
-                        default=Path.home() / "Downloads/rich4-original-game")
+                        default=(Path(__file__).resolve().parents[1] / "game-assets"))
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--native-tool", type=Path, help="Native rich4-tool executable to compare byte-for-byte")
     parser.add_argument("--reuse-oracle", action="store_true", help="Compare a previous capture at .local/oracle/latest")

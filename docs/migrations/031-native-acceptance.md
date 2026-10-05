@@ -27,7 +27,7 @@ cmake --build build/native --target rich4-native rich4-native-fixture
 python3 scripts/run_native_acceptance.py \
   --binary build/native/rich4-native.app/Contents/MacOS/rich4-native \
   --fixture-binary build/native/rich4-native-fixture \
-  --game "$HOME/Downloads/rich4-original-game" \
+  --game "game-assets" \
   --output artifacts/native-acceptance/my-new-run \
   --workers 2 --turns 30 --timeout 180
 ```

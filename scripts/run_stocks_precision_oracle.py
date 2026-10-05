@@ -114,7 +114,7 @@ class Original:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('game', nargs='?', type=Path, default=Path.home() / 'Downloads/rich4-original-game')
+    parser.add_argument('game', nargs='?', type=Path, default=(Path(__file__).resolve().parents[1] / "game-assets"))
     parser.add_argument('--boxedwine-capture', type=Path, default=ROOT / '.local/stocks-oracle/latest')
     args = parser.parse_args()
     path = next(p for p in args.game.iterdir() if p.name.lower() == 'rich4.exe')
