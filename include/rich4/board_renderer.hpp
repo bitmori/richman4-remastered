@@ -80,6 +80,15 @@ struct PropertyState {
     std::uint8_t temporary{};
 };
 
+// A property owner's look, indexed by player slot (owner code - 1). The original reads it from the
+// player record for every owner, whether or not the player is drawn (fcn_0040829d: palette slot 255
+// from player+4 at rich4.asm:2599, the empty-lot flag frame from player+19 at 2122), so a confined or
+// away owner's plots keep their colour and flag.
+struct PropertyOwner {
+    std::uint16_t color{};    // RGB555 (player+4 through _rich4_convert_color).
+    std::uint8_t character{}; // player+19: the empty-lot flag frame.
+};
+
 // Read-only render snapshot. Missing property overrides retain the map's state.
 struct Scene {
     std::span<const PlayerSprite> players;
@@ -88,6 +97,7 @@ struct Scene {
     std::span<const PropertyState> facilities;
     std::span<const SpecialPlayerSprite> special_players;
     std::span<const PropertyState> commercials;
+    std::span<const PropertyOwner> owners; // by slot; empty falls back to the drawn players
 };
 
 struct RenderStats {

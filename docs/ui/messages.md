@@ -305,6 +305,7 @@ The text style is the same for all three: `create_font(0x10, 0xf0f0f0, 0x101010,
 | Death god | `"死神顯靈\n\n由%s賠償%s"` |
 | Hotel / mall | `"休息%d天\n\n費用%d元！"`, `"您的消費金額為\n\n%dx%d倍=%d元"` |
 | Point coupons (1000 ms) | `"得點券５０點"`, `"得點券３０點"`, `"得點券１０點"`. Before the box, AF12 `Data.mkf 0x219` plays at (204,180) with sound 0x62. |
+| Mini-game closed mode (2000 ms) | `sprintf("得點券%d點")` with half-width digits, 50..69 (rich4_small_games.asm:4385–4427, `loc_00415457`), then `_rich4_event_strings[character][rand()&1]`. Not shown after an interactive game (its end screen holds the big score). Native: `Announcement::mini_game_points`. |
 | Other | `"得到%s！"`, `"小偷偷得%s\n\n給%s！"`, `"施捨給乞丐%d元"`, `"不用出國！"`, `"%s\n\n請選擇欲加蓋地點"`, `"恭喜您成為幫主！"`, `"恭喜您獲得經營權！"`, `"%s開發完成！"` |
 | Robbery and theft | `"強盜搶奪銀行\n\n得款%d元\n\n給%s！"` (2000 ms), `"勒索%s\n\n%d元保護費！"`, `"取走過路費\n\n%d元！"`, `"取走盈餘\n\n%d元！"`, `"偷取%s\n\n%d點點券！"` (1000 ms), `"奪取%s%s！"` (1000 ms) |
 | Turn-start status (rich4.asm:6600–6757, `fcn_0040c912`) | `"%s住宿中\n\n還剩%d天！"`, `"%s消失中…"`, `"%s坐牢中…"`, `"%s住院中…"`, `"%s冬眠中…"`. Each is preceded by the matching bubble (slot 19/20/21). |

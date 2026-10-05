@@ -23,12 +23,17 @@ The caller adds the returned value to the player's points as a 16-bit word
 
 - `player.controller (+21) == 1` (a human) **and** `cfg+1 != 0` (the Options "動畫過程" switch)
   → the interactive game; its score is the return value;
-- otherwise the **closed mode** (SG:4613): `score = rand() % 20 + 50`, a box "得點券%d點" for
-  2000 ms, then the player says `_rich4_event_strings[character][rand() & 1]`. That is two
-  `rand()` draws. The native core already implements this (`src/game.cpp`, `land()`).
+- otherwise the **closed mode** (`loc_00415457`, SG:4385–4427): `score = rand() % 20 + 50`, a box
+  `sprintf(0x463797 "得點券%d點")` (half-width digits) via `fcn_00440cac(text, 2000)`, then the
+  player says `_rich4_event_strings[character][rand() & 1]`. That is two `rand()` draws. The native
+  core implements this in `land()` (`src/game.cpp`): `Announcement::mini_game_points` (the box,
+  2000 ms) then the event-line speech. Computers always take this path, so it is the announcement
+  seen most often.
 
-The interactive branch shows no box and no speech after the game. Its own end screen shows the
-score.
+The interactive branch shows no box and no speech after the game: after `_Wait_0402_Message`
+returns it only frees the sprites and jumps to the epilogue `loc_004155ec` (return `[0x48bcec]`),
+and the caller (core_actions:2366–2383) only does `add word [player+48], ax`. The game's own end
+screen shows the big score (2 s hold, §3–§5), which is the only announcement on that path.
 
 ### 1.1 RNG
 

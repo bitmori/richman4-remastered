@@ -22,10 +22,6 @@ constexpr auto white = ui::color(255, 255, 255);
 constexpr auto red = ui::color(255, 0, 0);
 constexpr graphics::Rect board_area{0, 40, 440, 480};
 
-std::uint16_t rgb(std::uint32_t value) { // original 0xRRGGBB colours
-    return ui::color((value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff);
-}
-
 std::vector<std::string_view> characters(std::string_view text) {
     std::vector<std::string_view> result;
     for (std::size_t i = 0; i < text.size();) {
@@ -363,7 +359,7 @@ void MainScreen::draw_info_panel(Frame &frame, const World &world, const MainScr
         });
     }
     ui::fill(frame.canvas, {523, 57, 609, 69}, ui::color(0, 0, 0));
-    ui::fill(frame.canvas, {522, 56, 608, 68}, rgb(state.color));
+    ui::fill(frame.canvas, {522, 56, 608, 68}, ui::player_color(state.color));
     anchored(frame, 'm', 27 + std::size_t(state.character), 0, 482, 40);
     if (const auto ally = player.status.allied_player; ally && ally <= world.players.size())
         anchored(frame, 'm', 27 + std::size_t(world.players[ally - 1u].state.character), 1, 524, 64);
@@ -426,7 +422,7 @@ void MainScreen::draw_header(Frame &frame, const World &world) {
     text(frame, "現金", 530, 40, Align::left);
     text(frame, "存款", 530, 62, Align::left);
     ui::fill(frame.canvas, {529, 33, 635, 37}, ui::color(0, 0, 0));
-    ui::fill(frame.canvas, {528, 32, 634, 36}, rgb(player.state.color));
+    ui::fill(frame.canvas, {528, 32, 634, 36}, ui::player_color(player.state.color));
     anchored(frame, 'm', 27 + std::size_t(player.state.character), 0, 482, 40);
     if (const auto ally = player.status.allied_player; ally && ally <= world.players.size())
         anchored(frame, 'm', 27 + std::size_t(world.players[ally - 1u].state.character), 1, 524, 64);
@@ -443,7 +439,7 @@ void MainScreen::draw_minimap(Frame &frame, const World &world, int top, const M
     graphics::blit(frame.canvas, frame.artwork.frame('m', 16 + map, 0), 440, top,
                    graphics::Transparency::opaque);
     auto owner_colour = [&world](std::uint8_t owner) {
-        return owner && owner <= world.players.size() ? rgb(world.players[owner - 1u].state.color) : white;
+        return owner && owner <= world.players.size() ? ui::player_color(world.players[owner - 1u].state.color) : white;
     };
     for (std::size_t i = 1; i < world.lands.size(); ++i)
         if (const auto &land = world.lands[i]; land.economy.owner_code)
@@ -640,7 +636,7 @@ void MainScreen::draw_full_map(Frame &frame, const World &world) {
     graphics::blit(frame.canvas, frame.artwork.frame('m', 16 + map, 1), 20, 60, graphics::Transparency::opaque);
     const graphics::Rect area{20, 60, 420, 460};
     auto owner_colour = [&world](std::uint8_t owner) {
-        return owner && owner <= world.players.size() ? rgb(world.players[owner - 1u].state.color) : white;
+        return owner && owner <= world.players.size() ? ui::player_color(world.players[owner - 1u].state.color) : white;
     };
     for (std::size_t i = 1; i < world.lands.size(); ++i)
         if (const auto &land = world.lands[i]; land.economy.owner_code)

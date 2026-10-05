@@ -307,6 +307,8 @@ std::optional<Item> from_event(const GameEvent &event, const World &world) {
                    : event.amount == 30 ? "得點券３０點"
                                         : "得點券１０點",
                    1000);
+    case Announcement::mini_game_points: // SG:4392: sprintf(0x463797 "得點券%d點"), fcn_00440cac(2000)
+        return box("得點券" + std::to_string(event.amount) + "點", 2000);
     case Announcement::none:
         break;
     }

@@ -107,6 +107,13 @@ inline std::u32string codepoints(std::string_view text) {
 inline constexpr std::uint16_t color(unsigned r, unsigned g, unsigned b) {
     return static_cast<std::uint16_t>((r >> 3) << 10 | (g >> 3) << 5 | (b >> 3));
 }
+// A player's colour (PlayerState::color, player+4) is 0x00RRGGBB from the character table. The
+// original converts it with _rich4_convert_color (RGB555: fcn_0045523e keeps the top 5 bits of each
+// byte) for the board's SPR palette slot 255 (rich4.asm:2599), the info-panel bars (8020, 8508)
+// and the minimap dots (3752). It is never a ready RGB555 value.
+inline constexpr std::uint16_t player_color(std::uint32_t rgb) {
+    return color((rgb >> 16) & 255U, (rgb >> 8) & 255U, rgb & 255U);
+}
 inline constexpr auto ink = color(38, 30, 20);
 inline constexpr auto paper = color(247, 232, 185);
 inline constexpr auto blue = color(20, 65, 135);

@@ -3333,6 +3333,8 @@ struct GameSession::Impl {
             const auto reward = static_cast<std::uint16_t>(random.next() % 20 + 50);
             const auto category = static_cast<std::uint8_t>(random.next() & 1U);
             player().points = static_cast<std::uint16_t>(player().points + reward);
+            // SG:4392-4425: sprintf("得點券%d點") box for 2000 ms, then the player's event line.
+            announce(Announcement::mini_game_points, actor()).amount = reward;
             emit(GameEventKind::points_received, "小游戏获得" + std::to_string(reward) + "点", reward);
             voice(actor(), category);
             finish_turn();
