@@ -374,8 +374,9 @@ class Application {
             if (!options_.auto_rounds)
                 SDL_Delay(8);
         }
+        // Quitting writes the AUTO slot: the manual SAVE1..5 slots only change when the player saves.
         if (session_ && session_->can_save() && !options_.auto_rounds)
-            save();
+            write_save(slot_path(0));
         return final_status_;
     }
 
@@ -448,6 +449,7 @@ class Application {
     bool cancellable() const {
         return pad_.active() || screen_ == Screen::new_game || screen_ == Screen::settings ||
                screen_ == Screen::wealth || screen_ == Screen::stocks || screen_ == Screen::load ||
+               screen_ == Screen::trading ||
                screen_ == Screen::save || (screen_ == Screen::game && bank_pending());
     }
     void cancel_screen() {
@@ -459,6 +461,9 @@ class Application {
         switch (screen_) {
         case Screen::stocks:
             stock_market_.cancel(host, stock_actions());
+            break;
+        case Screen::trading:
+            trading_board_.cancel(host, trading_actions());
             break;
         case Screen::new_game:
             setup_.cancel(host, [this] { screen_ = Screen::menu; });
@@ -593,32 +598,6 @@ class Application {
     void end_amount_edit() {
         editing_amount_ = nullptr;
         SDL_StopTextInput(window_.get());
-    }
-    void amount_control(std::int32_t &amount, std::int32_t maximum, std::int32_t step, int y,
-                        bool show_all = true, int first_id = 201) {
-        const auto limit = std::max<std::int32_t>(0, maximum);
-        amount = std::clamp(amount, 0, limit);
-        button(first_id, {103, y, 151, y + 30}, "-", [this, &amount, step] {
-            end_amount_edit();
-            amount = std::max<std::int32_t>(0, amount - step);
-        });
-        button(first_id + 1, {383, y, 431, y + 30}, "+", [this, &amount, step, limit] {
-            end_amount_edit();
-            amount = static_cast<std::int32_t>(std::min<std::int64_t>(limit, std::int64_t(amount) + step));
-        });
-        button(first_id + 4, {159, y, 375, y + 30},
-               editing_amount_ == &amount ? amount_text_ + "|" : std::to_string(amount),
-               [this, &amount, limit] {
-                   editing_amount_ = &amount;
-                   amount_limit_ = limit;
-                   amount_text_.clear();
-                   require(SDL_StartTextInput(window_.get()));
-               });
-        if (show_all)
-            button(first_id + 5, {439, y, 533, y + 30}, "全部", [this, &amount, limit] {
-                end_amount_edit();
-                amount = limit;
-            });
     }
     fs::path save_path() const {
         return options_.save_directory / "Save1.DAT";
@@ -993,8 +972,7 @@ class Application {
         actions.trading = [this] {
             if (session_->open_trading()) {
                 screen_ = Screen::trading;
-                trading_mode_ = 0;
-                trading_page_ = 0;
+                trading_board_.reset();
             }
         };
         actions.stocks = [this] { screen_ = Screen::stocks; };
@@ -1092,118 +1070,42 @@ class Application {
         notify_action(success, "休市、限價或可交易數量不足");
         return success;
     }
-    std::string offer_name(OfferKind kind, std::uint16_t item) const {
-        const auto &world = session_->world();
-        if (kind == OfferKind::stock)
-            return std::string(
-                native_stock_names.at((world.header.stage_id * 4 + world.header.map_id) * 12 + item));
-        if (kind == OfferKind::tool)
-            return std::string(services::tool_names.at(item - 1));
-        if (kind == OfferKind::card)
-            return std::string(services::card_names.at(item - 1));
-        if (kind == OfferKind::property && item > 4000)
-            return ui::big5(world.facilities.at(item - 4000).name);
-        return "土地 " + std::to_string(item - 2000);
-    }
-    void choose_listing(trading::Item item) {
-        end_amount_edit();
-        trading_item_ = item;
-        trading_quantity_ = 1;
-        const auto limits = trading::listing_limits(
-            session_->world(), session_->world().header.current_player, item.kind, item.id, 1);
-        trading_price_ = limits ? limits->reference_price : 1;
-        trading_mode_ = 2;
-    }
     void close_trading() {
         end_amount_edit();
+        pad_.close();
+        trading_board_.reset();
         screen_ = Screen::game;
         notify_action(session_->close_trading(), "目前無法完成買賣結算");
     }
+    screens::TradingActions trading_actions() {
+        return {[this](const trading::Listing &listing) {
+                    const bool success = session_->post_offer(listing);
+                    if (success)
+                        ++offers_posted_;
+                    notify_action(true);
+                    return success;
+                },
+                [this](std::size_t index) {
+                    const bool success = session_->cancel_offer(index);
+                    if (success)
+                        ++offers_cancelled_;
+                    notify_action(true);
+                    return success;
+                },
+                [this](std::size_t seller, std::size_t index) {
+                    const bool success = session_->buy_offer(seller, index);
+                    if (success)
+                        ++offers_bought_;
+                    notify_action(true);
+                    return success;
+                },
+                [this] { close_trading(); }};
+    }
     void draw_trading() {
         buttons_.clear();
-        const auto &world = session_->world();
-        const auto actor = world.header.current_player;
-        dialog({35, 45, 605, 466}, trading_mode_ == 0 ? "玩家買賣" : "刊登出售");
-        font_.draw(canvas_, "現金 " + ui::money(world.active_player().state.cash), 350, 63, 16);
-        if (trading_mode_ == 2) {
-            font_.draw(canvas_, offer_name(trading_item_.kind, trading_item_.id), 80, 128, 20);
-            if (trading_item_.kind == OfferKind::stock) {
-                font_.draw(canvas_, "股數", 80, 165, 18);
-                amount_control(trading_quantity_, trading_item_.maximum_quantity, 100, 195, true, 650);
-            }
-            const auto limits = trading::listing_limits(world, actor, trading_item_.kind, trading_item_.id,
-                                                        static_cast<std::uint16_t>(trading_quantity_));
-            font_.draw(canvas_, "出售總價", 80, 280, 18);
-            amount_control(trading_price_, limits ? limits->maximum_price : 0, 1000, 318);
-            button(
-                454, {95, 390, 295, 430}, "刊登",
-                [this] {
-                    end_amount_edit();
-                    const bool success =
-                        session_->post_offer({trading_item_.kind, trading_item_.id, trading_price_,
-                                              static_cast<std::uint16_t>(trading_quantity_)});
-                    if (success) {
-                        ++offers_posted_;
-                        trading_mode_ = 0;
-                        trading_page_ = 0;
-                    }
-                    notify_action(success, "售價無效或七個刊登欄位已滿");
-                },
-                limits.has_value() && trading_price_ > 0);
-            button(455, {325, 390, 535, 430}, "取消", [this] {
-                end_amount_edit();
-                trading_mode_ = 0;
-            });
-            return;
-        }
-        constexpr std::size_t page_size = 7;
-        const auto quotes = trading::quotes(world);
-        const auto items = trading::listable_items(world, actor);
-        const auto count = trading_mode_ == 0 ? quotes.size() : items.size();
-        trading_page_ = count ? std::min(trading_page_, (count - 1) / page_size) : 0;
-        const auto first = trading_page_ * page_size;
-        if (!count)
-            font_.draw(canvas_, trading_mode_ == 0 ? "目前沒有出售物品" : "目前沒有可出售物品", 205, 205, 18);
-        for (std::size_t i = first; i < std::min(count, first + page_size); ++i) {
-            const int y = 108 + int(i - first) * 36;
-            if (trading_mode_ == 1) {
-                const auto item = items[i];
-                button(460 + int(i), {65, y, 575, y + 31}, offer_name(item.kind, item.id),
-                       [this, item] { choose_listing(item); });
-            } else {
-                const auto quote = quotes[i];
-                const auto &offer = quote.offer;
-                auto label = offer_name(offer.kind, offer.item);
-                if (offer.kind == OfferKind::stock)
-                    label += " ×" + std::to_string(offer.quantity);
-                font_.draw(canvas_, names.at(world.players.at(quote.seller).state.character), 57, y + 8, 12,
-                           ui::ink, 78);
-                font_.draw(canvas_, label, 143, y + 8, 14, ui::ink, 178);
-                font_.draw(canvas_, ui::money(offer.price), 325, y + 8, 14);
-                const bool own = quote.seller == actor;
-                button(
-                    600 + int(i), {478, y, 581, y + 31}, own ? "撤下" : "買入",
-                    [this, quote, own] {
-                        const bool success = own ? session_->cancel_offer(quote.index)
-                                                 : session_->buy_offer(quote.seller, quote.index);
-                        if (success) {
-                            if (own)
-                                ++offers_cancelled_;
-                            else
-                                ++offers_bought_;
-                        }
-                        notify_action(success, "現金或庫存空間不足，請重新選擇");
-                    },
-                    own || (offer.price > 0 && world.active_player().state.cash >= offer.price));
-            }
-        }
-        button(482, {65, 367, 200, 397}, "上一頁", [this] { --trading_page_; }, trading_page_ > 0);
-        button(483, {440, 367, 575, 397}, "下一頁", [this] { ++trading_page_; }, first + page_size < count);
-        button(480, {95, 410, 295, 449}, trading_mode_ ? "返回買賣" : "刊登出售", [this] {
-            trading_mode_ = trading_mode_ ? 0 : 1;
-            trading_page_ = 0;
-        });
-        button(481, {325, 410, 535, 449}, "返回遊戲", [this] { close_trading(); });
+        auto host = make_host();
+        trading_board_.draw(host, session_->world(), session_->world().header.current_player, pad_,
+                            trading_actions());
     }
     void sync_decision() {
         if (!session_->pending_decision()) {
@@ -1313,6 +1215,15 @@ class Application {
         if (decision.kind == DecisionKind::primary_stock) {
             auto host = make_host();
             screens::draw_primary_stock(host, decision, pad_, bank_actions());
+            return;
+        }
+        if (decision.kind == DecisionKind::lottery || decision.kind == DecisionKind::auction) {
+            auto host = make_host();
+            const auto answer = [this](std::size_t index) { respond(index); };
+            if (decision.kind == DecisionKind::lottery)
+                screens::draw_lottery(host, session_->world(), decision, answer);
+            else
+                screens::draw_auction(host, session_->world(), decision, answer);
             return;
         }
         if (map_decision()) {
@@ -1449,6 +1360,8 @@ class Application {
             std::int32_t target = 1;
             if (const auto &decision = session_->pending_decision())
                 target = decision->kind == DecisionKind::primary_stock ? std::min(100, decision->max_amount) : 1000;
+            else if (screen_ == Screen::trading)
+                target = trading_board_.suggestion();
             push_button(pad_.next_key_towards(target));
             return;
         }
@@ -1470,12 +1383,22 @@ class Application {
             return;
         }
         if (screen_ == Screen::trading) {
-            if (trading_mode_ == 1) {
-                push_button(460);
+            using View = screens::TradingBoard::View;
+            const auto view = trading_board_.view();
+            if (view == View::detail) {
+                // Act once on the opened offer (撤件 / 購買), then close the card if it is still open.
+                push_button(test_trade_acted_ ? screens::ids::trade_detail_exit : screens::ids::trade_act);
+                test_trade_acted_ = !test_trade_acted_;
                 return;
             }
-            if (trading_mode_ == 2) {
-                push_button(454);
+            test_trade_acted_ = false;
+            if (view != View::board) {
+                // Post the first listable item: SALE menu category, then the item in its picker.
+                const auto items = trading::listable_items(session_->world(), session_->world().header.current_player);
+                if (items.empty())
+                    throw std::runtime_error("Trading fixture has nothing to list");
+                push_button(view == View::menu ? screens::ids::trade_category + int(items.front().kind) - 1
+                                               : screens::ids::trade_item);
                 return;
             }
             if (!offers_posted_) {
@@ -1490,7 +1413,6 @@ class Application {
                     (offers_cancelled_ && !offers_bought_ && !own &&
                      !test_trade_attempts_.contains({quotes[i].seller, quotes[i].index}) &&
                      quotes[i].offer.price <= session_->world().active_player().state.cash)) {
-                    trading_page_ = i / 7;
                     if (std::any_of(buttons_.begin(), buttons_.end(), [i](const auto &button) {
                             return button.id == 600 + int(i) && button.enabled;
                         })) {
@@ -1807,6 +1729,35 @@ class Application {
         pad_.close();
         stock_market_.reset();
         screen_ = Screen::game;
+        // Trading board: post a tool through SALE -> picker -> price pad, then open it.
+        if (session_->open_trading()) {
+            screen_ = Screen::trading;
+            shot("trading-board-empty");
+            press(screens::ids::trade_sale);
+            point(500, 140);
+            shot("trading-menu");
+            point(-1, -1);
+            press(screens::ids::trade_category + 2);
+            shot("trading-tools");
+            const auto items = trading::listable_items(session_->world(), session_->world().header.current_player);
+            for (std::size_t i = 0; i < items.size(); ++i)
+                if (items[i].kind == OfferKind::tool) {
+                    press(screens::ids::trade_item + int(i));
+                    break;
+                }
+            for (const char digit : std::to_string(trading_board_.suggestion()))
+                press(screens::ids::pad_digit(digit - '0'));
+            shot("trading-price-pad");
+            press(screens::ids::pad_enter);
+            shot("trading-board");
+            press(screens::ids::trade_offer);
+            shot("trading-detail");
+            press(screens::ids::trade_detail_exit);
+            press(screens::ids::trade_sale);
+            press(screens::ids::trade_category + 1);
+            shot("trading-properties");
+            close_trading();
+        }
         // Synthetic decisions: the real session never pauses here on demand.
         const auto slot = session_->world().header.current_player;
         const auto render = [&](const World &world, const GameDecision &decision) {
@@ -1819,6 +1770,10 @@ class Application {
             const screens::BankActions none{[](std::int32_t, std::int32_t) { return false; }};
             if (decision.kind == DecisionKind::bank)
                 bank_screen_.draw(host, world, decision, pad_, none);
+            else if (decision.kind == DecisionKind::lottery)
+                screens::draw_lottery(host, world, decision, [](std::size_t) {});
+            else if (decision.kind == DecisionKind::auction)
+                screens::draw_auction(host, world, decision, [](std::size_t) {});
             else
                 screens::draw_primary_stock(host, decision, pad_, none);
             if (pad_.active()) {
@@ -1874,6 +1829,20 @@ class Application {
         GameDecision primary{DecisionKind::primary_stock, slot, 1, 52, "", {{"认购", 1}, {"放弃", 0}}, 380};
         decision_shot(world, primary, "primary-stock");
         pad_.close();
+        GameDecision lottery{DecisionKind::lottery, slot, 0, 1000, "", {}};
+        for (std::int32_t n = 1; n <= 36; ++n)
+            if (n % 7 != 3)
+                lottery.options.push_back({std::to_string(n), n});
+        lottery.options.push_back({"离开", 0});
+        point(30 + 64 * 4 + 20, 271 + 48 + 20);
+        decision_shot(world, lottery, "lottery");
+        point(-1, -1);
+        GameDecision auction{DecisionKind::auction, slot, 2001, 2500, "", {}};
+        for (std::int32_t action = 0; action <= 6; ++action)
+            auction.options.push_back({"", action});
+        point(406, 229, true);
+        decision_shot(world, auction, "auction");
+        point(-1, -1);
         session_.reset();
         screen_ = Screen::settings;
         shot("options-menu");
@@ -1977,6 +1946,7 @@ class Application {
     screens::SaveLoadScreen slots_;
     screens::OptionsScreen options_screen_;
     screens::PlayerInfo info_;
+    screens::TradingBoard trading_board_;
     unsigned selected_character_ = 10, selected_map_ = 0, selected_stage_ = 0, rotation_ = 0, speed_ = 1;
     bool running_ = true, bank_done_for_visit_ = false, shop_done_for_visit_ = false,
          sound_effects_ = true;
@@ -1985,12 +1955,9 @@ class Application {
     std::int32_t *editing_amount_ = nullptr;
     std::string amount_text_;
     std::size_t selected_stock_ = 0;
-    unsigned trading_mode_ = 0;
-    std::size_t trading_page_ = 0;
-    trading::Item trading_item_{};
-    std::int32_t trading_quantity_ = 1, trading_price_ = 1;
     std::uint64_t offers_posted_ = 0, offers_cancelled_ = 0, offers_bought_ = 0;
     std::set<std::pair<std::size_t, std::size_t>> test_trade_attempts_;
+    bool test_trade_acted_ = false;
     std::optional<std::uint32_t> initial_random_state_;
     board::Camera current_camera_{};
     std::optional<board::Point> target_center_;

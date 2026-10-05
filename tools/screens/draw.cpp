@@ -160,6 +160,11 @@ void pressed_bevel(graphics::Image &canvas, graphics::Rect rect) {
     darken(canvas, {rect.left, rect.top + 1, rect.left + 1, rect.bottom}, -16);
 }
 
+void backdrop(Frame &frame, char archive, std::size_t entry, std::size_t index) {
+    const auto &image = frame.artwork.frame(archive, entry, index);
+    graphics::blit(frame.canvas, image, image.origin_x, image.origin_y, graphics::Transparency::opaque);
+}
+
 void popup(Host &host, std::string_view message, int y) {
     auto &frame = host.frame;
     frame.picture('p', 73, 5, 228, y);

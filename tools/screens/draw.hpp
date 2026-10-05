@@ -57,6 +57,8 @@ void outline_rect(graphics::Image &canvas, graphics::Rect rect, std::uint16_t co
 // Generic "pressed" bevel of fcn_00451b9e: content moves 1 px down-right, top/left darken.
 void pressed_bevel(graphics::Image &canvas, graphics::Rect rect);
 
+// Full-screen picture drawn opaque at (0,0), like fcn_004563f5 (colour 0 stays black).
+void backdrop(Frame &frame, char archive, std::size_t entry, std::size_t index);
 // Panel 73:5 prompt box (184x88) with centred black text, top-left (228, y).
 void popup(Host &host, std::string_view message, int y = 196);
 

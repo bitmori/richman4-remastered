@@ -65,6 +65,7 @@ add_library(main SHARED
   "${RICH4_REPO}/tools/screens/draw.cpp"
   "${RICH4_REPO}/tools/screens/finance.cpp"
   "${RICH4_REPO}/tools/screens/stocks.cpp"
+  "${RICH4_REPO}/tools/screens/market.cpp"
   "${RICH4_REPO}/tools/screens/menus.cpp"
   rich4_android.cpp)
 add_dependencies(main libiconv_build)

@@ -101,13 +101,13 @@ void StockMarket::draw(Host &host, const World &world, std::size_t player, Numbe
     ui::fill(frame.canvas, {0, 0, 640, 480}, 0);
     if (market_closed(world)) {
         // ST:2722: 本日休市, any click closes.
-        frame.picture('p', 75, 0, 0, 0);
+        backdrop(frame, 'p', 75, 0);
         text(frame, "本日休市", 324, 244, 2, {72, 0x000000, 0, bold});
         text(frame, "本日休市", 320, 240, 2, {72, 0xf0f0f0, 0, bold});
         hit(host, ids::stock_exit, {0, 0, 640, 480}, exit_sound, [actions] { actions.close(); });
         return;
     }
-    frame.picture('p', 75, std::size_t(page), 0, 0);
+    backdrop(frame, 'p', 75, std::size_t(page));
     const auto &holder = world.players.at(player);
     const bool row = selected.has_value() && page == 0;
     const Style on{16, 0xf0f0f0, 0x101010, shadow | bold}, off{16, 0xa0a0a0, 0x101010, shadow | bold};

@@ -477,7 +477,7 @@ void BankScreen::draw_desk(Host &host, const World &world, const GameDecision &d
     const auto slot = decision.player;
     const auto &player = world.players.at(slot);
     const bool director = owns_bank(world, slot);
-    frame.picture('p', 23, 0, 0, 0);
+    backdrop(frame, 'p', 23, 0);
     if (!director)
         graphics::blit(frame.canvas, frame.artwork.frame('p', 23, 1), 320, 240);
     else
@@ -594,7 +594,7 @@ void BankScreen::draw_director(Host &host, const World &world, const GameDecisio
     const auto &player = world.players.at(slot);
     const auto total = others_deposits(world, slot);
     const auto special = player.state.special_finance;
-    frame.picture('p', 23, 2, 0, 0);
+    backdrop(frame, 'p', 23, 2);
     frame.picture('p', 23, 20, 10, 125);
     const std::array<graphics::Rect, 3> rects{{{11, 305, 126, 346}, {11, 362, 126, 403}, {11, 419, 92, 460}}};
     for (std::size_t i = 0; i < rects.size(); ++i) {
@@ -631,7 +631,7 @@ void BankScreen::draw_director(Host &host, const World &world, const GameDecisio
                 say(callback, {"行裡現在沒有\n這麼多現金。"});
                 return;
             }
-            say(callback, {"請輸入您要\n週轉的金額∼"});
+            say(callback, {"請輸入您要\n週轉的金額～"});
             pad.open(total - special, [this, actions](std::int32_t amount) {
                 if (amount > 0 && actions.respond(5, amount)) {
                     stage_ = Stage::desk; // A transaction closes the office and the desk.
@@ -645,10 +645,10 @@ void BankScreen::draw_director(Host &host, const World &world, const GameDecisio
         [this, &pad, actions, special, available, frame_pointer, sound] {
             Host callback{*frame_pointer, sound, {}};
             if (special == 0) {
-                say(callback, {"董事長您別開玩笑了∼"});
+                say(callback, {"董事長您別開玩笑了～"});
                 return;
             }
-            say(callback, {"請輸入您預備\n還款的金額∼"});
+            say(callback, {"請輸入您預備\n還款的金額～"});
             pad.open(special, [this, actions, available, frame_pointer, sound](std::int32_t amount) {
                 Host done{*frame_pointer, sound, {}};
                 if (amount <= 0) {
@@ -656,7 +656,7 @@ void BankScreen::draw_director(Host &host, const World &world, const GameDecisio
                     return;
                 }
                 if (amount > available) {
-                    say(done, {"董事長您別開玩笑了∼"});
+                    say(done, {"董事長您別開玩笑了～"});
                     return;
                 }
                 if (actions.respond(6, amount)) {

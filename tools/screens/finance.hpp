@@ -160,4 +160,59 @@ class StockMarket {
 
 bool market_closed(const World &world);
 
+namespace ids {
+inline constexpr int trade_sale = 480, trade_exit = 481, trade_category = 484, trade_item = 460, trade_offer = 600,
+                     trade_act = 456, trade_detail_exit = 457, trade_picker_close = 458, trade_tab = 490,
+                     trade_up = 495, trade_down = 496, trade_outside = 459;
+} // namespace ids
+
+// Panel 73 player trading board (rich4_ui_sale.asm).
+struct TradingActions {
+    std::function<bool(const trading::Listing &)> post;
+    std::function<bool(std::size_t index)> cancel; // own offer
+    std::function<bool(std::size_t seller, std::size_t index)> buy;
+    std::function<void()> close;
+};
+class TradingBoard {
+  public:
+    enum class View { board, menu, stocks, properties, items, detail };
+    void reset() {
+        *this = {};
+    }
+    void draw(Host &host, const World &world, std::size_t actor, NumberPad &pad, const TradingActions &actions);
+    void cancel(Host &host, const TradingActions &actions);
+    [[nodiscard]] View view() const noexcept {
+        return view_;
+    }
+    // Replay helper: what the number pad currently asks for (quantity 1, or the market price).
+    [[nodiscard]] std::int32_t suggestion() const noexcept {
+        return suggestion_;
+    }
+
+  private:
+    void draw_board(Host &host, const World &world, std::size_t actor, const TradingActions &actions);
+    void draw_detail(Host &host, const World &world, std::size_t actor, const TradingActions &actions);
+    void draw_picker(Host &host, const World &world, std::size_t actor, NumberPad &pad,
+                     const TradingActions &actions);
+    void ask_price(const World &world, std::size_t actor, NumberPad &pad, const TradingActions &actions,
+                   trading::Item item, std::uint16_t quantity);
+    void notice(std::string message);
+    View view_ = View::board;
+    int category_ = 0, tab_ = 0;
+    std::size_t scroll_ = 0;
+    std::optional<trading::Quote> detail_;
+    std::string prompt_, notice_;
+    std::uint64_t notice_until_ = 0, now_ = 0;
+    std::int32_t suggestion_ = 1;
+};
+
+// DecisionKind::lottery: Panel 12 bar with the 36-number board. Options are the free
+// numbers plus 离开 (value 0); hit ids stay 210 + option index.
+void draw_lottery(Host &host, const World &world, const GameDecision &decision,
+                  const std::function<void(std::size_t)> &respond);
+// DecisionKind::auction: Panel 26 room. Options are the legal AuctionAction values 0..6;
+// all seven original buttons are shown and illegal ones are ignored, as in the original.
+void draw_auction(Host &host, const World &world, const GameDecision &decision,
+                  const std::function<void(std::size_t)> &respond);
+
 } // namespace rich4::native::screens

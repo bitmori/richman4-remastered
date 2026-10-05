@@ -32,7 +32,7 @@ graphics::Rect anchored_rect(const graphics::Image &image, int x, int y) {
 
 void MainMenu::draw(Host &host, const MenuActions &actions) {
     auto &frame = host.frame;
-    frame.picture('d', 1, 0, 0, 0);
+    backdrop(frame, 'd', 1, 0);
     struct Entry {
         int id, x, y;
         const std::function<void()> *action;
@@ -291,8 +291,11 @@ void NewGameSetup::draw(Host &host, const std::function<void(const NewGameChoice
         [this, start, instant = host.instant, frame_pointer = &frame] {
             human_count_ = picks_.size();
             if (instant) {
-                while (int(picks_.size()) < player_count())
-                    fill_one();
+                // Replays fill the remaining seats with the first free characters so a seed
+                // always reproduces the same line-up.
+                for (std::uint8_t i = 0; i < 12 && int(picks_.size()) < player_count(); ++i)
+                    if (std::find(picks_.begin(), picks_.end(), i) == picks_.end())
+                        picks_.push_back(i);
                 start(choice());
                 return;
             }
@@ -473,7 +476,7 @@ void PlayerInfo::draw(Host &host, const World &world, const std::function<void()
     if (player_ >= world.players.size())
         player_ = 0;
     ui::fill(frame.canvas, {0, 0, 640, 480}, 0);
-    frame.picture('p', 9, std::size_t(page_), 0, 0);
+    backdrop(frame, 'p', 9, std::size_t(page_));
     const auto &player = world.players[player_];
     // Player tabs.
     for (std::size_t i = 0; i < world.players.size() && i < 4; ++i) {
