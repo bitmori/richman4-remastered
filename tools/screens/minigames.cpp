@@ -169,8 +169,8 @@ void MiniGames::begin(core::Game game, std::uint32_t seed, std::uint8_t characte
     }
     playing->last_ticks = frame.ticks;
     playing_ = std::move(playing);
-    // TODO(audio): Audio::push_music(MIDI 13 / 12 / 11 for penguin / balloon / 喜從天降) here and
-    // pop_music() in clear() (fcn_004549cf(0xc / 0xb / 0xa) ... fcn_00454bcc).
+    // MIDI 13 / 12 / 11 (fcn_004549cf(0xc / 0xb / 0xa)) is selected by the app's music controller
+    // while an in-game mini-game is up.
 }
 
 void MiniGames::start(core::Game game, std::uint32_t seed, std::uint8_t character, Frame &frame, bool autoplay,

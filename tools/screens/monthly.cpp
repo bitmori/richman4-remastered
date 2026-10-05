@@ -164,14 +164,14 @@ void MonthlyScreens::start(Playing &playing) {
             sound_.play(61); // preset ref_004755a8, on open
         break;
     case EffectKind::lottery_draw:
-        // TODO(audio): push context music 09 (original fcn_004549cf(8)) here, pop it when the draw closes.
+        // Music 09 (fcn_004549cf(8)) is selected by the app's music controller while this screen is up.
         playing.tick_ms = lottery_tick_ms;
         playing.layout = hosts;
         playing.state = 1; // 0x405 with the dialogue option on
         say(playing, 22, 300, 47, 0, -10, 17, "嗨！\n又到了每月\n十五號樂透\n開獎時間～");
         break;
     default:
-        // TODO(audio): push context music 10 (original fcn_004549cf(9)) here, pop it when the report closes.
+        // Music 10 (fcn_004549cf(9)) is selected by the app's music controller while this screen is up.
         playing.tick_ms = report_tick_ms;
         playing.state = 1; // 0x405 with the dialogue option on
         say(playing, 1, 190, 10, 0, -30, 92, "各位客戶辛苦了！\n又到了每月銀行\n結算的日子。");

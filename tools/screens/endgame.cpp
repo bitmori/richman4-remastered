@@ -189,7 +189,7 @@ void EndgameScreen::draw_stage_clear(Host &host, unsigned elapsed, bool hold, co
             return;
         started_ = true;
         elapsed = 0;
-        // TODO(audio): Audio::push_music(MIDI07) here (fcn_004549cf(0x8006)) and pop it when leaving.
+        // MIDI07 (fcn_004549cf(0x8006)) is selected by the app's music controller once the game is finished.
         backdrop_ = raw_picture(artwork, 'j', info_.stage * 4 + info_.map, 640, 480);
         // Cleared maps get the star (jump 8:10) on their panel row and plate (fcn_004562a5).
         const std::size_t panel_frame = info_.stage ? 20 : 15, plate_base = info_.stage ? 16 : 11;

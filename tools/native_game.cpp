@@ -603,6 +603,16 @@ class Application {
                 wanted.push_back(audio::Music::shop); // victory sequence MIDI07, new_game.asm:4531
             else if (bankrupt_music_)
                 wanted.push_back(audio::Music::bankrupt); // bankrupt.asm:216
+            else if (const std::string_view monthly = monthly_.shot(); monthly == "lottery")
+                wanted.push_back(audio::Music::lottery_draw); // MIDI09, fcn_004549cf(8)
+            else if (monthly == "report")
+                wanted.push_back(audio::Music::bank_report); // MIDI10, fcn_004549cf(9)
+            else if (const auto &decision = session_->pending_decision();
+                     decision && decision->mini_game && minigames_.active()) {
+                static constexpr std::array games{audio::Music::penguin_game, audio::Music::balloon_game,
+                                                  audio::Music::gift_game}; // MIDI13 / 12 / 11
+                wanted.push_back(games.at(std::min<std::size_t>(decision->mini_game->game, 2)));
+            }
             else if (const auto &decision = session_->pending_decision();
                      decision && presentation_.empty() && !effects_.active())
                 if (const auto music = native::decision_music(*decision))
@@ -1470,7 +1480,7 @@ class Application {
             endgame_.open_stage_clear({stage, map, character, cleared_maps_, humans_at_start_ <= 1,
                                        options_.seed ^ static_cast<std::uint32_t>(session_->completed_days())});
         } else if (humans_at_start_ <= 1) {
-            // TODO(audio): the bankruptcy context music (MIDI03) keeps playing here via Audio::push_music.
+            // The bankruptcy context music (MIDI03) is chosen by the music controller (update_audio).
             endgame_.open_play_again(); // the only human went bankrupt: fcn_00407842(0)
         } else {
             screen_ = Screen::menu; // several humans, all bankrupt: exit code 1
