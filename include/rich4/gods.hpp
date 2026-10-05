@@ -44,6 +44,10 @@ class MoneySpinner {
     [[nodiscard]] unsigned phase() const noexcept {
         return phase_;
     }
+    // Reel positions 0..19 (displayed digit * 2, odd = between digits), for presentation.
+    [[nodiscard]] const std::array<std::uint8_t, 4> &digits() const noexcept {
+        return digits_;
+    }
 
   private:
     bool advance_digits(unsigned mask, unsigned slowing_digit);

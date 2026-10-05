@@ -68,6 +68,26 @@ struct DecisionOption {
     std::optional<DecisionLocation> location = std::nullopt;
 };
 
+// Presentation state of the original number-roll UIs (docs/ui/messages.md §2.3), mirrored by the
+// core while a spinner decision is pending (GameDecision::spinner) or carried by a spinner effect
+// (EffectEvent::spinner) for computer/sleep-walking spins and the wheel's slow-down after STOP.
+// Read-only for the app: it never feeds back into a rule or draws randomness.
+struct SpinnerState {
+    // money_spinner: god kind 1/2/5/6 (fcn_00440706, slot machine Panel.mkf 67).
+    // roulette: wheel 0 travel, 1 hotel, 2 mall, 3 insurance (fcn_0044090e, cupid wheel Panel.mkf 68+type).
+    std::uint8_t type = 0;
+    // Slot machine reel positions 0..19 (digit * 2; odd = between two digits), as MoneySpinner.
+    std::array<std::uint8_t, 4> digits{};
+    // Slot machine: MoneySpinner phase (0 = not started yet, 1 spinning, 2..8 stopping, 9 result
+    // hold, 10 done). Wheel effect: 1 = computer spin (free-runs 39 frames first), 2 = stopped by STOP.
+    std::uint8_t phase = 0;
+    std::uint8_t cursor = 0;   // Wheel sector 0..11 (Panel frame 2 + cursor).
+    std::int32_t subject = -1; // Wheel: hotel/mall owner slot, or commercial id (travel/insurance).
+    std::uint32_t seed = 0;    // Money effect: Random state the computer spin starts from.
+    std::int32_t result = 0;   // Effect: the amount / wheel value the rule already applied.
+    bool operator==(const SpinnerState &) const = default;
+};
+
 struct GameDecision {
     DecisionKind kind;
     std::size_t player;
@@ -76,6 +96,7 @@ struct GameDecision {
     std::string prompt;
     std::vector<DecisionOption> options;
     std::int32_t max_amount = 0;
+    std::optional<SpinnerState> spinner = std::nullopt; // money_spinner / roulette only
 };
 
 // Original on-screen announcements (docs/ui/messages.md). Presentation only: emitting
@@ -118,6 +139,7 @@ struct GameEvent {
     // argument). Event-table speech keeps using voice_category.
     SpeechTable speech_table = SpeechTable::event;
     std::uint8_t speech_slot = 0, speech_mood = 0;
+    bool operator==(const GameEvent &) const = default; // pre-choice presentation replay matching
 };
 
 // Presentation-only record of an original on-board animation (docs/ui/effects.md §9). The rule
@@ -136,10 +158,13 @@ enum class EffectKind : std::uint8_t {
     monster,           // Data 557, monster card
     god_appear,        // Data 540.., object_kind = god kind 1..15
     demon_puff,        // Data 526, demon god downgraded the property at `target`
-    bankrupt           // Data 555
+    bankrupt,          // Data 555
+    money_spinner,     // computer/sleep-walking god slot machine (fcn_00440706); `spinner` set
+    roulette           // cupid wheel: computer spin, or the slow-down after a human STOP; `spinner` set
 };
 struct EffectPoint {
     std::int32_t x = 0, y = 0; // Original world coordinates (same space as board::Point).
+    bool operator==(const EffectPoint &) const = default;
 };
 struct EffectEvent {
     EffectKind kind;
@@ -153,6 +178,8 @@ struct EffectEvent {
     // Presentation order: how many GameEvents of the same drain batch were emitted before this
     // effect, so the app can interleave drain_effects() with drain_events() in true order.
     std::size_t after_events = 0;
+    std::optional<SpinnerState> spinner = std::nullopt; // money_spinner / roulette
+    bool operator==(const EffectEvent &) const = default;
 };
 
 struct MoveAnimation {

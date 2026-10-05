@@ -34,6 +34,10 @@ class Audio {
     Audio &operator=(const Audio &) = delete;
 
     void play_sound(std::size_t effect_mkf_index);
+    // One looping effect (the original's looped sound presets, e.g. the spinner rattle 51/52):
+    // replaces any previous loop and repeats until stop_loop().
+    void play_loop(std::size_t effect_mkf_index);
+    void stop_loop();
     // Original table: SPEAKING.MKF[1050 + character * 27 + category]. The caller
     // chooses category [0,26]; audio never consumes gameplay random numbers.
     // A new voice interrupts the preceding voice, as in the original game.

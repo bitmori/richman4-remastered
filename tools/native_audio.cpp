@@ -141,6 +141,7 @@ struct Audio::Impl {
         const std::vector<float> *samples;
         std::size_t position{};
         bool voice{};
+        bool loop{}; // play_loop(): restarts at the end until stop_loop()
     };
     std::vector<Clip> clips;
 
@@ -266,15 +267,22 @@ struct Audio::Impl {
             stats.music_frames += block_frames;
         }
         for (auto &clip : clips) {
-            const auto available = clip.samples->size() - clip.position;
-            const auto count = std::min(output.size(), available);
-            for (std::size_t i = 0; i < count; ++i) {
-                output[i] += (*clip.samples)[clip.position + i];
-            }
-            clip.position += count;
-            if (clip.position == clip.samples->size()) {
-                ++stats.clips_completed;
-            }
+            std::size_t written = 0;
+            do {
+                const auto available = clip.samples->size() - clip.position;
+                const auto count = std::min(output.size() - written, available);
+                for (std::size_t i = 0; i < count; ++i) {
+                    output[written + i] += (*clip.samples)[clip.position + i];
+                }
+                clip.position += count;
+                written += count;
+                if (clip.position == clip.samples->size()) {
+                    ++stats.clips_completed;
+                    if (clip.loop && !clip.samples->empty()) {
+                        clip.position = 0;
+                    }
+                }
+            } while (clip.loop && !clip.samples->empty() && written < output.size());
         }
         std::erase_if(clips, [](const Clip &clip) { return clip.position == clip.samples->size(); });
         for (auto &sample : output) {
@@ -317,6 +325,19 @@ Audio &Audio::operator=(Audio &&) noexcept = default;
 
 void Audio::play_sound(std::size_t index) {
     impl_->play_clip(false, index);
+}
+
+void Audio::play_loop(std::size_t index) {
+    if (!impl_->enabled) {
+        return;
+    }
+    stop_loop();
+    impl_->play_clip(false, index);
+    impl_->clips.back().loop = true;
+}
+
+void Audio::stop_loop() {
+    std::erase_if(impl_->clips, [](const Impl::Clip &clip) { return clip.loop; });
 }
 
 void Audio::play_voice(std::uint8_t character, std::uint16_t category) {

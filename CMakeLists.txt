@@ -56,7 +56,7 @@ if(RICH4_BUILD_GAME)
     tools/screens/effects.cpp tools/screens/intro.cpp
     tools/screens/messages.cpp tools/screens/draw.cpp tools/screens/finance.cpp
     tools/screens/stocks.cpp tools/screens/market.cpp tools/screens/menus.cpp
-    tools/screens/items.cpp)
+    tools/screens/items.cpp tools/screens/spinners.cpp)
   target_link_libraries(rich4-native PRIVATE rich4_core SDL3::SDL3 Freetype::Freetype Iconv::Iconv PkgConfig::FLUIDSYNTH)
   target_compile_options(rich4-native PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic>)
   if(APPLE)
