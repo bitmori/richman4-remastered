@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "audio_limiter.hpp"
 #include "board_audio.hpp"
 #include "native_audio.hpp"
 #include "screens/voices.hpp"
 #include <SDL3/SDL.h>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -128,6 +130,45 @@ void check_director(Audio &audio) {
     expect(rich4::native::voices::rescued_npc_voice(6) == 123 && rich4::native::voices::auction_buyer_voice(10) == 146,
            "rescue / auction clip ids");
 }
+
+// The output limiter: nothing ever exceeds the ceiling, quiet material passes bit-exact, and the
+// gain glides back to unity after a burst instead of staying ducked.
+void check_limiter() {
+    using rich4::audio::Limiter;
+    constexpr float rate = 48000.0F;
+    Limiter quiet(rate);
+    std::vector<float> below(4800 * 2);
+    for (std::size_t i = 0; i < below.size(); ++i)
+        below[i] = 0.89F * std::sin(float(i) * 0.031F) * (i % 2 ? -1.0F : 1.0F);
+    auto copy = below;
+    expect(quiet.process(copy) == 0 && copy == below, "limiter altered a signal below its ceiling");
+
+    Limiter loud(rate);
+    std::vector<float> overlap(48000 * 2); // music + voice + three effects: peaks near 4x full scale
+    std::uint32_t noise = 12345;
+    for (std::size_t i = 0; i < overlap.size(); ++i) {
+        noise = noise * 1664525U + 1013904223U;
+        const float hiss = (float(noise >> 8) / float(1U << 24) - 0.5F) * 0.6F;
+        overlap[i] = 3.2F * std::sin(float(i / 2) * 0.05F) + hiss;
+    }
+    overlap[1001] = 40.0F; // a single absurd spike
+    overlap[2002] = std::nanf("");
+    const auto limited = loud.process(overlap);
+    expect(limited > 0, "limiter never engaged on an overloaded mix");
+    for (const float sample : overlap)
+        expect(std::isfinite(sample) && std::abs(sample) <= loud.ceiling(), "limiter let a sample over the ceiling");
+    // Shape is kept (no squared-off waveform): a lone burst over a quiet tone ducks, then recovers.
+    Limiter recover(rate);
+    std::vector<float> tone(48000 * 2);
+    for (std::size_t i = 0; i < tone.size(); ++i)
+        tone[i] = (i < 960 ? 2.0F : 0.25F) * std::sin(float(i / 2) * 0.02F);
+    recover.process(tone);
+    expect(recover.gain() == 1.0F, "limiter gain did not return to unity within one second");
+    float late_peak = 0.0F;
+    for (std::size_t i = 48000; i < tone.size(); ++i)
+        late_peak = std::max(late_peak, std::abs(tone[i]));
+    expect(late_peak > 0.249F, "limiter still attenuating long after the burst");
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -151,6 +192,7 @@ int main(int argc, char **argv) {
         }
         check_logic(disabled);
         check_director(disabled);
+        check_limiter();
         if (argc == 1) {
             std::cout << "disabled audio lifecycle passed; supply original assets for PCM/MIDI tests\n";
             return 0;
@@ -162,7 +204,13 @@ int main(int argc, char **argv) {
         if (std::string(SDL_GetCurrentAudioDriver()) != "dummy") {
             throw std::runtime_error("audio driver is not dummy");
         }
+        // Callback mode: the device thread mixes on its own. The main thread never calls update()
+        // here (as during an archive open or a long frame) and the music still advances in real time.
         const auto start = SDL_GetTicks();
+        SDL_Delay(1500);
+        const auto unattended = mixer.statistics();
+        std::cout << "callback mode: " << unattended.rendered_frames << " frames mixed without update()" << std::endl;
+        expect(unattended.rendered_frames >= 48000, "audio thread did not mix while the main thread was busy");
         while (SDL_GetTicks() - start < 3000) {
             mixer.update();
             SDL_Delay(5);
@@ -189,10 +237,21 @@ int main(int argc, char **argv) {
         if (stats.effects_started != 1 || stats.voices_started != 2 || stats.clips_completed != 2) {
             throw std::runtime_error("PCM completion/replacement failed");
         }
-        SDL_Delay(200); // no refill: the dummy device must actually drain the queued samples
-        if (mixer.queued_bytes() != 0) {
-            throw std::runtime_error("dummy audio queue did not drain");
+        SDL_Delay(200); // the device pulls what it needs: at most one mixing block stays queued
+        if (mixer.queued_bytes() >= 512 * 2 * int(sizeof(float))) {
+            throw std::runtime_error("dummy audio queue holds more than one block");
         }
+        // The limiter keeps the mixed output within full scale, whatever overlaps.
+        mixer.play_sound(10);
+        mixer.play_sound(10);
+        mixer.play_sound(10);
+        mixer.play_voice(10, 0);
+        SDL_Delay(400);
+        const auto loud = mixer.statistics();
+        std::cout << "overlap: peak(pre-limiter)=" << loud.peak << " clipped=" << loud.clipped_samples
+                  << " limited=" << loud.limited_samples << std::endl;
+        expect(loud.limited_samples > 0, "stacked effects never reached the limiter");
+        mixer.stop_voice();
         mixer.select_music(8);
         mixer.select_music(0);
         if (mixer.music_track() != 1) {

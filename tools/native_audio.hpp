@@ -20,13 +20,13 @@ struct Statistics {
     std::uint64_t clips_completed{};
     std::uint64_t music_frames{};
     // Glitch diagnostics (also in the headless report.json as audio_*).
-    std::uint64_t underruns{};         // device found starved (push mode: queue empty at refill)
-    std::uint64_t starved_ms{};        // estimated silence the device played because of underruns
+    std::uint64_t underruns{};         // mixing passes that ran slower than real time (device could starve)
+    std::uint64_t starved_ms{};        // total time those passes overran the audio they produced
     std::uint64_t clipped_samples{};   // mixed samples beyond full scale before limiting (old: hard-clamped)
     std::uint64_t limited_samples{};   // samples whose limiter gain was below 1
     float peak{};                      // largest pre-limiter |sample|
     std::uint64_t max_update_gap_ms{}; // longest gap between two main-thread update() calls
-    std::uint64_t max_render_us{};     // longest single mixing pass (callback or refill)
+    std::uint64_t max_render_us{};     // longest single audio-thread callback
 };
 
 // Looping-effect channels (the original keeps one sound-preset slot per purpose, e.g. the walk
@@ -63,8 +63,13 @@ enum class Music : std::uint8_t {
 };
 [[nodiscard]] std::string_view music_file(Music music) noexcept;
 
-// One main-thread mixer. PCM and software MIDI share a single SDL3 stream, so
-// SDL_AUDIODRIVER=dummy silences every output path while preserving progression.
+// PCM and software MIDI share a single SDL3 device stream, so SDL_AUDIODRIVER=dummy silences
+// every output path while preserving progression. Mixing runs on SDL's audio thread (the device
+// pulls exactly what it needs), so main-thread stalls cannot starve the output; a smooth limiter
+// replaces hard clipping. Every method below is still main-thread only: decoding and file IO
+// happen in the calling thread, and only small state swaps are shared with the audio thread.
+// On Android/iOS the device pauses on SDL_EVENT_WILL_ENTER_BACKGROUND and resumes, from the same
+// music position, on SDL_EVENT_DID_ENTER_FOREGROUND.
 class Audio {
   public:
     // Optional bank: SF2 or DLS supported by the installed FluidSynth. Otherwise
@@ -128,7 +133,10 @@ class Audio {
     // the headless audio log. Called synchronously on the main thread.
     using Trace = std::function<void(std::string_view what, std::string_view detail)>;
     void set_trace(Trace trace);
-    void update(); // Call once per application frame, including modal dialogs.
+    // Call once per application frame, including modal dialogs: delivers trace lines produced on
+    // the audio thread (playlist advance, queued speech) and records main-thread gaps. Audio keeps
+    // playing without it.
+    void update();
 
     [[nodiscard]] bool enabled() const noexcept;
     [[nodiscard]] bool music_available() const noexcept;
