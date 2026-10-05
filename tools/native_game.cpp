@@ -340,7 +340,9 @@ class Application {
     static bool SDLCALL save_on_background(void *self, SDL_Event *event) {
         if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND || event->type == SDL_EVENT_TERMINATING) {
             try {
-                static_cast<Application *>(self)->save();
+                auto &application = *static_cast<Application *>(self);
+                if (application.session_ && application.session_->can_save()) // never overwrite manual Save1
+                    application.write_save(application.options_.save_directory / "Autosave.DAT");
             } catch (const std::exception &error) { // must not unwind through SDL's C code
                 std::cerr << "Background save failed: " << error.what() << '\n';
             }
