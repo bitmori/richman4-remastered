@@ -223,6 +223,32 @@ struct GameSession::Impl {
         events.push_back(
             {GameEventKind::notice, slot, 0, world.players.at(slot).state.node_id, {}, category});
     }
+    // AUDIO: presentation-only Effect.mkf cue (GameEvent::sound); never draws randomness.
+    void cue(std::size_t slot, std::uint8_t sound) {
+        GameEvent event{GameEventKind::notice, slot, 0,
+                        slot < world.players.size() ? world.players[slot].state.node_id : std::uint16_t(0), {}};
+        event.sound = sound;
+        events.push_back(std::move(event));
+    }
+    // AUDIO: _rich4_check_pay_toll_to_owner (core_actions.asm:5441) shows "...免收%s！" for 1500 ms,
+    // then the visitor says event line 13. Presentation only: the caller already decided (with
+    // the same conditions, original order kept here) that no toll is due.
+    void announce_toll_waived(const PlayerStatus &owner, std::size_t owner_slot, std::uint8_t temporary,
+                              std::uint16_t property) {
+        const std::uint8_t reason = (temporary & 0xf0U) && (temporary & 0x0fU) ? 0
+                                    : owner.allied_player == actor() + 1     ? 1
+                                    : owner.god_info == 15                   ? 2
+                                    : owner.days_in_hotel                    ? 3
+                                    : owner.days_disappearing                ? 4
+                                    : owner.days_in_prison                   ? 5
+                                    : owner.days_in_hospital                 ? 6
+                                    : owner.days_sleeping                    ? 7
+                                                                             : 8;
+        auto &box = announce(Announcement::toll_waived, actor(), reason);
+        box.subject = static_cast<std::int32_t>(owner_slot);
+        box.property = property;
+        voice(actor(), 13);
+    }
     void amount_voice(std::size_t slot, std::int32_t amount, unsigned category) {
         if (amount <= 0)
             return;
@@ -823,6 +849,7 @@ struct GameSession::Impl {
             owner_status.days_in_hotel || owner_status.days_disappearing || owner_status.days_in_prison ||
             owner_status.days_in_hospital || owner_status.days_sleeping || owner_status.days_sleep_walking ||
             ((land.temporary_state & 0xf0U) && (land.temporary_state & 0x0fU))) {
+            announce_toll_waived(owner_status, owner, land.temporary_state, static_cast<std::uint16_t>(2000 + land_id));
             finish_turn();
             return;
         }
@@ -1046,6 +1073,8 @@ struct GameSession::Impl {
             owner.days_disappearing || owner.days_in_prison || owner.days_in_hospital ||
             owner.days_sleeping || owner.days_sleep_walking ||
             ((entry.temporary_state & 0xf0U) && (entry.temporary_state & 0x0fU))) {
+            announce_toll_waived(owner, entry.owner_code - 1U, entry.temporary_state,
+                                 static_cast<std::uint16_t>(4000 + id));
             finish_turn();
             return;
         }
@@ -1898,6 +1927,7 @@ struct GameSession::Impl {
         if (owner)
             update_hostility(owner - 1U, actor(), multiply32(30, world.header.price_index));
         status().saved_direction = player().direction;
+        cue(actor(), 15); // AUDIO: 工程車 swing, player_utils.asm:918 board preset [22]
         emit(GameEventKind::notice, "飞行工具炸毁脚下建筑");
     }
     void turn_around(std::size_t slot) {
@@ -1915,6 +1945,7 @@ struct GameSession::Impl {
             turn(world.players.at(slot).state);
         else
             turn(world.special_actors.at(slot - 4));
+        cue(slot, 56); // AUDIO: _rich4_change_player_direction (rich4.asm:6424) board preset [21]
     }
     AuctionResult auction(std::uint16_t property_code, int seller = -1) {
         AuctionSession auction_session(world, random, property_code, seller);
@@ -1943,8 +1974,10 @@ struct GameSession::Impl {
             } else if (!auction_session.tick())
                 throw std::logic_error("auction made no progress");
         }
-        if (auction_session.result().winner)
+        if (auction_session.result().winner) {
             emit(GameEventKind::notice, "拍卖成交", auction_session.result().price);
+            events.back().subject = static_cast<std::int32_t>(*auction_session.result().winner); // AUDIO: 136+c
+        }
         else
             emit(GameEventKind::notice, "地产拍卖流拍");
         return auction_session.result();
@@ -2218,6 +2251,7 @@ struct GameSession::Impl {
             effects.back().object_kind = kind;
         };
         callbacks.arrival = [this](auto slot, auto kind) { announce(Announcement::god_arrival, slot, kind); };
+        callbacks.sound = [this](auto slot, auto sound) { cue(slot, sound); }; // AUDIO: 54 / 35 / 36
         return callbacks;
     }
     EventCallbacks event_callbacks() {

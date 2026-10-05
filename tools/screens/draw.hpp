@@ -37,6 +37,7 @@ struct Host {
     std::function<void(int)> sound;               // Effect.mkf entry; respects the sound toggle
     std::function<void(std::string_view)> toast;  // short notice
     bool instant = false;                         // headless replay: skip waits and animations
+    std::function<void(std::size_t)> speech{};    // AUDIO: Speaking.mkf clip (clerk lines); respects the sound toggle
 };
 
 // Text width of one line in the style.

@@ -65,6 +65,9 @@ struct PropertyState {
     std::uint8_t owner{}; // Zero means unowned; otherwise player slot plus one.
     std::uint8_t level{};
     std::uint8_t type{}; // Land: chain-store flag. Facility: original facility type.
+    // Land +0x17 / facility +0x1c tmp_state: high nibble days left, low nibble 0 漲價卡, 1 查封卡.
+    // Nonzero tints the lot (map.mkf 26, fcn_0040829d). Zero for companies.
+    std::uint8_t temporary{};
 };
 
 // Read-only render snapshot. Missing property overrides retain the map's state.

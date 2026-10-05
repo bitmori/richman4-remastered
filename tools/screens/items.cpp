@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "items.hpp"
+#include "voices.hpp" // AUDIO: clerk voice ids
 
 #include "rich4/cards.hpp"
 #include "rich4/inventory.hpp"
@@ -190,10 +191,40 @@ void Screens::reset() {
     end_visits();
 }
 
+void Screens::voice_once(const std::string &key, std::initializer_list<std::size_t> clips) {
+    if (key == voiced_)
+        return;
+    voiced_ = key;
+    if (!speech || key.empty())
+        return;
+    bool first = true;
+    for (const auto clip : clips) {
+        speech(clip, !first);
+        first = false;
+    }
+}
+
+// AUDIO: bail-out lines. Hospital: 請稍後！ 可以出院了！ (the rescued NPC's thanks) 要保重身體喔！;
+// prison: the rescued NPC's thanks (_special_player_strings, ui_prison.asm:802 / ui_hospital.asm:549).
+void Screens::rescue_voice(bool hospital, int slot) {
+    if (!speech)
+        return;
+    std::vector<std::size_t> clips;
+    if (hospital)
+        clips = {128, 129};
+    if (slot >= 4)
+        clips.push_back(voices::rescued_npc_voice(slot));
+    if (hospital)
+        clips.push_back(130);
+    for (std::size_t i = 0; i < clips.size(); ++i)
+        speech(clips[i], i > 0);
+}
+
 void Screens::end_visits() {
     shop_ = {};
     magic_ = {};
     rescue_ = {};
+    voiced_.clear(); // AUDIO
 }
 
 void Screens::press(Frame &frame, std::string owner, Rect rect, std::function<void()> action, int item) {
@@ -760,6 +791,10 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
     top_right(frame, std::to_string(player.points), 310, 257, 20, white);
     if (shop.leaving)
         keyed(frame, art(frame, 'p', 10, mode ? 19 : 3), 320, 240);
+    if (const auto voice = voices::clerk_voice(shop.balloon)) // AUDIO: shop clerks #0000..#0010
+        voice_once("shop:" + shop.balloon, {*voice});
+    else
+        voice_once(shop.balloon.empty() ? "" : "shop:" + shop.balloon, {});
     if (!shop.balloon.empty()) {
         keyed(frame, art(frame, 'p', 10, 15), 120, 10);
         centred(frame, shop.balloon, 235, 119, 20, dark, false, dark, true);
@@ -837,6 +872,7 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         // The original witch draws the group at random (§7.3); the native rules let the player
         // choose it, so the twelve group icons (18:11-22) are offered on a plate instead.
         shot = "magic-category";
+        voice_once("magic-category", {37}); // AUDIO: 進來魔法屋，就得完全照我的指示！
         keyed(frame, art(frame, 'p', 18, 1), 241, 140);
         const Rect panel{18, 300, 622, 474};
         ui::fill(frame.canvas, panel, ui::color(74, 34, 12));
@@ -891,6 +927,7 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         if (group >= 0 && group < 12)
             keyed(frame, art(frame, 'p', 18, std::size_t(11 + group)), 326, 296);
         balloon("天靈靈地靈靈～");
+        voice_once("magic-cast", {41}); // AUDIO
         const int effect = magic_.selected;
         if (now >= magic_.casting + 1000)
             schedule_effect(effect);
@@ -899,8 +936,11 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         return;
     }
     keyed(frame, art(frame, 'p', 18, 1), 241, 140);
-    if (group >= 0 && group < 12)
+    if (group >= 0 && group < 12) {
         keyed(frame, art(frame, 'p', 18, std::size_t(11 + group)), 326, 296);
+        // AUDIO: the witch names the group, then 嘿～輪到你了！ (#0046+group, #0040)
+        voice_once("magic-effect" + std::to_string(group), {voices::magic_group_voice(group), 40});
+    }
     const auto tap = [this](int effect) {
         if (effect < 0 || effect > 11)
             return;
@@ -1003,14 +1043,16 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
                 ui::border(frame.canvas, {rect.left + 1, rect.top + 1, rect.right - 1, rect.bottom - 1},
                            ui::color(255, 255, 0));
             }
-            frame.hit(option_id + int(*index), rect, [this, host, slot, points, index = *index] {
+            frame.hit(option_id + int(*index), rect, [this, host, hospital, slot, points, index = *index] {
                 if (points < (slot < 4 ? 30 : 300)) {
                     rescue_.selected = -1;
                     rescue_.poor_until = 1;
                     if (sound)
                         sound(3);
-                } else if (rescue_.selected == slot)
+                } else if (rescue_.selected == slot) {
+                    rescue_voice(hospital, slot);
                     host.respond(index);
+                }
                 else {
                     rescue_.selected = slot;
                     rescue_.poor_until = 0;
@@ -1025,12 +1067,15 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
     if (hospital) {
         keyed(frame, art(frame, 'p', 65, 2), 8, 8);
         centred(frame, "您好！請問您要替誰\n辦理出院手續？", 148, 56, 18, dark, false, dark, true);
+        if (voiced_.empty())
+            voice_once("hospital", {127}); // AUDIO: nurse #0127, once per visit
     }
     if (rescue_.poor_until == 1)
         rescue_.poor_until = now + 2000;
     if (rescue_.poor_until > now) {
         keyed(frame, art(frame, 'p', entry, 1), 230, 300);
         centred(frame, "抱歉！\n你的點數不足！", 322, 334, 18, dark, false, dark, true);
+        voice_once("poor" + std::to_string(rescue_.poor_until), {2}); // AUDIO: #0002 (ui_prison/hospital)
     }
     const auto leave = option_of(decision, -1);
     if (rescue_.selected >= 0) {
@@ -1051,7 +1096,10 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
         const auto index = option_of(decision, slot);
         if (index)
             frame.button(yes_id, {mid - 120, panel.top + 40, mid - 10, panel.bottom - 10}, "是",
-                         [host, index = *index] { host.respond(index); });
+                         [this, host, hospital, slot, index = *index] {
+                             rescue_voice(hospital, slot);
+                             host.respond(index);
+                         });
         frame.button(no_id, {mid + 10, panel.top + 40, mid + 120, panel.bottom - 10}, "否",
                      [this] { rescue_.selected = -1; });
     }

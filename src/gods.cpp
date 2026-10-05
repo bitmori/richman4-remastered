@@ -174,6 +174,8 @@ Result detach(World &world, std::size_t actor, const Callbacks &callbacks) {
     const bool absent =
         status.days_in_hotel || status.days_disappearing || status.days_in_prison || status.days_in_hospital;
     callbacks.remove_object(status.god_info);
+    if (callbacks.sound)
+        callbacks.sound(actor, 54); // rich4_gods.asm:238 board preset [19]
     if (!absent && ((kind >= 5 && kind <= 8) || kind == 15))
         voice(callbacks, actor, 23);
     return {true, true, false, "神明离开"};
@@ -310,11 +312,15 @@ Result touch(World &world, Random &random, std::size_t actor, std::uint16_t id, 
         if (!tool)
             return {}; // Original leaves the gift on the map when supply is empty.
         callbacks.remove_object(13);
+        if (callbacks.sound)
+            callbacks.sound(actor, 35); // core_actions.asm:2981 board preset [6]
         prize_voice(random, callbacks, actor, services::tool_prices[tool - 1]);
         return {true, true, false, "获得道具"};
     }
     if (kind == 14) {
         callbacks.remove_object(14);
+        if (callbacks.sound)
+            callbacks.sound(actor, 36); // core_actions.asm:3121 board preset [7]
         player.state.points = static_cast<std::uint16_t>(player.state.points + 500);
         voice(callbacks, actor, 0);
         return {true, true, false, "获得500点"};

@@ -111,6 +111,9 @@ enum class Announcement : std::uint8_t {
     point_coupon,      // "得點券N點" box (1000 ms): amount 10/30/50.
     absent_status,     // Turn-start "%s坐牢中\n\n還剩%d天！" box: id 0 hotel, 1 away, 2 prison,
                        // 3 hospital, 4 hibernating; value = days left.
+    toll_waived,       // _rich4_check_pay_toll_to_owner box "...免收%s！" (1500 ms) before event voice 13:
+                       // id 0 seized, 1 allied, 2 god of death, 3 hotel, 4 away, 5 prison, 6 hospital,
+                       // 7 hibernating, 8 sleepwalking; subject = owner, property = 2000+land / 4000+facility.
 };
 
 // Which original per-character speech table a bubble line comes from (docs/ui/messages.md §1.4).
@@ -139,6 +142,9 @@ struct GameEvent {
     // argument). Event-table speech keeps using voice_category.
     SpeechTable speech_table = SpeechTable::event;
     std::uint8_t speech_slot = 0, speech_mood = 0;
+    // Presentation-only sound cue (Effect.mkf index) the app plays when it presents this event,
+    // e.g. 54 god leaves, 35/36 gift pickups, 56 forced turn-around, 15 工程車 demolition swing.
+    std::optional<std::uint8_t> sound = std::nullopt;
     bool operator==(const GameEvent &) const = default; // pre-choice presentation replay matching
 };
 

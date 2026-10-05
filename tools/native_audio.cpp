@@ -35,6 +35,12 @@ constexpr int queue_target_frames = 3072; // 64 ms: enough for the 40-ms origina
 constexpr SDL_AudioSpec mixer_format{SDL_AUDIO_F32, channels, sample_rate};
 constexpr std::array<std::string_view, 8> music_files{"rich08.mid", "rich16.mid", "rich17.mid", "rich18.mid",
                                                       "rich19.mid", "rich20.mid", "rich21.mid", "rich22.mid"};
+// ref_0047e793, indexed by Music (silence first).
+constexpr std::array<std::string_view, 18> context_files{
+    "silence",    "midi01.mid", "midi02.mid", "midi03.mid",   "midi04.mid",   "midi05.mid",
+    "midi06.mid", "midi07.mid", "midi08.mid", "midi09.mid",   "midi10.mid",   "midi11.mid",
+    "midi12.mid", "midi13.mid", "midi14-1.mid", "midi14-2.mid", "midi15.mid", "midi16.mid"};
+constexpr std::array<std::string_view, std::size_t(Loop::count)> loop_names{"spinner", "walk", "bomb"};
 
 std::filesystem::path asset_path(const std::filesystem::path &directory, std::string_view name) {
     for (const auto &entry : std::filesystem::directory_iterator(directory)) {
@@ -118,6 +124,11 @@ std::vector<float> decode_wave(std::span<const std::uint8_t> bytes) {
 
 } // namespace
 
+std::string_view music_file(Music music) noexcept {
+    const auto index = static_cast<std::size_t>(music);
+    return index < context_files.size() ? context_files[index] : "silence";
+}
+
 struct Audio::Impl {
     bool enabled{};
     bool music_on{true};
@@ -132,7 +143,20 @@ struct Audio::Impl {
                                                                                  delete_fluid_settings};
     std::unique_ptr<fluid_synth_t, decltype(&delete_fluid_synth)> synth{nullptr, delete_fluid_synth};
     std::unique_ptr<fluid_player_t, decltype(&delete_fluid_player)> player{nullptr, delete_fluid_player};
-    std::vector<std::uint8_t> midi_bytes;
+    std::map<std::string, std::vector<std::uint8_t>, std::less<>> midi_cache; // file -> bytes (never evicted)
+    // What the MIDI player is playing: a context (looped) or, when empty, playlist `track`.
+    std::optional<Music> context;
+    struct Saved {
+        std::optional<Music> context; // nullopt = board playlist track
+        unsigned track{1};
+        int tick{};
+    };
+    std::vector<Saved> music_stack; // pushed contexts save what was under them
+    bool player_stale{};            // music was off when the track changed: (re)start when on
+    int resume_tick{};              // position to seek to when a stale track is started
+    std::array<std::optional<std::size_t>, std::size_t(Loop::count)> loops{};
+    std::vector<std::size_t> speech_queue;
+    Trace trace;
     std::optional<assets::Archive> effects;
     std::optional<assets::Archive> voices;
     std::map<std::pair<bool, std::size_t>, std::vector<float>> samples;
@@ -142,6 +166,7 @@ struct Audio::Impl {
         std::size_t position{};
         bool voice{};
         bool loop{}; // play_loop(): restarts at the end until stop_loop()
+        Loop channel{Loop::spinner};
     };
     std::vector<Clip> clips;
 
@@ -187,6 +212,9 @@ struct Audio::Impl {
             diagnostic = "MIDI soundbank unavailable; set RICH4_SOUNDFONT to a General MIDI SF2/DLS file";
             return;
         }
+        // The original MIDIs carry meta events FluidSynth only warns about; keep stderr for errors.
+        fluid_set_log_function(FLUID_WARN, nullptr, nullptr);
+        fluid_set_log_function(FLUID_INFO, nullptr, nullptr);
         settings.reset(new_fluid_settings());
         if (!settings) {
             throw std::runtime_error("cannot create FluidSynth settings");
@@ -205,18 +233,80 @@ struct Audio::Impl {
         start_track();
     }
 
-    void start_track() {
+    void log(std::string_view what, std::string_view detail) const {
+        if (trace)
+            trace(what, detail);
+    }
+    std::string_view current_file() const {
+        return context ? music_file(*context) : music_files[track - 1];
+    }
+    // (Re)starts whatever `context`/`track` select, from `tick`. With music switched off the
+    // start is deferred (player_stale) so a muted game never renders MIDI.
+    void start_track(int tick = 0) {
         if (!synth) {
             return;
         }
         player.reset();
         fluid_synth_system_reset(synth.get());
-        midi_bytes = read_bytes(asset_path(directory, music_files[track - 1]));
-        player.reset(new_fluid_player(synth.get()));
-        if (!player || fluid_player_add_mem(player.get(), midi_bytes.data(), midi_bytes.size()) != FLUID_OK ||
-            fluid_player_play(player.get()) != FLUID_OK) {
-            throw std::runtime_error("cannot start original MIDI track " + std::to_string(track));
+        if (!music_on) {
+            player_stale = true;
+            resume_tick = tick;
+            return;
         }
+        player_stale = false;
+        if (context == Music::silence) {
+            return; // no player: silence until popped
+        }
+        const auto file = std::string(current_file());
+        auto cached = midi_cache.find(file);
+        if (cached == midi_cache.end()) {
+            try {
+                cached = midi_cache.emplace(file, read_bytes(asset_path(directory, file))).first;
+            } catch (const std::exception &error) {
+                // A missing context MIDI keeps the game running silently; the playlist files stay
+                // mandatory exactly as before.
+                if (!context)
+                    throw;
+                diagnostic = error.what();
+                return;
+            }
+        }
+        const auto &bytes = cached->second;
+        player.reset(new_fluid_player(synth.get()));
+        if (!player || fluid_player_add_mem(player.get(), bytes.data(), bytes.size()) != FLUID_OK) {
+            throw std::runtime_error("cannot load original MIDI " + file);
+        }
+        if (context) {
+            fluid_player_set_loop(player.get(), -1); // context MIDIs loop until popped (fcn_00454d2c)
+        }
+        if (fluid_player_play(player.get()) != FLUID_OK) {
+            throw std::runtime_error("cannot start original MIDI " + file);
+        }
+        if (tick > 0) {
+            fluid_player_seek(player.get(), tick); // resume where push_music left it
+        }
+    }
+    int current_tick() {
+        if (player_stale)
+            return resume_tick;
+        return player ? std::max(0, fluid_player_get_current_tick(player.get())) : 0;
+    }
+    void push(Music music, bool save) {
+        if (save || music_stack.empty())
+            music_stack.push_back({context, track, current_tick()});
+        context = music;
+        log(save ? "music_push" : "music_replace", music_file(music));
+        start_track();
+    }
+    void pop() {
+        if (music_stack.empty())
+            return;
+        const auto saved = music_stack.back();
+        music_stack.pop_back();
+        context = saved.context;
+        track = saved.track;
+        log("music_pop", current_file());
+        start_track(saved.tick);
     }
 
     const std::vector<float> &load_clip(bool voice, std::size_t index) {
@@ -232,12 +322,14 @@ struct Audio::Impl {
         return samples.emplace(key, std::move(pcm)).first->second;
     }
 
-    void play_clip(bool voice, std::size_t index) {
+    void play_clip(bool voice, std::size_t index, bool keep_queue = false) {
         if (!enabled) {
             return;
         }
         const auto &pcm = load_clip(voice, index);
         if (voice) {
+            if (!keep_queue)
+                speech_queue.clear();
             std::erase_if(clips, [](const Clip &clip) { return clip.voice; });
             ++stats.voices_started;
         } else {
@@ -255,12 +347,16 @@ struct Audio::Impl {
 
     void render_block(std::span<float> output) {
         std::fill(output.begin(), output.end(), 0.0F);
+        if (music_on && player_stale) {
+            start_track(resume_tick);
+        }
         if (music_on && player) {
-            if (fluid_player_get_status(player.get()) == FLUID_PLAYER_DONE) {
+            if (fluid_player_get_status(player.get()) == FLUID_PLAYER_DONE && !context) {
                 track = track % 8 + 1;
+                log("music_next", current_file());
                 start_track();
             }
-            if (fluid_synth_write_float(synth.get(), block_frames, output.data(), 0, 2, output.data(), 1,
+            if (player && fluid_synth_write_float(synth.get(), block_frames, output.data(), 0, 2, output.data(), 1,
                                         2) != FLUID_OK) {
                 throw std::runtime_error("MIDI software rendering failed");
             }
@@ -285,6 +381,13 @@ struct Audio::Impl {
             } while (clip.loop && !clip.samples->empty() && written < output.size());
         }
         std::erase_if(clips, [](const Clip &clip) { return clip.position == clip.samples->size(); });
+        if (!speech_queue.empty() &&
+            std::none_of(clips.begin(), clips.end(), [](const Clip &clip) { return clip.voice; })) {
+            const auto next = speech_queue.front();
+            speech_queue.erase(speech_queue.begin());
+            log("speech", std::to_string(next));
+            play_clip(true, next, true);
+        }
         for (auto &sample : output) {
             sample = std::clamp(sample, -1.0F, 1.0F);
             if (std::abs(sample) > 0.000001F) {
@@ -324,20 +427,44 @@ Audio::Audio(Audio &&) noexcept = default;
 Audio &Audio::operator=(Audio &&) noexcept = default;
 
 void Audio::play_sound(std::size_t index) {
+    impl_->log("sound", std::to_string(index));
     impl_->play_clip(false, index);
 }
 
-void Audio::play_loop(std::size_t index) {
+void Audio::play_loop(std::size_t index, Loop channel) {
+    auto &slot = impl_->loops.at(std::size_t(channel));
+    if (slot == index) {
+        return; // already looping here: keep it seamless
+    }
+    stop_loop(channel);
+    slot = index;
+    impl_->log("loop_start", std::string(loop_names[std::size_t(channel)]) + " " + std::to_string(index));
     if (!impl_->enabled) {
         return;
     }
-    stop_loop();
     impl_->play_clip(false, index);
     impl_->clips.back().loop = true;
+    impl_->clips.back().channel = channel;
 }
 
-void Audio::stop_loop() {
-    std::erase_if(impl_->clips, [](const Impl::Clip &clip) { return clip.loop; });
+void Audio::stop_loop(Loop channel) {
+    auto &slot = impl_->loops.at(std::size_t(channel));
+    if (!slot) {
+        return;
+    }
+    impl_->log("loop_stop", std::string(loop_names[std::size_t(channel)]) + " " + std::to_string(*slot));
+    slot.reset();
+    std::erase_if(impl_->clips,
+                  [channel](const Impl::Clip &clip) { return clip.loop && clip.channel == channel; });
+}
+
+void Audio::stop_all_loops() {
+    for (std::size_t channel = 0; channel < impl_->loops.size(); ++channel)
+        stop_loop(Loop(channel));
+}
+
+std::optional<std::size_t> Audio::looping(Loop channel) const noexcept {
+    return std::size_t(channel) < impl_->loops.size() ? impl_->loops[std::size_t(channel)] : std::nullopt;
 }
 
 void Audio::play_voice(std::uint8_t character, std::uint16_t category) {
@@ -347,16 +474,30 @@ void Audio::play_voice(std::uint8_t character, std::uint16_t category) {
     impl_->play_clip(true, 1050U + character * 27U + category);
 }
 
+void Audio::queue_speech(std::size_t index) {
+    if (!impl_->enabled) {
+        return;
+    }
+    if (!voice_active() && impl_->speech_queue.empty()) {
+        impl_->log("speech", std::to_string(index));
+        impl_->play_clip(true, index, true);
+        return;
+    }
+    impl_->speech_queue.push_back(index);
+}
+
 std::uint32_t Audio::play_speech(std::size_t index) {
     if (!impl_->enabled) {
         return 0;
     }
+    impl_->log("speech", std::to_string(index));
     impl_->play_clip(true, index);
     const auto &pcm = impl_->load_clip(true, index);
     return static_cast<std::uint32_t>(pcm.size() / channels * 1000 / sample_rate);
 }
 
 void Audio::stop_voice() {
+    impl_->speech_queue.clear();
     std::erase_if(impl_->clips, [](const Impl::Clip &clip) { return clip.voice; });
 }
 
@@ -365,7 +506,10 @@ bool Audio::voice_active() const noexcept {
 }
 
 void Audio::set_music(bool enabled) {
+    if (impl_->music_on == enabled)
+        return;
     impl_->music_on = enabled;
+    impl_->log("music_enabled", enabled ? "on" : "off");
 }
 
 void Audio::select_music(unsigned track) {
@@ -373,7 +517,32 @@ void Audio::select_music(unsigned track) {
         throw std::invalid_argument("normal MIDI playlist selection must be 0 through 8");
     }
     impl_->track = track == 0 ? impl_->track % 8 + 1 : track;
+    impl_->music_stack.clear();
+    impl_->context.reset();
+    impl_->log("music_select", impl_->current_file());
     impl_->start_track();
+}
+
+void Audio::push_music(Music music) {
+    impl_->push(music, true);
+}
+void Audio::pop_music() {
+    impl_->pop();
+}
+void Audio::replace_music(Music music) {
+    impl_->push(music, false);
+}
+std::size_t Audio::music_depth() const noexcept {
+    return impl_->music_stack.size();
+}
+std::optional<Music> Audio::music_context() const noexcept {
+    return impl_->context;
+}
+std::string Audio::music_name() const {
+    return std::string(impl_->current_file());
+}
+void Audio::set_trace(Trace trace) {
+    impl_->trace = std::move(trace);
 }
 
 void Audio::update() {

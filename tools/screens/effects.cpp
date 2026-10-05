@@ -26,11 +26,13 @@ SceneData make_scene(const World &world, std::uint64_t ticks) {
     }
     for (std::size_t index = 1; index < world.lands.size(); ++index) {
         const auto &land = world.lands[index];
-        scene.lands.push_back({land.id, land.economy.owner_code, land.economy.level, land.economy.chain_store});
+        scene.lands.push_back({land.id, land.economy.owner_code, land.economy.level, land.economy.chain_store,
+                               land.temporary_state});
     }
     for (std::size_t index = 1; index < world.facilities.size(); ++index) {
         const auto &facility = world.facilities[index];
-        scene.facilities.push_back({facility.id, facility.owner_code, facility.level, facility.facility_type});
+        scene.facilities.push_back({facility.id, facility.owner_code, facility.level, facility.facility_type,
+                                    facility.temporary_state});
     }
     for (const auto &object : world.objects) {
         std::optional<board::Point> position;
