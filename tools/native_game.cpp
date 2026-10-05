@@ -14,6 +14,9 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#ifdef __ANDROID__
+#include "rich4_android.hpp" // android/app/src/main/cpp
+#endif
 
 #include <array>
 #include <bit>
@@ -67,6 +70,12 @@ Options arguments(int argc, char **argv) {
     Options options;
     options.assets = RICH4_DEFAULT_ASSETS;
     options.save_directory = home / "Library/Application Support/Rich4Native/saves";
+#ifdef __ANDROID__
+    const auto platform = android_platform::prepare(); // extracted APK assets, system/bundled font, SDL pref path
+    options.assets = platform.assets;
+    options.font = platform.font;
+    options.save_directory = platform.save_directory;
+#endif
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--headless")
@@ -156,6 +165,10 @@ class Application {
                                  ((options_.headless || options_.hidden_window) ? SDL_WINDOW_HIDDEN : 0)));
         if (!window_)
             throw std::runtime_error(SDL_GetError());
+#ifdef __ANDROID__
+        SDL_SetWindowFullscreen(window_.get(), true); // immersive: hide status and navigation bars
+        require(SDL_AddEventWatch(save_on_background, this));
+#endif
         renderer_.reset(SDL_CreateRenderer(window_.get(), options_.headless ? "software" : nullptr));
         if (!renderer_)
             throw std::runtime_error(SDL_GetError());
@@ -247,6 +260,10 @@ class Application {
                             break;
                         }
                 }
+#ifdef __ANDROID__
+                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK)
+                    event.key.key = SDLK_ESCAPE; // system Back behaves like Escape
+#endif
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
                     buttons_.clear();
                     if (editing_amount_) {
@@ -316,6 +333,21 @@ class Application {
     }
 
   private:
+#ifdef __ANDROID__
+    // Android may kill a backgrounded app without SDL_EVENT_QUIT, and SDL blocks the main loop
+    // while paused, so lifecycle events must be handled here (SDL calls watches synchronously
+    // on the main thread from the event pump).
+    static bool SDLCALL save_on_background(void *self, SDL_Event *event) {
+        if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND || event->type == SDL_EVENT_TERMINATING) {
+            try {
+                static_cast<Application *>(self)->save();
+            } catch (const std::exception &error) { // must not unwind through SDL's C code
+                std::cerr << "Background save failed: " << error.what() << '\n';
+            }
+        }
+        return true;
+    }
+#endif
     void picture(const graphics::Image &image, int x, int y) {
         frame_.picture(image, x, y);
     }
