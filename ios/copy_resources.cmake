@@ -1,0 +1,33 @@
+# Copies the original game files (never committed), the bundled font and the soundfont into the
+# built app bundle. Runs as a POST_BUILD step, i.e. before Xcode code-signs the bundle.
+#   cmake -DGAME_ASSETS=DIR -DFONT=FILE -DSOUNDFONT=FILE [-DBUNDLE=APP_DIR] -P copy_resources.cmake
+# BUNDLE defaults to the app Xcode is building (its script-phase environment).
+if(NOT BUNDLE AND DEFINED ENV{TARGET_BUILD_DIR} AND DEFINED ENV{WRAPPER_NAME})
+  set(BUNDLE "$ENV{TARGET_BUILD_DIR}/$ENV{WRAPPER_NAME}")
+endif()
+foreach(variable GAME_ASSETS SOUNDFONT BUNDLE)
+  if(NOT ${variable})
+    message(FATAL_ERROR "copy_resources.cmake: ${variable} not set")
+  endif()
+endforeach()
+file(MAKE_DIRECTORY "${BUNDLE}/game")
+file(GLOB files LIST_DIRECTORIES false "${GAME_ASSETS}/*")
+set(found_data OFF)
+foreach(file IN LISTS files)
+  get_filename_component(name "${file}" NAME)
+  get_filename_component(extension "${file}" LAST_EXT)
+  string(TOLOWER "${extension}" extension)
+  if(extension MATCHES "^\\.(mkf|mid|wav)$") # as Android; movies (.avi) and the EXEs are not needed
+    file(COPY_FILE "${file}" "${BUNDLE}/game/${name}" ONLY_IF_DIFFERENT)
+    if(name STREQUAL "Data.mkf")
+      set(found_data ON)
+    endif()
+  endif()
+endforeach()
+if(NOT found_data)
+  message(FATAL_ERROR "No Data.mkf in ${GAME_ASSETS}")
+endif()
+file(COPY_FILE "${SOUNDFONT}" "${BUNDLE}/GeneralUser-GS.sf2" ONLY_IF_DIFFERENT)
+if(FONT AND EXISTS "${FONT}")
+  file(COPY_FILE "${FONT}" "${BUNDLE}/NotoSerifCJKtc-Regular.otf" ONLY_IF_DIFFERENT)
+endif()

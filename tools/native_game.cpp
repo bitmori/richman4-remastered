@@ -32,8 +32,18 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+// Phone builds: same hooks on Android and iOS (fullscreen, touch pad, bundled paths, background autosave).
 #ifdef __ANDROID__
 #include "rich4_android.hpp" // android/app/src/main/cpp
+#define RICH4_MOBILE 1
+namespace rich4 { namespace mobile_platform = android_platform; }
+#elif defined(TARGET_OS_IOS) && TARGET_OS_IOS
+#include "rich4_ios.hpp" // ios/
+#define RICH4_MOBILE 1
+namespace rich4 { namespace mobile_platform = ios_platform; }
 #endif
 
 #include <array>
@@ -102,8 +112,9 @@ Options arguments(int argc, char **argv) {
     Options options;
     options.assets = RICH4_DEFAULT_ASSETS;
     options.save_directory = home / "Library/Application Support/Rich4Native/saves";
-#ifdef __ANDROID__
-    const auto platform = android_platform::prepare(); // extracted APK assets, system/bundled font, SDL pref path
+#ifdef RICH4_MOBILE
+    // Android: extracted APK assets; iOS: the app bundle. Bundled/system font, SDL pref path.
+    const auto platform = mobile_platform::prepare();
     options.assets = platform.assets;
     options.font = platform.font;
     options.save_directory = platform.save_directory;
@@ -236,7 +247,7 @@ class Application {
                                  ((options_.headless || options_.hidden_window) ? SDL_WINDOW_HIDDEN : 0)));
         if (!window_)
             throw std::runtime_error(SDL_GetError());
-#ifdef __ANDROID__
+#ifdef RICH4_MOBILE
         SDL_SetWindowFullscreen(window_.get(), true); // immersive: hide status and navigation bars
         require(SDL_AddEventWatch(save_on_background, this));
 #endif
@@ -539,9 +550,9 @@ class Application {
     }
 
   private:
-#ifdef __ANDROID__
-    // Android may kill a backgrounded app without SDL_EVENT_QUIT, and SDL blocks the main loop
-    // while paused, so lifecycle events must be handled here (SDL calls watches synchronously
+#ifdef RICH4_MOBILE
+    // Android and iOS may kill a backgrounded app without SDL_EVENT_QUIT, and SDL blocks the main
+    // loop while paused on Android, so lifecycle events must be handled here (SDL calls watches synchronously
     // on the main thread from the event pump).
     static bool SDLCALL save_on_background(void *self, SDL_Event *event) {
         if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND || event->type == SDL_EVENT_TERMINATING) {

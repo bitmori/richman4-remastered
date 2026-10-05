@@ -14,6 +14,7 @@
 | 呈现顺序 | 气泡/讯息、骰子、特效与音效按事件顺序单队列播放；队列清空前核心时钟不前进（修复坐牢回合后下一位骰子“跳过”） | `tools/native_game.cpp` `observe()` |
 | 第二轮（素材覆盖审计后） | 新游戏飞机/跳伞开场；卡片/道具台词（使用者与受害者）；神明出场先于拉霸机/邱比特转盘；每月股息（补上缺失的分红规则）、乐透开奖、月底银行报告；PLAY AGAIN 倒数、倒闭动画、过关画面；说明视窗；节日月历图；三个互动小游戏；救护车/警车/狗/UFO/飞机/新闻/ZZZ/AI 掷卡/拾取/工程车/病号服与囚服/节日动画；场景音乐、行走与引擎循环音效、店员与 NPC 语音；魔法屋施法动画、拍卖姿势、遥控骰子与嫁祸选择、NPC 道谢、托管 AI；规则死路修复、繁体提示与真实地名、地块资讯弹窗、商店触控说明 | [审计](audit/) |
 | Android | `io.divby0.rich4`，`scripts/build_android.sh [序列号]` 生成 debug 签名、仅侧载的 APK（约 188 MB）；首次启动解出素材；切到后台写入 Autosave | `android/` |
+| iOS | `io.divby0.rich4`，`scripts/build_ios.sh`（模拟器，`--run` 安装启动；`RICH4_IOS_TEAM=… --device ID` 真机）；素材直接从 app 包读取（约 300 MB），后台写入 Autosave，轻触觉反馈；模拟器内用 XCUITest 真实触控走完菜单 → 新游戏 → 棋盘 → GO，尚未上真机 | `ios/` |
 
 验证（9a4e16f）：47/47 ctest（Debug ASan/UBSan，含原版金标）、四张地图 30 天回放（含曾触发英文对话框的地图 7 seed 12）、20/20 验收矩阵。素材覆盖用 `RICH4_ASSET_TRACE` 追踪，未用条目逐项归类见 [docs/audit](audit/)。Android 在模拟器与 OnePlus 8 真机安装运行；模拟器音频驱动无法输出声音。
 

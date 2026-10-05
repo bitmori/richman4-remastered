@@ -90,6 +90,28 @@ python3 scripts/test_android_core.py --serial emulator-5554 \
 
 这是原生库/命令行测试，不会安装 APK。报告位于 `artifacts/android-core/`。后续 Android 应用仍需要 SDL 窗口集成、素材导入、触摸输入、音频与生命周期处理。
 
+## iOS（iPhone / iPad，仅本机安装）
+
+`ios/` 是 CMake（Xcode 生成器，`CMAKE_SYSTEM_NAME=iOS`）工程，直接编译仓库根目录的源码，加上 SDL3 3.4.16、FreeType、FluidSynth（无 glib、无后端）；Big5 用 iOS 系统 libiconv。第三方源码由脚本下载到 `ios/third_party/`（gitignored，SHA-256 校验，版本同 Android）。`game-assets/` 的 mkf/mid/wav、GeneralUser GS 音色库与 Noto Serif CJK TC 字体在编译时复制进 app 包（不进 Git），游戏直接从包内读取；存档在 app 的 `Library/Application Support/divby0/rich4/saves`，切到后台写入 `Autosave.DAT`。图标由 `scripts/make_ios_icon.py` 从 rich4.exe 生成。Bundle id `io.divby0.rich4`，仅横屏、全屏、隐藏状态栏。**不要上传 App Store / TestFlight。**
+
+```sh
+scripts/build_ios.sh                                   # 模拟器版（ad-hoc 签名）
+scripts/build_ios.sh --run "iPhone 16 Pro"             # 并在该模拟器（名称或 UDID）安装、启动
+RICH4_IOS_TEAM=<团队ID> scripts/build_ios.sh --device <设备ID>   # 真机：自动签名、安装并启动
+```
+
+真机需要：10 位 Apple 团队 ID（Xcode 已登录该账号）、iPhone 用线连接或同一网络配对且已“信任此电脑”、iPhone 上开启“开发者模式”（设置 › 隐私与安全性）；设备 ID 见 `xcrun devicectl list devices`。免费个人团队签名 7 天后过期，需要重新运行。产物在 `build/ios-simulator/` 或 `build/ios-device/`，约 300 MB。
+
+开发用真实触控测试（菜单 → 新游戏 → 棋盘 → GO、后台存档）：
+
+```sh
+cmake -G Xcode -S ios -B build/ios-uitests -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_SYSROOT=iphonesimulator -DRICH4_ASSET_CATALOG="$PWD/build/ios-generated/Assets.xcassets" \
+  -DRICH4_IOS_UITESTS=ON
+xcodebuild test -project build/ios-uitests/rich4_ios.xcodeproj -scheme rich4 \
+  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -resultBundlePath /tmp/rich4-touch.xcresult
+```
+
 ## 运行当前原型与原版参考
 
 原生版本双击 **`Play Rich4 Native.command`**，或执行 `./scripts/run_native_mac.sh`。新存档在 `~/Library/Application Support/Rich4Native/saves`，不会覆盖原版。空格/Enter掷骰，F5保存，F9读档；顶部按钮可用卡片、道具、股票等功能。
