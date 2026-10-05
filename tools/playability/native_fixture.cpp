@@ -71,7 +71,11 @@ void configure(World& w,std::uint16_t center,unsigned first_card,unsigned last_c
     w.news_effect_days=0;w.camera_rotation=0;w.lease_mode=0;w.round_counter=0;w.public_fund=0;
     w.prison_roster.fill(0);w.hospital_roster.fill(0);w.lottery_tickets.fill(0);
     for(auto& node:w.nodes)node.flags&=~0x00ffff00U;
-    for(auto& object:w.objects)object={};
+    for(std::size_t i=0;i<w.objects.size();++i){
+        auto& object=w.objects[i];object={};
+        // Empty pool slots retain their type: paired gods can respawn here.
+        object.kind=std::uint8_t(i<14?i+1:i<16?15:i<26?16:i<36?17:18);
+    }
     for(auto& actor:w.special_actors){actor={};actor.inactive_state=1;}
     const auto nearby=neighborhood(w,center);if(nearby.size()<7)throw std::runtime_error("Fixture neighborhood too small");
     for(std::size_t slot=0;slot<w.players.size();++slot){auto& p=w.players[slot];
@@ -109,6 +113,69 @@ void configure(World& w,std::uint16_t center,unsigned first_card,unsigned last_c
     // Supply remains available to test transfers, gifts and purchases.
     w.card_supply.fill(10);w.tool_supply.fill(20);
 }
+std::vector<std::uint16_t> forward_nodes(const World& w,std::uint16_t current,std::uint16_t last){
+    std::vector<std::uint16_t> result;
+    const auto& node=w.nodes.at(current);
+    for(unsigned i=0;i<node.neighbors.size();++i){
+        const auto next=node.neighbors[i];
+        if(next && next!=last && !(node.flags&(0x40000000U>>i)))result.push_back(next);
+    }
+    return result;
+}
+World bankruptcy_world(const World& source){
+    std::uint16_t ai_node=0,ai_last=0,human_node=0;
+    // Select an existing route, without rewriting the map or movement rules.
+    // The human steps off its property, then the AI takes its sole forward exit
+    // onto that property. Both have the original one-step tortoise status.
+    for(std::size_t i=1;i<source.nodes.size() && !ai_node;++i){
+        if(source.nodes[i].flags&0x80000000U)continue;
+        for(const auto last:source.nodes[i].neighbors){
+            if(!last)continue;
+            const auto exits=forward_nodes(source,std::uint16_t(i),last);
+            if(exits.size()!=1)continue;
+            const auto target=exits.front();
+            const auto code=source.nodes.at(target).type_and_index;
+            if(!land(source,code) && !facility(source,code))continue;
+            const auto human_exits=forward_nodes(source,target,std::uint16_t(i));
+            if(human_exits.size()!=1)continue;
+            const auto human_landing=source.nodes.at(human_exits.front()).type_and_index;
+            if(!land(source,human_landing) && !facility(source,human_landing))continue;
+            ai_node=std::uint16_t(i);ai_last=last;human_node=target;break;
+        }
+    }
+    if(!ai_node)throw std::runtime_error("No deterministic original route for bankruptcy fixture");
+    const auto encoded=source.export_save();
+    const auto save=SaveFile::decode(encoded);
+    const auto regions=save.regions();
+    const auto map_region=std::find_if(regions.begin(),regions.end(),[](const auto& region){return region.name=="map_header";});
+    if(map_region==regions.end())throw std::runtime_error("Save map region is missing");
+    NewGameOptions options;
+    options.map_id=source.header.map_id;options.stage_id=source.header.stage_id;
+    options.date={15,6,1998};options.random_seed=fixture_seed;
+    options.players={{10,1,0,human_node},{3,2,0,ai_node}};
+    auto w=World::from_map_resource(std::span(encoded).subspan(map_region->offset,save.map_summary().byte_size),options);
+    for(auto& node:w.nodes)node.flags&=~0x00ffff00U;
+    for(auto& object:w.objects){const auto kind=object.kind;object={};object.kind=kind;}
+    for(auto& actor:w.special_actors){actor={};actor.inactive_state=1;}
+    for(std::size_t slot=0;slot<2;++slot){
+        auto& p=w.players[slot];p.status={};p.status.flags_100=slot?2:1;
+        p.status.days_tortoise_walking=5;
+        p.state.cash=slot?1:1000000;p.state.bank_balance=slot?0:2000000;
+        p.state.loan=0;p.state.special_finance=0;p.state.cards={};p.state.tool_amounts={};p.stocks={};
+        place(w,slot,slot?ai_node:human_node);
+    }
+    w.players[0].state.last_node_id=ai_node;w.players[1].state.last_node_id=ai_last;
+    for(std::size_t i=1;i<w.lands.size();++i){
+        auto& p=w.lands[i];p.economy.owner_code=1;p.economy.level=5;p.economy.chain_store=0;
+        p.economy.toll_by_level.fill(50000);p.temporary_state=0;p.expired_date=0;
+    }
+    for(std::size_t i=1;i<w.facilities.size();++i){
+        auto& p=w.facilities[i];p.owner_code=1;p.level=5;p.facility_type=4;
+        p.toll_by_level.fill(50000);p.temporary_state=0;p.expired_date=0;
+    }
+    for(auto& p:w.commercials)p.owner_code=0;
+    return w;
+}
 template<class T>void array(std::ostream& out,const T& values){out<<'[';bool first=true;for(auto value:values){if(!first)out<<',';out<<unsigned(value);first=false;}out<<']';}
 void save_fixture(const fs::path& directory,const std::string& label,const World& w,const fs::path& source){
     const auto path=directory/(label+".DAT");const auto encoded=w.export_save();
@@ -117,10 +184,12 @@ void save_fixture(const fs::path& directory,const std::string& label,const World
     write(path,encoded);write(path.string()+".rng","RICH4-RNG-1 "+std::to_string(fixture_seed)+"\n");
     std::ostringstream json;json<<"{\n  \"schema\":1,\n  \"synthetic\":true,\n  \"purpose\":\"Native card/tool UI interaction validation\",\n  \"source\":"<<quote(fs::absolute(source).string())<<",\n  \"save\":"<<quote(path.filename().string())<<",\n  \"seed\":"<<fixture_seed<<",\n  \"map\":"<<w.header.map_id<<",\n  \"stage\":"<<w.header.stage_id<<",\n  \"date\":\"1998-06-15\",\n  \"players\":[";
     for(std::size_t i=0;i<w.players.size();++i){if(i)json<<',';const auto& p=w.players[i].state;json<<"{\"slot\":"<<i<<",\"node\":"<<p.node_id<<",\"last_node\":"<<p.last_node_id<<",\"x\":"<<p.x<<",\"y\":"<<p.y<<",\"cash\":"<<p.cash<<",\"bank\":"<<p.bank_balance<<",\"points\":"<<p.points<<",\"cards\":";array(json,p.cards);json<<",\"tools\":";array(json,p.tool_amounts);json<<'}';}
-    json<<"],\n  \"nearby_targets\":[";bool first=true;const auto& active=w.players[0].state;const board::Camera camera{{active.x,active.y},0};
+    json<<']';
+    if(label=="bankruptcy-victory")json<<",\n  \"expected_endgame\":{\"winner_slot\":0,\"bankrupt_slot\":1,\"ai_cash\":1,\"ai_bank\":0,\"tortoise_days\":5,\"property_toll\":50000,\"route_modified\":false}";
+    json<<",\n  \"nearby_targets\":[";bool first=true;const auto& active=w.players[0].state;const board::Camera camera{{active.x,active.y},0};
     for(std::size_t i=1;i<w.lands.size();++i){const auto& p=w.lands[i];if(!visible({p.x,p.y},camera))continue;if(!first)json<<',';first=false;json<<"{\"code\":"<<2000+i<<",\"owner\":"<<unsigned(p.economy.owner_code)<<",\"level\":"<<unsigned(p.economy.level)<<",\"type\":"<<unsigned(p.economy.chain_store)<<'}';}
     for(std::size_t i=1;i<w.facilities.size();++i){const auto& p=w.facilities[i];if(!visible({p.x,p.y},camera))continue;if(!first)json<<',';first=false;json<<"{\"code\":"<<4000+i<<",\"owner\":"<<unsigned(p.owner_code)<<",\"level\":"<<unsigned(p.level)<<",\"type\":"<<unsigned(p.facility_type)<<'}';}
-    json<<"],\n  \"objects\":[";first=true;for(std::size_t i=0;i<w.objects.size();++i){const auto& o=w.objects[i];if(!o.kind)continue;if(!first)json<<',';first=false;json<<"{\"id\":"<<i+1<<",\"kind\":"<<unsigned(o.kind)<<",\"node\":"<<o.node_id<<",\"attached_player\":"<<unsigned(o.attached_player)<<",\"remaining\":"<<unsigned(o.remaining_days)<<'}';}
+    json<<"],\n  \"objects\":[";first=true;for(std::size_t i=0;i<w.objects.size();++i){const auto& o=w.objects[i];if(!o.node_id && !o.attached_player)continue;if(!first)json<<',';first=false;json<<"{\"id\":"<<i+1<<",\"kind\":"<<unsigned(o.kind)<<",\"node\":"<<o.node_id<<",\"attached_player\":"<<unsigned(o.attached_player)<<",\"remaining\":"<<unsigned(o.remaining_days)<<'}';}
     json<<"],\n  \"limitations\":[\"Synthetic inventory deliberately does not conserve shared supply\",\"Time machine needs an in-session human turn snapshot before use\",\"Interaction fixture is not evidence of original full-game progression\"]\n}\n";
     write(directory/(label+".json"),json.str());std::cout<<path.string()<<'\n';
 }
@@ -142,9 +211,11 @@ int main(int argc,char** argv){try{
     // The second-stage fourth map contains facilities but no ordinary lands.
     if(!center)center=facility_center;
     if(!center)throw std::runtime_error("No suitable connected fixture neighborhood");
+    const auto endgame=bankruptcy_world(original);
     fs::create_directories(output);
     for(const auto& spec:std::array<std::pair<const char*,unsigned>,3>{{{"cards-01-15",1},{"cards-16-30",16},{"tools-01-13",1}}}){auto world=original;configure(world,center,spec.second,spec.second+14);save_fixture(output,spec.first,world,source);}
     if(facility_center){auto world=original;configure(world,facility_center,1,15);save_fixture(output,"cards-facility",world,source);}
+    save_fixture(output,"bankruptcy-victory",endgame,source);
     if(read(source)!=source_before)throw std::runtime_error("Original source changed during fixture generation");
     return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

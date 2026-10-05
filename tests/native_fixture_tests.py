@@ -103,6 +103,8 @@ class FixtureTests(unittest.TestCase):
                                     for p in manifest["nearby_targets"]))
                 self.assertEqual([(o["id"], o["kind"]) for o in manifest["objects"]],
                                  [(1, 1), (5, 5), (17, 16), (27, 17), (37, 18)])
+                self.assertEqual([data[0x204 + i * 24] for i in range(46)],
+                                 list(range(1, 15)) + [15] * 2 + [16] * 10 + [17] * 10 + [18] * 10)
                 for player in manifest["players"]:
                     slot = player["slot"]
                     self.assertEqual(data[0x10 + slot * 104 + 21], 1 if not slot else 2)
@@ -118,6 +120,35 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(self.invoke(other).returncode, 0)
         for path in self.output.iterdir():
             self.assertEqual(path.read_bytes(), (other / path.name).read_bytes())
+
+    def test_bankruptcy_setup_uses_two_players_and_original_single_exit(self):
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = (self.output / "bankruptcy-victory.DAT").read_bytes()
+        manifest = json.loads((self.output / "bankruptcy-victory.json").read_text())
+        self.assertEqual(struct.unpack_from("<I", data, 12)[0], 2)
+        self.assertEqual(len(manifest["players"]), 2)
+        self.assertIs(manifest["expected_endgame"]["route_modified"], False)
+        self.assertEqual(manifest["players"][1]["cash"], 1)
+        self.assertEqual(manifest["players"][1]["bank"], 0)
+        self.assertEqual(list(data[0x654:0x672]), [0] * 30)
+        self.assertEqual(list(data[0x690:0x6AE]), [0] * 30)
+        self.assertEqual(data[0x21F6:0x21F6 + 192], bytes(192))
+        for slot in range(2):
+            base = 0x10 + slot * 104
+            self.assertEqual(struct.unpack_from("<i", data, base + 36)[0], 0)
+            self.assertEqual(data[base + 57], 5)
+        node_count, node_offset = struct.unpack_from("<II", data, MAP_START)
+        original = self.source.read_bytes()
+        for index in range(1, node_count + 1):
+            record = MAP_START + node_offset + index * 40
+            self.assertEqual(data[record:record + 36], original[record:record + 36])
+        ai = manifest["players"][1]
+        record = MAP_START + node_offset + ai["node"] * 40
+        flags = struct.unpack_from("<I", data, record + 36)[0]
+        forward = [node for direction, node in enumerate(struct.unpack_from("<4H", data, record + 24))
+                   if node and node != ai["last_node"] and not flags & (0x40000000 >> direction)]
+        self.assertEqual(forward, [manifest["players"][0]["node"]])
 
     def test_existing_output_and_original_directory_are_rejected(self):
         self.output.mkdir()

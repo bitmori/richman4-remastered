@@ -9,5 +9,7 @@
     "cards-facility": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
   },
   "tools": {"ids": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], "quantity_each": 3},
+  "endgame": {"save": "bankruptcy-victory.DAT", "players": 2, "winner_slot": 0, "bankrupt_slot": 1,
+              "ai_cash": 1, "ai_bank": 0, "tortoise_days": 5, "property_toll": 50000, "route_modified": false},
   "scope": "Generated test setup only; not an original game capture or a complete playthrough"
 }
