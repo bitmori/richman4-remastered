@@ -1129,8 +1129,8 @@ struct GameSession::Impl {
             }
             if (human()) {
                 std::vector<DecisionOption> options;
-                if (operation == 1)
-                    options = {{"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}};
+                if (operation == 1) // fcn_00440aac slots 0..4; a human may build a 公園 (type 0, no toll)
+                    options = {{"公園", 0}, {"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}};
                 else
                     options = {{operation == 0 ? "購買" : "升級", 1}, {"放棄", 0}};
                 decision = GameDecision{operation == 0   ? DecisionKind::buy_facility
@@ -1999,8 +1999,8 @@ struct GameSession::Impl {
                                              actor(),
                                              static_cast<std::uint16_t>(code - 4000),
                                              0,
-                                             "請選擇設施類別", // 0x465289
-                                             {{"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}},
+                                             "請選擇設施類別", // 0x465289; slot 0 公園 as in fcn_00440aac
+                                             {{"公園", 0}, {"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}},
                                 key};
                         entry.facility_type = static_cast<std::uint8_t>(answer->second);
                     }
@@ -3989,7 +3989,9 @@ bool GameSession::respond(std::size_t option, std::int32_t amount) {
     } else if (decision.kind == DecisionKind::buy_facility ||
                decision.kind == DecisionKind::construct_facility ||
                decision.kind == DecisionKind::upgrade_facility) {
-        if (value == 0)
+        // Buying/upgrading: 0 declines. Building has no decline in the original (fcn_00440aac without
+        // the cancellable flag); value 0 is a 公園 there.
+        if (value == 0 && decision.kind != DecisionKind::construct_facility)
             impl_->finish_turn();
         else
             impl_->buy_facility(decision.land_id,

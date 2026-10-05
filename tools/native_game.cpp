@@ -2929,7 +2929,7 @@ class Application {
         save("frame-card-several");
         { // FACILITY: build (no cancel) and 改建卡 (with 取消), idle and with a slot selected
             const GameDecision build{DecisionKind::construct_facility, slot, 1, 0, "請選擇設施類別",
-                                     {{"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}};
+                                     {{"公園", 0}, {"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}};
             const GameDecision rebuild{DecisionKind::action_target, slot, 0, 0, "請選擇設施類別",
                                        {{"公園", 0}, {"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4},
                                         {"取消", -1}}};

@@ -505,9 +505,16 @@ void facilities_events_and_rescue() {
     first_landing(construct);
     require(construct.pending_decision()->kind == rich4::DecisionKind::construct_facility,
             "facility construction choice missing");
-    require(construct.respond(1) && construct.world().facilities[1].facility_type == 2 &&
+    require(construct.pending_decision()->options.size() == 5 && construct.pending_decision()->options[0].value == 0,
+            "the build choice must offer 公園 first, like fcn_00440aac");
+    require(construct.respond(2) && construct.world().facilities[1].facility_type == 2 &&
                 construct.world().facilities[1].level == 1,
             "selected department-store construction failed");
+    rich4::GameSession park(value, 0);
+    first_landing(park);
+    require(park.respond(0) && park.world().facilities[1].facility_type == 0 && park.world().facilities[1].level == 1 &&
+                park.world().facilities[1].owner_code == 1,
+            "a human 公園 build (slot 0) must construct a level-1 park, not give up");
     value.facilities[1].owner_code = 2;
     value.facilities[1].facility_type = 2;
     value.facilities[1].level = 1;

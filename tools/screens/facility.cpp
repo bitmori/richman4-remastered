@@ -71,7 +71,7 @@ void Picker::draw(screens::Host &host, const GameDecision &decision, const std::
         // Finger targets: the slot's column over the strip's full height (edges to the frame).
         const graphics::Rect cell{slot == 0 ? strip_x : x, strip_y, slot == 4 ? x + slot_size + 7 : x + slot_size,
                                   strip_y + 83};
-        if (!index) { // NATIVE: a type the core does not offer here (公園 on a build) is dimmed, inert
+        if (!index) { // a type the core does not offer here is dimmed and inert
             screens::darken(frame.canvas, {x, slot_y, x + slot_size, slot_y + slot_size}, -16);
             continue;
         }
