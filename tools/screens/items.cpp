@@ -420,9 +420,12 @@ void Screens::draw_targets(Frame &frame, const GameDecision &decision, const boa
                            std::optional<std::size_t> selected, const std::function<void(std::size_t)> &tap) {
     int first = 8, count = 4; // red reticle
     bool card = false;
-    for (const auto name : services::card_names)
-        if (decision.prompt.starts_with(name))
+    unsigned item = last_tool_;
+    for (std::size_t i = 0; i < services::card_names.size(); ++i)
+        if (decision.prompt.starts_with(services::card_names[i])) {
             card = true;
+            item = unsigned(i + 1);
+        }
     if (card) {
         first = 12;
         count = 15;
@@ -457,7 +460,7 @@ void Screens::draw_targets(Frame &frame, const GameDecision &decision, const boa
             markers.push_back({i, *projected});
     }
     const auto animation = std::size_t(now(frame) / 100);
-    shot = "target-" + std::string(card ? "card" : "tool") + (selected ? "-selected" : "");
+    shot = "target-" + std::string(card ? "card-" : "tool-") + std::to_string(item) + (selected ? "-selected" : "");
     for (const auto &marker : markers) {
         if (selected == marker.index)
             continue;
