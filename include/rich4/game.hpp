@@ -105,6 +105,8 @@ struct GameEvent {
     std::int32_t subject = -1, second_subject = -1, company = -1, value = 0;
     std::uint8_t players = 0; // Affected player slots (portrait rows).
     std::array<std::int32_t, 4> player_amounts{};
+    // Card id (1..30) when this event reports a card being used, for the card-art popup.
+    std::optional<std::uint8_t> card = std::nullopt;
 };
 
 // Presentation-only record of an original on-board animation (docs/ui/effects.md §9). The rule

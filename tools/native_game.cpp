@@ -7,6 +7,7 @@
 #include "screens/main_screen.hpp"
 #include "screens/menus.hpp"
 #include "rich4/assets.hpp"
+#include "screens/items.hpp"
 #include "screens/messages.hpp"
 #include "rich4/board_renderer.hpp"
 #include "rich4/calendar.hpp"
@@ -71,6 +72,7 @@ struct Options {
     bool play_effects = false; // EFFECTS (dev): play effects in replays and dump effect-NNN.ppm frames
     bool touch = false; // finger-sized number pad (always on Android; --touch on desktop)
     fs::path gallery;   // dev: render every original-style menu/finance screen to DIR and exit
+    bool items_gallery = false; // dev: render every card/tool/shop screen into OUTPUT/gallery
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
     bool start_loaded = false;      // dev: open --load straight into play (no menu) in real time
@@ -108,6 +110,8 @@ Options arguments(int argc, char **argv) {
             options.play_effects = true;
         else if (argument == "--overlay-gallery") // Dev: dump sample bubbles/boxes/news as gallery-*.ppm
             options.overlay_gallery = true;
+        else if (argument == "--items-gallery")
+            options.items_gallery = true;
         else if (argument == "--start-new")
             options.start_new = true;
         else if (argument == "--touch")
@@ -228,6 +232,10 @@ class Application {
         effects_.set_skip(options_.auto_rounds && !options_.play_effects); // EFFECTS: replays stay zero-duration
         messages_.set_instant(options_.auto_rounds != 0); // Headless replay never waits on a bubble.
         main_screen_.set_skip_toss(options_.auto_rounds && !options_.play_effects); // replays stay fast
+        items_.sound = [this](std::size_t effect) {
+            if (sound_effects_)
+                audio_->play_sound(effect);
+        };
         if (!audio_->music_available())
             std::cerr << audio_->music_diagnostic() << '\n';
     }
@@ -251,6 +259,25 @@ class Application {
     }
 
     int run() {
+        if (options_.items_gallery) {
+            if (options_.output.empty())
+                throw std::invalid_argument("--items-gallery requires --output DIR");
+            screens::NewGameChoice choice; // 小丹尼 (human) and three computer opponents
+            choice.players = {{10, 1}, {0, 2}, {1, 2}, {2, 2}};
+            new_game(choice);
+            fs::create_directories(options_.output / "gallery");
+            items_.gallery(
+                frame_, session_->world(),
+                [this] {
+                    buttons_.clear();
+                    canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
+                    draw_board();
+                },
+                [this](const std::string &name) {
+                    graphics::write_ppm(canvas_, options_.output / "gallery" / (name + ".ppm"));
+                });
+            return 0;
+        }
         if (!options_.gallery.empty())
             return gallery();
         if (options_.start_loaded && !options_.load.empty() && !options_.auto_rounds)
@@ -395,7 +422,7 @@ class Application {
                            : 500)
                                      : static_cast<unsigned>(std::min<Uint64>(now - last_tick, 100)) * speed_;
             last_tick = now;
-            if (session_ && screen_ == Screen::game) {
+            if (session_ && screen_ == Screen::game && !items_.popup_active()) { // the card popup is modal
                 observe(); // a GO press emits the roll before the clock advances
                 if (!effects_.active() && !messages_.active()) // only the step being shown advances
                     main_screen_.advance(elapsed);
@@ -715,6 +742,7 @@ class Application {
         messages_.clear();
         presentation_.clear();
         presented_player_.reset();
+        items_.reset();
         observe();
     }
     bool load(const fs::path &path) {
@@ -814,6 +842,7 @@ class Application {
                 ++dice_by_player_[event.player];
             if (event.kind == GameEventKind::unsupported_event)
                 unsupported_.push_back(event.message);
+            items_.observe(event, session_->world());
             if (event.kind == GameEventKind::notice && event.message.starts_with("使用")) {
                 for (unsigned i = 0; i < services::card_names.size(); ++i)
                     if (event.message == "使用" + std::string(services::card_names[i])) {
@@ -864,6 +893,11 @@ class Application {
         if (!bank_pending())
             bank_screen_.reset();
         auto host = make_host();
+        if (session_)
+            items_.run_deferred();
+        items_.shot.clear();
+        if (options_.auto_rounds)
+            items_.clock = rendered_frames_ * 250;
         if (session_) // EFFECTS: pre-mutation board for effect commit frames (only while idle)
             effects_.remember(session_->world(), session_.get(), frame_.ticks);
         const bool menu_backdrop = screen_ == Screen::menu || ((screen_ == Screen::settings || screen_ == Screen::load) &&
@@ -874,7 +908,7 @@ class Application {
                 picture(artwork_.frame('d', 1, 0), 0, 0);
         } else if (session_ && screen_ != Screen::new_game)
             draw_board();
-        if (session_ && screen_ == Screen::game)
+        if (session_ && screen_ == Screen::game && !items_.popup_active()) // card art plays before its movie
             draw_effects(); // EFFECTS: overlay after the board, before toasts
         if (screen_ == Screen::menu) {
             main_menu_.draw(host, {[this] {
@@ -930,6 +964,11 @@ class Application {
                 overlay_key = std::string("overlay-") + kinds.at(static_cast<std::size_t>(kind));
             }
         }
+        if (items_.popup_active() && session_ &&
+            (screen_ == Screen::game || screen_ == Screen::cards || screen_ == Screen::tools)) {
+            buttons_.clear();
+            items_.draw_popup(frame_);
+        }
         if (pad_.active()) { // The number pad is modal over every screen.
             buttons_.clear();
             pad_.draw(host);
@@ -964,6 +1003,8 @@ class Application {
                 key = overlay_key + "-" + std::to_string(std::min(++overlay_captures_[overlay_key], 4U));
             if (captured_frames_.insert(key).second)
                 graphics::write_ppm(canvas_, options_.output / (key + ".ppm"));
+            if (!items_.shot.empty() && ++item_shots_[items_.shot] <= 4) // settled frame of each item screen
+                graphics::write_ppm(canvas_, options_.output / ("items-" + items_.shot + ".ppm"));
         }
     }
 
@@ -1126,45 +1167,14 @@ class Application {
             button(110, {295, 280, 515, 322}, "返回主選單", [this] { screen_ = Screen::menu; });
         }
     }
+    native::items::Host item_host() {
+        return {[this] { screen_ = Screen::game; },
+                [this](bool success, std::string_view failure) { notify_action(success, failure); },
+                [this](std::size_t index) { return respond(index); }};
+    }
     void draw_inventory() {
         buttons_.clear();
-        const bool cards = screen_ == Screen::cards;
-        const auto &player = session_->world().active_player().state;
-        dialog({65, 55, 575, 445}, cards ? "卡片" : "道具");
-        std::vector<std::pair<unsigned, unsigned>> inventory;
-        if (cards) {
-            std::map<unsigned, unsigned> amounts;
-            for (const auto id : player.cards)
-                if (id)
-                    ++amounts[id];
-            for (const auto &item : amounts)
-                inventory.push_back(item);
-        } else {
-            for (unsigned i = 0; i < services::tool_names.size(); ++i)
-                if (player.tool_amounts[i])
-                    inventory.emplace_back(i + 1, player.tool_amounts[i]);
-        }
-        if (inventory.empty())
-            font_.draw(canvas_, cards ? "尚未持有卡片" : "尚未持有道具", 215, 210, 20);
-        for (std::size_t index = 0; index < inventory.size(); ++index) {
-            const auto [id, amount] = inventory[index];
-            const auto label =
-                std::string(cards ? services::card_names.at(id - 1) : services::tool_names.at(id - 1)) +
-                " ×" + std::to_string(amount) +
-                (cards && !active_card(static_cast<std::uint8_t>(id)) ? "（自動）" : "");
-            const int x = 86 + int(index % 2) * 235, y = 106 + int(index / 2) * 34;
-            button(
-                300 + int(id), {x, y, x + 223, y + 30}, label,
-                [this, cards, id] {
-                    screen_ = Screen::game;
-                    notify_action(cards ? session_->use_card({static_cast<std::uint8_t>(id), {}, {}})
-                                        : session_->use_tool(id));
-                },
-                !cards || active_card(static_cast<std::uint8_t>(id)));
-        }
-        if (!cards && player.traffic_method)
-            button(340, {89, 391, 285, 425}, "下車", [this] { notify_action(session_->dismount()); });
-        button(60, {340, 391, 545, 425}, "返回", [this] { screen_ = Screen::game; });
+        items_.draw_inventory(frame_, *session_, screen_ == Screen::cards, item_host());
     }
     void draw_stocks() {
         buttons_.clear();
@@ -1230,6 +1240,7 @@ class Application {
     }
     void sync_decision() {
         if (!session_->pending_decision()) {
+            items_.end_visits();
             decision_key_.clear();
             selected_target_.reset();
             target_center_.reset();
@@ -1272,24 +1283,18 @@ class Application {
         font_.draw(canvas_, decision.prompt, 449, 16, 16, ui::blue, 181);
         constexpr std::size_t page_size = 8;
         const auto first = decision_page_ * page_size;
+        items_.draw_targets(frame_, decision, current_camera_, selected_target_, [this](std::size_t index) {
+            if (selected_target_ != index) {
+                select_target(index); // first tap selects and centres the camera
+                return;
+            }
+            if (sound_effects_)
+                audio_->play_sound(2);
+            respond(index); // second tap on the same target confirms
+        });
+        font_.draw(canvas_, "點地圖上的目標，再點一次確認", 449, 66, 12, ui::color(144, 38, 17));
         for (std::size_t index = 0; index < decision.options.size(); ++index) {
             const auto &option = decision.options[index];
-            if (option.location) {
-                const auto projected =
-                    board::project({option.location->x, option.location->y}, current_camera_);
-                if (projected && projected->x >= 18 && projected->x < 422 && projected->y >= 60 &&
-                    projected->y < 455) {
-                    const auto point = *projected;
-                    const auto color = selected_target_ == index ? ui::blue : ui::color(144, 38, 17);
-                    ui::fill(canvas_, {point.x - 13, point.y - 12, point.x + 14, point.y + 11}, ui::paper);
-                    ui::border(canvas_, {point.x - 14, point.y - 13, point.x + 15, point.y + 12}, color);
-                    const auto label = std::to_string(index + 1);
-                    font_.draw(canvas_, label, point.x - font_.measure(label, 12) / 2, point.y - 8, 12,
-                               color);
-                    hit(5000 + int(index), {point.x - 14, point.y - 13, point.x + 15, point.y + 12},
-                        [this, index] { select_target(index); });
-                }
-            }
             if (index >= first && index < first + page_size) {
                 const int y = 91 + int(index - first) * 34;
                 button(210 + int(index), {448, y, 633, y + 30},
@@ -1351,6 +1356,8 @@ class Application {
             draw_map_decision();
             return;
         }
+        if (items_.draw_decision(frame_, *session_, item_host()))
+            return;
         if (messages::is_yes_no(decision)) {
             // Original §2.2 question box + Data.mkf 440 strip; ids stay 210+option index.
             const auto yes = yes_no_index(1), no = yes_no_index(0);
@@ -1399,10 +1406,10 @@ class Application {
                 return i;
         return 0;
     }
-    void respond(std::size_t index) {
+    bool respond(std::size_t index) {
         const auto &decision = session_->pending_decision();
         if (!decision)
-            return;
+            return false;
         end_amount_edit();
         const auto amount =
             decision->kind == DecisionKind::bank || decision->kind == DecisionKind::primary_stock
@@ -1411,9 +1418,12 @@ class Application {
         if (!session_->respond(index, amount)) {
             toast_ = "金額、點數或持有數量不足";
             toast_until_ = SDL_GetTicks() + 2200;
+            return false;
         }
+        return true;
     }
-    void push_button(int id) {
+    // split: release on a later frame, so press-and-hold feedback is exercised and visible.
+    void push_button(int id, bool split = false) {
         for (const auto &button : buttons_)
             if (button.id == id && button.enabled) {
                 SDL_Event event{};
@@ -1427,7 +1437,10 @@ class Application {
                     &event.button.y));
                 require(SDL_PushEvent(&event));
                 event.type = SDL_EVENT_MOUSE_BUTTON_UP;
-                require(SDL_PushEvent(&event));
+                if (split)
+                    test_release_ = event;
+                else
+                    require(SDL_PushEvent(&event));
                 return;
             }
         throw std::runtime_error("Native UI replay cannot find enabled button " + std::to_string(id));
@@ -1502,10 +1515,27 @@ class Application {
             push_button(pad_.next_key_towards(target));
             return;
         }
-        if (screen_ == Screen::cards || screen_ == Screen::tools) {
-            push_button(300 + int(test_inventory_id_));
+        if (test_release_) {
+            require(SDL_PushEvent(&*test_release_));
+            test_release_.reset();
             return;
         }
+        if (items_.has_deferred())
+            return; // a released tile or timeout acts at the start of the next frame
+        if (items_.popup_active()) {
+            push_button(native::items::popup_skip_id);
+            return;
+        }
+        if (screen_ == Screen::cards || screen_ == Screen::tools) {
+            // Release on the tile uses it; if it could not be used the grid stays open, so go back.
+            if (test_inventory_pushed_)
+                push_button(native::items::back_id);
+            else
+                push_button(300 + int(test_inventory_id_), true);
+            test_inventory_pushed_ = !test_inventory_pushed_;
+            return;
+        }
+        test_inventory_pushed_ = false;
         if (screen_ == Screen::stocks) {
             if (screens::market_closed(session_->world()))
                 push_button(screens::ids::stock_exit);
@@ -1750,6 +1780,12 @@ class Application {
                     }
                     shop_done_for_visit_ = true;
                 }
+                if (const auto pending = items_.shop_pending_value()) // confirm the item tapped once
+                    for (std::size_t i = 0; i < decision->options.size(); ++i)
+                        if (decision->options[i].value == *pending) {
+                            choice = i; // duplicate shelf rows all answer with the first option
+                            break;
+                        }
             } else if (decision->kind == DecisionKind::magic_effect) {
                 const auto desired = static_cast<int>((options_.seed + session_->completed_days()) % 12);
                 for (std::size_t i = 0; i < decision->options.size(); ++i)
@@ -1769,6 +1805,9 @@ class Application {
                 decision_page_ = choice / 8;
                 return;
             }
+            if (decision->kind == DecisionKind::shop && choice < decision->options.size() &&
+                items_.shop_show_option(decision->options[choice].value))
+                return; // the card or tool shelf must be on screen first
             if (map_decision() && selected_target_ == choice)
                 push_button(207);
             else {
@@ -2169,6 +2208,7 @@ class Application {
     screens::OptionsScreen options_screen_;
     screens::PlayerInfo info_;
     screens::TradingBoard trading_board_;
+    native::items::Screens items_;
     unsigned selected_character_ = 10, selected_map_ = 0, selected_stage_ = 0, rotation_ = 0, speed_ = 1;
     bool running_ = true, bank_done_for_visit_ = false, shop_done_for_visit_ = false,
          sound_effects_ = true;
@@ -2193,6 +2233,7 @@ class Application {
     std::ofstream events_;
     std::ofstream inputs_;
     std::set<std::string> captured_frames_;
+    std::map<std::string, unsigned> item_shots_;
     std::map<GameEventKind, std::uint64_t> event_counts_;
     std::array<std::uint64_t, 4> dice_by_player_{};
     std::uint64_t input_events_ = 0, rendered_frames_ = 0, new_games_ = 0, loads_ = 0, saves_ = 0;
@@ -2200,11 +2241,12 @@ class Application {
     std::uint64_t dice_selections_ = 0;
     std::set<unsigned> card_ids_used_, tool_ids_used_;
     unsigned test_inventory_id_ = 0, test_stock_stage_ = 0;
-    bool tested_cards_ = false, tested_tools_ = false, tested_dice_ = false;
+    bool tested_cards_ = false, tested_tools_ = false, tested_dice_ = false, test_inventory_pushed_ = false;
     std::string test_progress_;
     unsigned test_unchanged_frames_ = 0;
     bool load_failed_ = false, test_batched_cancel_ = false;
     bool test_cancel_pending_ = false;
+    std::optional<SDL_Event> test_release_;
     std::vector<std::uint8_t> test_cancel_save_;
     std::uint32_t test_cancel_random_ = 0;
     std::uint64_t test_cancel_inputs_ = 0;

@@ -595,6 +595,18 @@ void loan_and_free_toll() {
     require(free.world().players[0].state.cash == 100000 && free.world().players[0].state.cards[0] == 0 &&
                 free.world().lands[1].removed_building == 0,
             "free card replay charged money or failed to consume exactly once");
+    const auto free_events = free.drain_events();
+    require(std::count_if(free_events.begin(), free_events.end(),
+                          [](const auto &event) { return event.card == 20; }) == 1,
+            "free card use must report its card id once for the card-art popup");
+    value = world();
+    value.players[0].state.cards[0] = 1;
+    rich4::GameSession equal_wealth(value, 0);
+    require(equal_wealth.use_card({1, {}, {}}), "equal-wealth card rejected");
+    const auto used_events = equal_wealth.drain_events();
+    require(std::any_of(used_events.begin(), used_events.end(),
+                        [](const auto &event) { return event.card == 1 && event.player == 0; }),
+            "human card use must report its card id");
 }
 void special_financing() {
     auto value = world();
