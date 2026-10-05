@@ -109,6 +109,13 @@ bool update_commercial_owner(World& world, Commercial* commercial,
 
 } // namespace
 
+bool update_commercial_owner(World& world, std::size_t player, std::size_t stock) {
+    if (world.players.size() > 4 || player >= world.players.size() || stock >= world.stocks.size()) {
+        throw std::out_of_range("commercial shareholder player or stock index out of range");
+    }
+    return update_commercial_owner(world, linked_commercial(world, stock), player, stock);
+}
+
 float adjusted_price(float previous, float percent) {
     if (!std::isfinite(previous) || previous < 0 || previous > 10000 || !std::isfinite(percent) ||
         percent < -10 || percent > 10) {

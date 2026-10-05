@@ -146,6 +146,8 @@ def main():
             if scenario % 16 == 15:
                 file.flush()
                 print(f'{scenario + 1}/{args.scenarios} scenarios', flush=True)
+    if args.scenarios >= 160 and any(not count for i, count in enumerate(counts) if i != 9):
+        raise RuntimeError('Oracle self-check requires acceptance of every enabled tool type')
     manifest = {
         'schema': 1, 'executable_sha256': EXPECTED_EXE, 'rows': args.scenarios * 13,
         'predicate_successes': counts,

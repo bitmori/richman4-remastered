@@ -20,6 +20,11 @@ struct PurchaseResult {
     bool commercial_owner_changed{};
 };
 
+// Original 0x4294d5: reinsert one shareholder after an external transfer.
+// Reorders only the linked company; does not touch money, holdings or quotas.
+// Equal holdings retain the other incumbent's priority.
+bool update_commercial_owner(World& world, std::size_t player, std::size_t stock);
+
 enum class PriceTrend : std::uint8_t { rising, limit_up, falling, limit_down, unchanged };
 // Original 0x4295ea, including current quotes exactly at the rounded daily cap.
 [[nodiscard]] PriceTrend trend(const World& world, std::size_t stock);
