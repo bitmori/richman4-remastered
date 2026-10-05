@@ -1,0 +1,932 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "items.hpp"
+
+#include "rich4/cards.hpp"
+#include "rich4/inventory.hpp"
+#include "rich4/services.hpp"
+#include "rich4/world.hpp"
+
+#include <algorithm>
+#include <array>
+
+namespace rich4::native::items {
+namespace {
+using graphics::Rect;
+
+constexpr auto white = ui::color(255, 255, 255), dark = ui::color(16, 16, 16), grey = ui::color(160, 160, 160);
+
+// help.mkf description entries by card / tool id (§1.5, §2.3).
+constexpr std::array<unsigned, 30> card_help{63, 62, 85, 77, 78, 86, 64, 66, 57, 76, 65, 67, 81, 73, 58,
+                                             82, 74, 75, 80, 60, 61, 72, 84, 70, 79, 69, 83, 68, 59, 71};
+constexpr std::array<unsigned, 13> tool_help{99, 95, 88, 90, 97, 89, 91, 96, 98, 92, 94, 87, 93};
+
+void opaque(Frame &frame, const graphics::Image &image, int x, int y) {
+    graphics::blit(frame.canvas, image, x, y, graphics::Transparency::opaque);
+}
+void keyed(Frame &frame, const graphics::Image &image, int x, int y) {
+    graphics::blit(frame.canvas, image, x, y);
+}
+const graphics::Image &art(Frame &frame, char archive, std::size_t entry, std::size_t index) {
+    return frame.artwork.frame(archive, entry, index);
+}
+
+// Original font flags: bit0 shadow (second colour at +1,+1), bit1 bold.
+void styled(Frame &frame, std::string_view text, int x, int y, int size, std::uint16_t fg, bool shadow,
+            std::uint16_t second, bool bold) {
+    if (shadow) {
+        frame.font.draw(frame.canvas, text, x + 1, y + 1, size, second);
+        if (bold)
+            frame.font.draw(frame.canvas, text, x + 2, y + 1, size, second);
+    }
+    frame.font.draw(frame.canvas, text, x, y, size, fg);
+    if (bold)
+        frame.font.draw(frame.canvas, text, x + 1, y, size, fg);
+}
+int top_for_centre(int centre_y, int size) {
+    return centre_y - size * 9 / 16;
+}
+std::vector<std::string_view> lines(std::string_view text) {
+    std::vector<std::string_view> result;
+    for (std::size_t start = 0;;) {
+        const auto end = text.find('\n', start);
+        result.push_back(text.substr(start, end == std::string_view::npos ? end : end - start));
+        if (end == std::string_view::npos)
+            return result;
+        start = end + 1;
+    }
+}
+// _rich4_draw_text mode 2 (centre) and mode 4 (multi-line, lines centred).
+void centred(Frame &frame, std::string_view text, int cx, int cy, int size, std::uint16_t fg, bool shadow = true,
+             std::uint16_t second = dark, bool bold = true) {
+    const auto rows = lines(text);
+    const int height = size + 4;
+    int y = cy - int(rows.size()) * height / 2 + height / 2;
+    for (const auto row : rows) {
+        styled(frame, row, cx - frame.font.measure(row, size) / 2, top_for_centre(y, size), size, fg, shadow, second,
+               bold);
+        y += height;
+    }
+}
+// Mode 1: top-right anchor.
+void top_right(Frame &frame, std::string_view text, int right, int top, int size, std::uint16_t fg) {
+    styled(frame, text, right - frame.font.measure(text, size) - 1, top, size, fg, true, dark, true);
+}
+// Mode 6: right edge, vertically centred.
+void right_middle(Frame &frame, std::string_view text, int right, int cy, int size, std::uint16_t fg) {
+    styled(frame, text, right - frame.font.measure(text, size) - 1, top_for_centre(cy, size), size, fg, true, dark,
+           true);
+}
+
+// fcn_00451b9e: shift the rect 1 px down-right and darken the new top row and left column.
+void sink(graphics::Image &canvas, Rect rect) {
+    rect.left = std::clamp(rect.left, 0, canvas.width);
+    rect.right = std::clamp(rect.right, 0, canvas.width);
+    rect.top = std::clamp(rect.top, 0, canvas.height);
+    rect.bottom = std::clamp(rect.bottom, 0, canvas.height);
+    if (rect.right - rect.left < 2 || rect.bottom - rect.top < 2)
+        return;
+    const auto at = [&](int x, int y) -> std::uint16_t & { return canvas.pixels[std::size_t(y * canvas.width + x)]; };
+    for (int y = rect.bottom - 1; y > rect.top; --y)
+        for (int x = rect.right - 1; x > rect.left; --x)
+            at(x, y) = at(x - 1, y - 1);
+    const auto darken = [](std::uint16_t value) {
+        std::uint16_t result = 0;
+        for (unsigned shift : {0U, 5U, 10U})
+            result = static_cast<std::uint16_t>(result | (((value >> shift) & 31U) / 2U) << shift);
+        return result;
+    };
+    for (int x = rect.left; x < rect.right; ++x)
+        at(x, rect.top) = darken(at(x, rect.top));
+    for (int y = rect.top + 1; y < rect.bottom; ++y)
+        at(rect.left, y) = darken(at(rect.left, y));
+}
+
+Rect grid_tile(int origin_x, int origin_y, int tile) {
+    const int c = tile % 5, r = tile / 5;
+    return {origin_x + 6 + 80 * c, origin_y + 6 + 56 * r, origin_x + 84 + 80 * c, origin_y + 60 + 56 * r};
+}
+// Card names (§1.1) on a grid whose top-left is (x, y).
+void card_names_on_grid(Frame &frame, const CardSlots &cards, int x, int y, std::vector<std::uint8_t> *order = nullptr) {
+    int tile = 0;
+    for (const auto id : cards) {
+        if (!id || id > 30)
+            continue;
+        centred(frame, services::card_names[id - 1], x + 45 + 80 * (tile % 5), y + 33 + 56 * (tile / 5), 20, white);
+        if (order)
+            order->push_back(id);
+        ++tile;
+    }
+}
+// Tool icons and "×n" counts (§2.1) on a grid whose top-left is (x, y).
+std::vector<unsigned> tools_on_grid(Frame &frame, const PlayerState &player, int x, int y) {
+    std::vector<unsigned> order;
+    for (unsigned id = 1; id <= 13; ++id) {
+        if (!player.tool_amounts[id - 1])
+            continue;
+        const int tile = int(order.size());
+        const int c = tile % 5, r = tile / 5;
+        keyed(frame, art(frame, 'p', 11, id + 1), x + 29 + 80 * c, y + 33 + 56 * r);
+        top_right(frame, "×" + std::to_string(player.tool_amounts[id - 1]), x + 79 + 80 * c, y + 23 + 56 * r, 20,
+                  white);
+        order.push_back(id);
+    }
+    return order;
+}
+std::optional<std::size_t> option_of(const GameDecision &decision, std::int32_t value) {
+    for (std::size_t i = 0; i < decision.options.size(); ++i)
+        if (decision.options[i].value == value)
+            return i;
+    return std::nullopt;
+}
+void slide(std::uint64_t elapsed, int &list_x, int &grid_x) {
+    list_x = -222;
+    grid_x = 640;
+    int vx = 40, vy = 80;
+    for (std::uint64_t tick = 0; tick < elapsed / 50 && (list_x < 5 || grid_x > 227); ++tick) {
+        list_x = std::min(5, list_x + vx);
+        grid_x = std::max(227, grid_x - vy);
+        vx = std::max(vx - 3, 1);
+        vy = std::max(vy - 7, 1);
+    }
+}
+} // namespace
+
+std::uint64_t Screens::now(const Frame &frame) const {
+    return clock ? *clock : frame.ticks;
+}
+
+void Screens::run_deferred() {
+    auto actions = std::move(deferred_);
+    deferred_.clear();
+    for (auto &action : actions)
+        action();
+}
+
+void Screens::reset() {
+    popups_.clear();
+    deferred_.clear();
+    press_.reset();
+    last_card_ = 0;
+    last_tool_ = 0;
+    end_visits();
+}
+
+void Screens::end_visits() {
+    shop_ = {};
+    magic_ = {};
+    rescue_ = {};
+}
+
+void Screens::press(Frame &frame, std::string owner, Rect rect, std::function<void()> action, int item) {
+    (void)frame;
+    press_ = Press{std::move(owner), rect, std::move(action), item};
+    if (sound)
+        sound(1);
+}
+
+// Touch press/release: the tile sinks while held and acts when released on it. Sliding off cancels.
+void Screens::resolve_press(Frame &frame, std::string_view owner) {
+    if (!press_)
+        return;
+    if (press_->owner != owner) {
+        press_.reset();
+        return;
+    }
+    if (frame.pointer_down)
+        return;
+    auto action = std::move(press_->action);
+    const bool inside = ui::contains(press_->rect, frame.pointer_x, frame.pointer_y);
+    press_.reset();
+    if (inside && action)
+        deferred_.push_back(std::move(action));
+}
+
+const std::string &Screens::description(Artwork &artwork, bool card, unsigned id) {
+    auto &text = descriptions_[{card, id}];
+    if (!text.empty())
+        return text;
+    if (card && id == 15) {
+        // help.mkf entry 58 is a byte copy of the 紅卡 text in the shipped data (§1.5).
+        text = "讓其他所有角色冬眠五天，期間無法行動。";
+        return text;
+    }
+    try {
+        const auto bytes = artwork.archive('h').decode(card ? card_help.at(id - 1) : tool_help.at(id - 1));
+        std::string section;
+        for (std::size_t start = 0; start < bytes.size();) {
+            auto end = start;
+            while (end < bytes.size() && bytes[end])
+                ++end;
+            if (end == start && !section.empty())
+                break; // the first blank line ends the 功能 section
+            section.append(reinterpret_cast<const char *>(bytes.data() + start), end - start);
+            start = end + 1;
+        }
+        text = ui::big5(section);
+        if (text.starts_with("功能："))
+            text.erase(0, std::string_view("功能：").size());
+    } catch (const std::exception &) {
+        text = " ";
+    }
+    return text;
+}
+
+const graphics::Image &Screens::card_art(Artwork &artwork, std::uint8_t card) {
+    auto &image = card_art_[card];
+    if (!image.pixels.empty())
+        return image;
+    const auto bytes = artwork.archive('d').decode(570U + card);
+    image.width = 165;
+    image.height = 256;
+    image.pixels.assign(std::size_t(165 * 256), 0);
+    for (std::size_t i = 0; i < image.pixels.size() && i * 2 + 1 < bytes.size(); ++i)
+        image.pixels[i] = static_cast<std::uint16_t>(bytes[i * 2] | bytes[i * 2 + 1] << 8);
+    return image;
+}
+
+// ---------------------------------------------------------------------------------------------
+// §1 / §2 use-card and use-tool grids.
+void Screens::draw_inventory(Frame &frame, GameSession &session, bool cards, const Host &host) {
+    const std::string owner = cards ? "cards" : "tools";
+    resolve_press(frame, owner);
+    shot = owner;
+    const auto &player = session.world().active_player().state;
+    constexpr int gx = 14, gy = 130;
+    opaque(frame, art(frame, 'p', 11, cards ? 0 : 1), gx, gy);
+    GameSession *game = &session;
+    std::vector<std::pair<unsigned, int>> tiles; // id, tile index
+    if (cards) {
+        std::vector<std::uint8_t> order;
+        card_names_on_grid(frame, player.cards, gx, gy, &order);
+        for (std::size_t t = 0; t < order.size(); ++t)
+            tiles.emplace_back(order[t], int(t));
+    } else {
+        const auto order = tools_on_grid(frame, player, gx, gy);
+        for (std::size_t t = 0; t < order.size(); ++t)
+            tiles.emplace_back(order[t], int(t));
+        const auto vehicle = player.traffic_method & 3U;
+        if (vehicle == 1 || vehicle == 2) {
+            opaque(frame, art(frame, 'p', 11, vehicle == 1 ? 15 : 16), gx + 325, gy + 117);
+            const auto rect = grid_tile(gx, gy, 14);
+            frame.hit(dismount_id, rect, [this, &frame, rect, game, host] {
+                press(frame, "tools", rect, [game, host] {
+                    const bool success = game->dismount();
+                    if (success)
+                        host.close();
+                    host.notify(success, "目前無法下車");
+                });
+            });
+        }
+    }
+    for (const auto &[id, tile] : tiles) {
+        const auto rect = grid_tile(gx, gy, tile);
+        frame.hit(card_tile_id + int(id), rect, [this, &frame, rect, id = id, cards, game, host] {
+            press(
+                frame, cards ? "cards" : "tools", rect,
+                [this, id, cards, game, host] {
+                    if (!cards) {
+                        last_tool_ = id;
+                        const bool success = game->use_tool(id);
+                        if (success)
+                            host.close();
+                        else if (sound)
+                            sound(3);
+                        host.notify(success, "目前無法使用");
+                        return;
+                    }
+                    const auto card = static_cast<std::uint8_t>(id);
+                    // §1.3: the card art popup comes first, then the card function runs.
+                    popups_.push_back({card, 0, [this, card, game, host] {
+                                           if (!active_card(card)) {
+                                               if (sound)
+                                                   sound(3);
+                                               host.notify(false, "這張卡會在需要時自動使用");
+                                               return;
+                                           }
+                                           last_card_ = card;
+                                           const bool success = game->use_card({card, {}, {}});
+                                           if (success)
+                                               host.close();
+                                           else if (sound)
+                                               sound(3);
+                                           host.notify(success, "目前無法使用");
+                                       }});
+                },
+                int(id));
+        });
+    }
+    if (press_ && press_->owner == owner) {
+        sink(frame.canvas, press_->rect);
+        shot = owner + "-pressed";
+    }
+
+    // Native-only help strip (the original shows descriptions only in its Help screen).
+    const Rect strip{gx, 316, gx + 412, 382};
+    ui::fill(frame.canvas, strip, ui::paper);
+    ui::border(frame.canvas, strip, ui::color(110, 74, 26));
+    if (press_ && press_->owner == owner && press_->item) {
+        const auto item = unsigned(press_->item);
+        const auto name = std::string(cards ? services::card_names.at(item - 1) : services::tool_names.at(item - 1));
+        frame.text(name, strip.left + 8, strip.top + 5, 16, ui::blue);
+        frame.text(description(frame.artwork, cards, item), strip.left + 8, strip.top + 26, 14, ui::ink, 396);
+    } else if (tiles.empty() && (cards || !(player.traffic_method & 3U))) {
+        frame.text(cards ? "目前沒有卡片。" : "目前沒有道具。", strip.left + 10, strip.top + 10, 16);
+    } else {
+        frame.text(cards ? "按住卡片可看說明，放開就使用。" : "按住道具可看說明，放開就使用。", strip.left + 10,
+                   strip.top + 8, 16);
+        frame.text("手指滑開再放開即可取消。", strip.left + 10, strip.top + 33, 14, ui::color(90, 80, 60));
+    }
+    frame.button(back_id, {gx + 146, 392, gx + 266, 432}, "返回", [host] { host.close(); });
+    frame.hit(62, {gx, gy, gx + 412, gy + 180}, [] {});
+    frame.hit(outside_id, {0, 0, 640, 480}, [host] { host.close(); });
+}
+
+// §1.4 card art popup.
+void Screens::observe(const GameEvent &event, const World &world) {
+    if (!event.card || *event.card < 1 || *event.card > 30 || event.player >= world.players.size())
+        return;
+    // Human active cards already showed the popup when the tile was released.
+    if ((world.players[event.player].state.controller_flags & 3U) == 1 && active_card(*event.card))
+        return;
+    popups_.push_back({*event.card, 0, {}});
+}
+
+void Screens::draw_popup(Frame &frame) {
+    if (popups_.empty())
+        return;
+    auto &popup = popups_.front();
+    if (!popup.until) {
+        popup.until = now(frame) + 1500;
+        if (sound)
+            sound(62);
+    }
+    if (now(frame) >= popup.until) {
+        if (popup.then)
+            deferred_.push_back(std::move(popup.then));
+        popups_.pop_front();
+        return;
+    }
+    const auto card = popup.card;
+    shot = "popup-" + std::to_string(card);
+    opaque(frame, card_art(frame.artwork, card), 138, 200);
+    if (card == 14) {
+        // Data.mkf 584 decodes with its lower half as noise (§1.5): show a text tile instead.
+        const Rect tile{138, 200, 303, 456};
+        ui::fill(frame.canvas, tile, ui::color(40, 64, 112));
+        ui::border(frame.canvas, tile, ui::color(16, 16, 16));
+        ui::border(frame.canvas, {tile.left + 4, tile.top + 4, tile.right - 4, tile.bottom - 4},
+                   ui::color(232, 196, 96));
+        ui::border(frame.canvas, {tile.left + 7, tile.top + 7, tile.right - 7, tile.bottom - 7},
+                   ui::color(232, 196, 96));
+        centred(frame, "停", 220, 270, 56, ui::color(250, 236, 180));
+        centred(frame, "留", 220, 330, 56, ui::color(250, 236, 180));
+        centred(frame, "卡", 220, 390, 56, ui::color(250, 236, 180));
+    }
+    keyed(frame, art(frame, 'd', 517, 5), 220, 129);
+    centred(frame, "使用" + std::string(services::card_names.at(card - 1)), 220, 129, 16, ui::color(240, 240, 240),
+            true, dark, false);
+    frame.hit(popup_skip_id, {0, 0, 640, 480}, [this] {
+        if (popups_.empty())
+            return;
+        auto then = std::move(popups_.front().then);
+        popups_.pop_front();
+        if (then)
+            then();
+    });
+}
+
+// ---------------------------------------------------------------------------------------------
+// §3 target picking: the original cursor sprites drawn on every valid target.
+void Screens::draw_targets(Frame &frame, const GameDecision &decision, const board::Camera &camera,
+                           std::optional<std::size_t> selected, const std::function<void(std::size_t)> &tap) {
+    int first = 8, count = 4; // red reticle
+    bool card = false;
+    for (const auto name : services::card_names)
+        if (decision.prompt.starts_with(name))
+            card = true;
+    if (card) {
+        first = 12;
+        count = 15;
+    } else if (decision.kind == DecisionKind::action_target && last_tool_) {
+        switch (last_tool_) {
+        case 2: first = 0, count = 1; break;
+        case 3: first = 1, count = 1; break;
+        case 4: first = 2, count = 1; break;
+        case 7: first = 3, count = 1; break;
+        case 13: first = 4, count = 1; break;
+        case 9: first = 9, count = 3; break;
+        case 11:
+            if (decision.prompt.find("目的") == std::string::npos)
+                first = 32, count = 2;
+            else
+                first = 9, count = 3;
+            break;
+        default: break;
+        }
+    }
+    struct Marker {
+        std::size_t index;
+        board::Point point;
+    };
+    std::vector<Marker> markers;
+    for (std::size_t i = 0; i < decision.options.size(); ++i) {
+        const auto &location = decision.options[i].location;
+        if (!location)
+            continue;
+        const auto projected = board::project({location->x, location->y}, camera);
+        if (projected && projected->x >= 12 && projected->x < 428 && projected->y >= 54 && projected->y < 466)
+            markers.push_back({i, *projected});
+    }
+    const auto animation = std::size_t(now(frame) / 100);
+    shot = "target-" + std::string(card ? "card" : "tool") + (selected ? "-selected" : "");
+    for (const auto &marker : markers) {
+        if (selected == marker.index)
+            continue;
+        if ((animation / 3 + marker.index) % 2 == 0) // a slow pulse so small cursors stay noticeable
+            keyed(frame, art(frame, 'd', 0, 42), marker.point.x, marker.point.y + 12);
+        keyed(frame, art(frame, 'd', 0, std::size_t(first) + (animation + marker.index) % std::size_t(count)),
+              marker.point.x, marker.point.y);
+    }
+    for (const auto &marker : markers)
+        if (selected == marker.index) {
+            const auto [x, y] = marker.point;
+            keyed(frame, art(frame, 'd', 0, 42), x, y + 12);
+            keyed(frame, art(frame, 'd', 0, std::size_t(first) + animation % std::size_t(count)), x, y);
+            const int bounce = int((now(frame) / 80) % 8);
+            keyed(frame, art(frame, 'd', 0, 38), x, y - 16 - (bounce < 4 ? bounce : 8 - bounce));
+            frame.hit(5000 + int(marker.index), {x - 22, y - 30, x + 22, y + 22},
+                      [tap, index = marker.index] { tap(index); });
+        }
+    for (const auto &marker : markers)
+        if (selected != marker.index) {
+            const auto [x, y] = marker.point;
+            frame.hit(5000 + int(marker.index), {x - 20, y - 20, x + 20, y + 20},
+                      [tap, index = marker.index] { tap(index); });
+        }
+}
+
+// ---------------------------------------------------------------------------------------------
+bool Screens::draw_decision(Frame &frame, GameSession &session, const Host &host) {
+    const auto &decision = *session.pending_decision();
+    switch (decision.kind) {
+    case DecisionKind::shop:
+        magic_ = {};
+        rescue_ = {};
+        draw_shop(frame, session, decision, host);
+        return true;
+    case DecisionKind::magic_category:
+    case DecisionKind::magic_effect:
+        shop_ = {};
+        rescue_ = {};
+        draw_magic(frame, session, decision, host);
+        return true;
+    case DecisionKind::rescue:
+        shop_ = {};
+        magic_ = {};
+        draw_rescue(frame, session, decision, host);
+        return true;
+    default:
+        end_visits();
+        return false;
+    }
+}
+
+// §6 point shop.
+namespace {
+constexpr std::array<std::array<const char *, 5>, 2> shop_lines{
+    {{"有什麼我能\n為你服務的嗎？", "請挑選你想要\n兌換的卡片。", "抱歉！\n你的點數不足！", "對不起！\n您的卡片欄已滿！",
+      "歡迎下次再來！"},
+     {"歡迎光臨\n道具店！", "您要兌換\n什麼道具？", "對不起，\n您的點券不夠！", "很抱歉！您的\n道具欄已滿！",
+      "謝謝惠顧！"}}};
+}
+
+bool Screens::shop_show_option(std::int32_t value) {
+    const int before = shop_.mode;
+    if ((value > 100 && value <= 130) || (value > 300 && value <= 330))
+        shop_.mode = 0;
+    else if ((value > 200 && value <= 213) || (value > 400 && value <= 413))
+        shop_.mode = 1;
+    return before != shop_.mode;
+}
+
+void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &decision, const Host &host) {
+    auto &shop = shop_;
+    const auto now = this->now(frame);
+    if (!shop.active) {
+        shop = {};
+        shop.active = true;
+        shop.opened = now;
+        for (const auto &option : decision.options) {
+            if (option.value > 100 && option.value <= 130)
+                shop.cards.push_back(static_cast<std::uint8_t>(option.value - 100));
+            if (option.value > 200 && option.value <= 213)
+                shop.tools.push_back(static_cast<std::uint8_t>(option.value - 200));
+        }
+        shop.cards.resize(std::min<std::size_t>(shop.cards.size(), 15));
+        shop.cards_bought.assign(shop.cards.size(), false);
+        shop.tools_bought.assign(shop.tools.size(), false);
+        shop.balloon = shop_lines[0][0];
+        shop.balloon_until = now + 2000;
+    }
+    const int mode = shop.mode;
+    const auto say = [&shop, now, mode](int line) {
+        shop.balloon = shop_lines[std::size_t(mode)][std::size_t(line)];
+        shop.balloon_until = now + 2000;
+    };
+    if (!shop.balloon.empty() && !shop.balloon_until)
+        shop.balloon_until = now + 2000;
+    if (shop.leaving && !shop.leave_at)
+        shop.leave_at = now + 1500;
+    if (!shop.balloon.empty() && now >= shop.balloon_until) {
+        if (shop.balloon == shop_lines[0][0] || shop.balloon == shop_lines[1][0])
+            say(1);
+        else
+            shop.balloon.clear();
+    }
+    const auto leave = option_of(decision, 0);
+    if (shop.leaving && shop.leave_at && now >= shop.leave_at && leave) {
+        deferred_.push_back([host, index = *leave] { host.respond(index); });
+        shop.leave_at = UINT64_MAX;
+    }
+    const auto &player = session.world().players.at(decision.player).state;
+    const std::size_t base = mode ? 16 : 0;
+    shot = std::string("shop-") + (mode ? "tool" : "card") + (shop.leaving ? "-leaving" : "") +
+           (std::count(shop.cards_bought.begin(), shop.cards_bought.end(), true) +
+                    std::count(shop.tools_bought.begin(), shop.tools_bought.end(), true)
+                ? "-bought"
+                : "");
+    opaque(frame, art(frame, 'p', 10, 0 + base), 0, 0);
+    keyed(frame, art(frame, 'p', 10, 2 + base), 320, 240);
+    // Idle shopkeeper: blink every few seconds, flap the mouth while the balloon is up.
+    const auto blink = (now - shop.opened) % 3700;
+    if (blink < 400) {
+        constexpr std::array<std::size_t, 4> card_blink{7, 8, 7, 5}, tool_blink{21, 22, 21, 23};
+        const auto frame_index = (mode ? tool_blink : card_blink)[std::size_t(blink / 100)];
+        opaque(frame, art(frame, 'p', 10, frame_index), mode ? 417 : 405, mode ? 50 : 60);
+    }
+    if (!shop.balloon.empty() && (now / 150) % 2)
+        opaque(frame, art(frame, 'p', 10, mode ? 26 : 10), mode ? 417 : 405, mode ? 89 : 91);
+    int list_x = 5, grid_x = 227;
+    slide(now - shop.opened, list_x, grid_x);
+    opaque(frame, art(frame, 'p', 10, 1 + base), list_x, 10);
+    const int dx = list_x - 5;
+    GameSession *game = &session;
+    const auto buy = [this, game, host, &decision](bool card, std::size_t row, std::int32_t value) {
+        const auto index = option_of(decision, value);
+        return [this, game, host, card, row, value, index] {
+            auto &state = game->world().players.at(game->pending_decision()->player).state;
+            const auto item = std::size_t(value % 100);
+            const auto price = card ? services::card_prices.at(item - 1) : services::tool_prices.at(item - 1);
+            const auto mode_lines = shop_lines[card ? 0 : 1];
+            const auto complain = [this](const char *line) {
+                shop_.balloon = line;
+                shop_.balloon_until = 0; // set on the next frame
+                if (sound)
+                    sound(3);
+            };
+            if (state.points < price)
+                complain(mode_lines[2]);
+            else if (card ? card_count(state.cards) >= 15 : state.tool_amounts.at(item - 1) >= 9)
+                complain(mode_lines[3]);
+            else if (index && host.respond(*index)) {
+                (card ? shop_.cards_bought : shop_.tools_bought).at(row) = true;
+                if (sound)
+                    sound(1);
+            } else
+                host.notify(false, "目前無法兌換");
+        };
+    };
+    if (mode == 0)
+        for (std::size_t i = 0; i < shop.cards.size(); ++i) {
+            const auto card = shop.cards[i];
+            const bool bought = shop.cards_bought[i];
+            const int y = int(i) * 24;
+            centred(frame, services::card_names.at(card - 1), 95 + dx, 93 + y, 20, bought ? grey : white);
+            top_right(frame, "$" + std::to_string(services::card_prices.at(card - 1)), 199 + dx, 85 + y, 20,
+                      bought ? grey : white);
+            if (!bought && option_of(decision, 100 + card))
+                frame.hit(option_id + int(*option_of(decision, 100 + card)), {14, 81 + y, 215, 105 + y},
+                          buy(true, i, 100 + card));
+        }
+    else
+        for (std::size_t i = 0; i < shop.tools.size(); ++i) {
+            const auto tool = shop.tools[i];
+            const bool bought = shop.tools_bought[i];
+            const int y = int(i) * 48;
+            centred(frame, services::tool_names.at(tool - 1), 95 + dx, 102 + y, 20, bought ? grey : white);
+            top_right(frame, "$" + std::to_string(services::tool_prices.at(tool - 1)), 199 + dx, 94 + y, 20,
+                      bought ? grey : white);
+            if (!bought && option_of(decision, 200 + tool))
+                frame.hit(option_id + int(*option_of(decision, 200 + tool)), {12, 80 + y, 213, 128 + y},
+                          buy(false, i, 200 + tool));
+        }
+    // The player's own grid; a tap sells at once, as in the original.
+    keyed(frame, art(frame, 'p', 11, mode ? 1 : 0), grid_x, 293);
+    std::vector<std::int32_t> sell_values;
+    if (mode == 0) {
+        std::vector<std::uint8_t> order;
+        card_names_on_grid(frame, player.cards, grid_x, 293, &order);
+        for (const auto card : order)
+            sell_values.push_back(300 + card);
+    } else
+        for (const auto tool : tools_on_grid(frame, player, grid_x, 293))
+            sell_values.push_back(400 + std::int32_t(tool));
+    for (std::size_t tile = 0; tile < sell_values.size(); ++tile) {
+        const auto index = option_of(decision, sell_values[tile]);
+        if (!index)
+            continue;
+        const int c = int(tile) % 5, r = int(tile) / 5;
+        const Rect rect{233 + 80 * c, 299 + 56 * r, 311 + 80 * c, 353 + 56 * r};
+        if (frame.pointer_down && frame.pointer_in(rect))
+            sink(frame.canvas, rect);
+        frame.hit(option_id + int(*index), rect, [this, host, index = *index] {
+            if (host.respond(index) && sound)
+                sound(1);
+        });
+    }
+    // Switch shop, EXIT and points box.
+    const Rect switch_rect{542, 13, 627, 98}, exit_rect{556, 246, 636, 286};
+    const bool switch_down = frame.pointer_down && frame.pointer_in(switch_rect);
+    keyed(frame, art(frame, 'p', 10, (mode ? 29 : 13) + (switch_down ? 1 : 0)), 542, 13);
+    const bool exit_down = shop.leaving || (frame.pointer_down && frame.pointer_in(exit_rect));
+    keyed(frame, art(frame, 'p', 10, exit_down ? 36 : 35), 556, 246);
+    keyed(frame, art(frame, 'p', 10, 37), 230, 246);
+    top_right(frame, std::to_string(player.points), 310, 257, 20, white);
+    if (shop.leaving)
+        keyed(frame, art(frame, 'p', 10, mode ? 19 : 3), 320, 240);
+    if (!shop.balloon.empty()) {
+        keyed(frame, art(frame, 'p', 10, 15), 120, 10);
+        centred(frame, shop.balloon, 235, 119, 20, dark, false, dark, true);
+        if (!shop.leaving) // a tap on the balloon dismisses it, as a click did in the original
+            frame.hit(281, {150, 30, 360, 210}, [this] { shop_.balloon.clear(); });
+    }
+    if (shop.leaving) {
+        if (leave)
+            frame.hit(option_id + int(*leave), {0, 0, 640, 480}, [host, index = *leave] { host.respond(index); });
+        return;
+    }
+    frame.hit(shop_switch_id, switch_rect, [this] {
+        shop_.mode ^= 1;
+        if (!shop_.balloon.empty() && shop_.balloon != shop_lines[0][0] && shop_.balloon != shop_lines[1][0])
+            shop_.balloon.clear();
+    });
+    if (leave)
+        frame.hit(option_id + int(*leave), exit_rect, [this, mode] {
+            shop_.leaving = true;
+            shop_.leave_at = 0;
+            shop_.balloon = shop_lines[std::size_t(mode)][4];
+            shop_.balloon_until = 0;
+        });
+}
+
+// §7 magic house.
+namespace {
+constexpr std::array<const char *, 12> magic_groups{"財產最多的人", "土地最多的人", "房屋最多的人", "現金最多的人",
+                                                    "存款最多的人", "點券最多的人", "走路的人",     "騎機車的人",
+                                                    "開汽車的人",   "神明附身的人", "所有男生",     "所有女生"};
+struct MagicEffect {
+    const char *text;
+    std::size_t plate;
+    int label_x, label_y, icon_x, icon_y;
+};
+constexpr std::array<MagicEffect, 12> magic_table{{{"變賣所有卡片", 9, 208, 167, 322, 91},
+                                                   {"抽取命運三張", 10, 510, 150, 414, 82},
+                                                   {"立刻坐牢三天", 7, 545, 88, 453, 157},
+                                                   {"原地停留一回合", 7, 568, 147, 509, 242},
+                                                   {"存入所有現金", 7, 550, 234, 458, 314},
+                                                   {"就地加蓋房屋", 7, 510, 320, 415, 387},
+                                                   {"得一張卡片", 7, 422, 320, 322, 394},
+                                                   {"向後轉", 6, 134, 318, 239, 393},
+                                                   {"變賣所有道具", 6, 92, 250, 188, 316},
+                                                   {"就地拆除房屋", 6, 72, 130, 131, 222},
+                                                   {"住院檢查三天", 6, 77, 85, 184, 161},
+                                                   {"拍賣當格土地", 9, 122, 154, 225, 83}}};
+} // namespace
+
+std::size_t Screens::magic_choice(const GameSession &session) const {
+    const auto &decision = session.pending_decision();
+    if (!decision || decision->kind != DecisionKind::magic_category || decision->options.empty())
+        return 0;
+    // The witch picks the group (§7.3). Derived from, but never advancing, the game RNG state.
+    return std::size_t(session.random_state() >> 7) % decision->options.size();
+}
+
+void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision &decision, const Host &host) {
+    const auto now = this->now(frame);
+    if (!magic_.active) {
+        magic_ = {};
+        magic_.active = true;
+        magic_.opened = now;
+    }
+    if (magic_mask_.empty()) {
+        try {
+            magic_mask_ = frame.artwork.archive('p').decode(19);
+        } catch (const std::exception &) {
+        }
+    }
+    opaque(frame, art(frame, 'p', 18, 0), 0, 0);
+    const auto balloon = [&frame](std::string_view text) {
+        keyed(frame, art(frame, 'p', 18, 8), 320, 384);
+        centred(frame, text, 320, 384, 18, ui::color(250, 240, 210));
+    };
+    if (decision.kind == DecisionKind::magic_category) {
+        const auto choice = magic_choice(session);
+        const auto elapsed = now - magic_.opened;
+        if (elapsed >= 3200 && !magic_.scheduled) {
+            magic_.category = decision.options.at(choice).value;
+            magic_.scheduled = true;
+            deferred_.push_back([host, choice] { host.respond(choice); });
+        }
+        shot = "magic-category";
+        keyed(frame, art(frame, 'p', 18, 1), 241, 140);
+        if (elapsed >= 1800)
+            keyed(frame, art(frame, 'p', 18, 3), 286, 188);
+        balloon(elapsed < 1800 ? "進來魔法屋，就得\n完全照我的指示！" : "我選出符合條件的人。");
+        frame.hit(option_id + int(choice), {0, 0, 640, 480}, [this, host, choice, &decision] {
+            magic_.category = decision.options.at(choice).value;
+            host.respond(choice);
+        });
+        return;
+    }
+    // Effect choice: tap a triangle to light it and read its label, tap it again to cast.
+    const auto group = magic_.category;
+    const auto respond_effect = [this, host, &decision](int effect) {
+        if (const auto index = option_of(decision, effect)) {
+            magic_ = {};
+            host.respond(*index);
+        }
+    };
+    const auto schedule_effect = [this, host, &decision](int effect) {
+        if (const auto index = option_of(decision, effect); index && !magic_.scheduled) {
+            magic_.scheduled = true;
+            deferred_.push_back([this, host, index = *index] {
+                magic_ = {};
+                host.respond(index);
+            });
+        }
+    };
+    shot = magic_.casting ? "magic-casting" : magic_.selected >= 0 ? "magic-selected" : "magic-effect";
+    if (magic_.casting) {
+        keyed(frame, art(frame, 'p', 18, 2), 182, 142);
+        if (group >= 0 && group < 12)
+            keyed(frame, art(frame, 'p', 18, std::size_t(11 + group)), 326, 296);
+        balloon("天靈靈地靈靈∼");
+        const int effect = magic_.selected;
+        if (now >= magic_.casting + 1000)
+            schedule_effect(effect);
+        if (const auto index = option_of(decision, effect))
+            frame.hit(option_id + int(*index), {0, 0, 640, 480}, [respond_effect, effect] { respond_effect(effect); });
+        return;
+    }
+    keyed(frame, art(frame, 'p', 18, 1), 241, 140);
+    if (group >= 0 && group < 12)
+        keyed(frame, art(frame, 'p', 18, std::size_t(11 + group)), 326, 296);
+    const auto tap = [this](int effect) {
+        if (effect < 0 || effect > 11)
+            return;
+        if (magic_.selected == effect) {
+            magic_.casting = 1; // stamped with the frame time below
+            return;
+        }
+        magic_.selected = effect;
+        if (sound)
+            sound(0x27);
+    };
+    if (magic_.selected >= 0) {
+        const auto &effect = magic_table[std::size_t(magic_.selected)];
+        keyed(frame, art(frame, 'p', 18, std::size_t(23 + magic_.selected)), effect.icon_x, effect.icon_y);
+        keyed(frame, art(frame, 'p', 18, effect.plate), effect.label_x, effect.label_y);
+        centred(frame, effect.text, effect.label_x, effect.label_y, 14, ui::color(224, 224, 224), true,
+                ui::color(32, 32, 32));
+        balloon(std::string(effect.text) + "？\n再點一次就施法");
+    } else
+        balloon(std::string(group >= 0 && group < 12 ? magic_groups[std::size_t(group)] : "") +
+                "\n嘿∼輪到你了！請點選魔法");
+    for (std::size_t i = 0; i < decision.options.size(); ++i) {
+        const auto value = decision.options[i].value;
+        if (value < 0 || value > 11)
+            continue;
+        const auto &effect = magic_table[std::size_t(value)];
+        frame.hit(option_id + int(i), {effect.icon_x - 24, effect.icon_y - 24, effect.icon_x + 24, effect.icon_y + 24},
+                  [tap, value] { tap(value); });
+    }
+    frame.hit(magic_mask_id, {0, 0, 640, 480}, [this, &frame, tap] {
+        const int x = frame.pointer_x, y = frame.pointer_y;
+        if (x < 0 || y < 0 || x >= 640 || y >= 480 || magic_mask_.size() < 640U * 480U)
+            return;
+        const int value = magic_mask_[std::size_t(y * 640 + x)];
+        if (value >= 1 && value <= 12)
+            tap(value - 1);
+        else if (value == 13)
+            magic_.selected = -1;
+    });
+    if (magic_.casting == 1)
+        magic_.casting = now;
+}
+
+// §8 prison and hospital bail screens.
+namespace {
+constexpr std::array<const char *, 4> npc_names{"小偷", "強盜", "流氓", "間諜"};
+}
+
+void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision &decision, const Host &host) {
+    const auto now = this->now(frame);
+    if (!rescue_.active) {
+        rescue_ = {};
+        rescue_.active = true;
+        rescue_.opened = now;
+    }
+    const auto &world = session.world();
+    const bool hospital = decision.prompt.find("住院") != std::string::npos;
+    const auto points = world.players.at(decision.player).state.points;
+    const std::size_t entry = hospital ? 65 : 63;
+    shot = std::string(hospital ? "hospital" : "prison") + (rescue_.selected >= 0 ? "-selected" : "");
+    opaque(frame, art(frame, 'p', entry, 0), 0, 0);
+    if (hospital)
+        keyed(frame, art(frame, 'p', 65, 4), 104, 110);
+    const auto slot_origin = [hospital](int slot) {
+        if (hospital)
+            return std::pair{slot < 4 ? 297 : 481, 1 + 120 * (slot % 4)};
+        constexpr std::array<int, 4> xs{33, 185, 336, 487};
+        return std::pair{xs[std::size_t(slot % 4)], slot < 4 ? 24 : 183};
+    };
+    const auto name_of = [&world](int slot) -> std::string {
+        if (slot >= 4)
+            return npc_names[std::size_t(slot - 4)];
+        return names.at(world.players.at(std::size_t(slot)).state.character);
+    };
+    for (int slot = 0; slot < 8; ++slot) {
+        const auto [x, y] = slot_origin(slot);
+        const auto index = option_of(decision, slot);
+        if (index) {
+            const auto character = slot < 4 ? world.players.at(std::size_t(slot)).state.character : 0;
+            const std::size_t portrait = slot < 4 ? (hospital ? 14U : 5U) + character
+                                                  : (hospital ? 22U : 13U) + std::size_t(slot);
+            keyed(frame, art(frame, 'p', entry, portrait), x, y);
+            if (!hospital)
+                keyed(frame, art(frame, 'p', 63, 3), x, y);
+            const Rect rect = hospital ? Rect{x, y, x + 147, y + 102} : Rect{x, y, x + 121, y + 137};
+            if (rescue_.selected == slot) {
+                ui::border(frame.canvas, rect, ui::color(255, 255, 0));
+                ui::border(frame.canvas, {rect.left + 1, rect.top + 1, rect.right - 1, rect.bottom - 1},
+                           ui::color(255, 255, 0));
+            }
+            frame.hit(option_id + int(*index), rect, [this, host, slot, points, index = *index] {
+                if (points < (slot < 4 ? 30 : 300)) {
+                    rescue_.selected = -1;
+                    rescue_.poor_until = 1;
+                    if (sound)
+                        sound(3);
+                } else if (rescue_.selected == slot)
+                    host.respond(index);
+                else {
+                    rescue_.selected = slot;
+                    rescue_.poor_until = 0;
+                }
+            });
+        } else if (!hospital)
+            keyed(frame, art(frame, 'p', 63, 4), x, y);
+    }
+    // Points box.
+    keyed(frame, art(frame, 'p', entry, hospital ? 30 : 21), hospital ? 8 : 542, 432);
+    right_middle(frame, std::to_string(points), hospital ? 88 : 622, 452, 20, white);
+    if (hospital) {
+        keyed(frame, art(frame, 'p', 65, 2), 8, 8);
+        centred(frame, "您好！請問您要替誰\n辦理出院手續？", 148, 56, 18, dark, false, dark, true);
+    }
+    if (rescue_.poor_until == 1)
+        rescue_.poor_until = now + 2000;
+    if (rescue_.poor_until > now) {
+        keyed(frame, art(frame, 'p', entry, 1), 230, 300);
+        centred(frame, "抱歉！\n你的點數不足！", 322, 334, 18, dark, false, dark, true);
+    }
+    const auto leave = option_of(decision, -1);
+    if (rescue_.selected >= 0) {
+        const auto slot = rescue_.selected;
+        const auto [x, y] = slot_origin(slot);
+        const int tx = hospital ? x - 80 : x + 20, ty = hospital ? y : y + 120;
+        keyed(frame, art(frame, 'p', entry, hospital ? 3 : 2), tx, ty);
+        const int text_x = tx + (hospital ? 41 : 57);
+        centred(frame, name_of(slot), text_x, ty + 26, 16, dark, false, dark, true);
+        centred(frame, "保釋點數", text_x, ty + 48, 16, dark, false, dark, true);
+        centred(frame, std::to_string(slot < 4 ? 30 : 300) + "點", text_x, ty + 70, 16, dark, false, dark, true);
+        // Touch stand-in for ui_yesno(320,240): a confirm strip.
+        const Rect panel = hospital ? Rect{20, 330, 280, 424} : Rect{190, 392, 530, 474};
+        frame.dialog(panel, "");
+        frame.centered((hospital ? "替" : "保釋") + name_of(slot) + (hospital ? "辦理出院？" : "？"),
+                       (panel.left + panel.right) / 2, panel.top + 10, 18, ui::ink);
+        const int mid = (panel.left + panel.right) / 2;
+        const auto index = option_of(decision, slot);
+        if (index)
+            frame.button(yes_id, {mid - 120, panel.top + 40, mid - 10, panel.bottom - 10}, "是",
+                         [host, index = *index] { host.respond(index); });
+        frame.button(no_id, {mid + 10, panel.top + 40, mid + 120, panel.bottom - 10}, "否",
+                     [this] { rescue_.selected = -1; });
+    }
+    if (leave)
+        frame.button(option_id + int(*leave), hospital ? Rect{110, 440, 260, 474} : Rect{20, 440, 170, 474},
+                     "離開", [host, index = *leave] { host.respond(index); });
+    frame.hit(63, {0, 0, 640, 480}, [this] { rescue_.selected = -1; });
+}
+
+} // namespace rich4::native::items
