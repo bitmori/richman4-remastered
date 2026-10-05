@@ -9,7 +9,7 @@ option(RICH4_BUILD_GAME "Build the native SDL3 game" ON)
 option(RICH4_SANITIZERS "Check memory safety and undefined behavior" OFF)
 set(RICH4_ORACLE_DIR "" CACHE PATH "Optional original EXE capture for differential tests")
 
-add_library(rich4_core src/assets.cpp src/graphics.cpp src/save.cpp src/calendar.cpp src/direction.cpp
+add_library(rich4_core src/assets.cpp src/graphics.cpp src/flc.cpp src/save.cpp src/calendar.cpp src/direction.cpp
   src/inventory.cpp src/economy.cpp src/random.cpp src/terrain.cpp src/board_renderer.cpp src/world.cpp src/game.cpp src/events.cpp
   src/stocks.cpp src/services.cpp src/auction.cpp src/tools.cpp src/lottery.cpp src/holidays.cpp src/cards.cpp src/cards_ai.cpp src/gods.cpp src/tools_ai.cpp src/special_actors.cpp src/stocks_ai.cpp
   src/trading.cpp src/world_validation.cpp)
@@ -69,11 +69,14 @@ if(BUILD_TESTING)
   endif()
   add_executable(rich4-graphics-oracle tools/oracle/native_graphics.cpp)
   target_link_libraries(rich4-graphics-oracle PRIVATE rich4_core)
-  foreach(module assets graphics save calendar direction inventory economy random terrain board_renderer world game services auction events stocks tools lottery holidays cards cards_ai numeric gods tools_ai special_actors stocks_ai trading world_validation)
+  foreach(module assets graphics flc save calendar direction inventory economy random terrain board_renderer world game services auction events stocks tools lottery holidays cards cards_ai numeric gods tools_ai special_actors stocks_ai trading world_validation)
     add_executable(${module}_tests tests/${module}_tests.cpp)
     target_link_libraries(${module}_tests PRIVATE rich4_core)
     add_test(NAME ${module} COMMAND ${module}_tests)
   endforeach()
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/game-assets/Data.mkf")
+    add_test(NAME flc_original_assets COMMAND flc_tests "${CMAKE_CURRENT_SOURCE_DIR}/game-assets")
+  endif()
   find_package(Python3 3.9 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
     add_test(NAME oracle_manifest_tests
