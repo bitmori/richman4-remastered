@@ -1303,8 +1303,10 @@ class Application {
                     trading_page_ = i / 7;
                     if (std::any_of(buttons_.begin(), buttons_.end(), [i](const auto &button) {
                             return button.id == 600 + int(i) && button.enabled;
-                        }))
-                        { test_trade_attempts_.insert({quotes[i].seller, quotes[i].index}); push_button(600 + int(i)); }
+                        })) {
+                        test_trade_attempts_.insert({quotes[i].seller, quotes[i].index});
+                        push_button(600 + int(i));
+                    }
                     return;
                 }
             }
@@ -1545,7 +1547,8 @@ class Application {
                << ",\"requested_days\":" << options_.auto_rounds
                << ",\"completed_days\":" << test_completed_days_
                << ",\"match_finished\":" << (test_finished_ ? "true" : "false")
-               << ",\"seed\":" << options_.seed << ",\"initial_game_random_state\":" << initial_random_state_.value_or(0)
+               << ",\"seed\":" << options_.seed
+               << ",\"initial_game_random_state\":" << initial_random_state_.value_or(0)
                << ",\"map\":" << session_->world().header.stage_id * 4 + session_->world().header.map_id
                << ",\"requested_card\":" << options_.exercise_card
                << ",\"requested_tool\":" << options_.exercise_tool

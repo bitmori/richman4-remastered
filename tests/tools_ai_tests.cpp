@@ -10,7 +10,7 @@
 
 using namespace rich4;
 namespace {
-void require(bool condition, const std::string& message) {
+void require(bool condition, const std::string &message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
@@ -27,7 +27,7 @@ World fixture(unsigned scenario) {
     world.header.price_index = 1 + int(scenario % 5);
     world.camera_rotation = scenario % 8;
     for (unsigned i = 1; i <= 12; ++i) {
-        auto& node = world.nodes[i];
+        auto &node = world.nodes[i];
         node.id = i;
         node.x = static_cast<std::int16_t>(960 + i * 32);
         node.y = 1024;
@@ -43,7 +43,7 @@ World fixture(unsigned scenario) {
         }
     }
     for (unsigned i = 0; i < 4; ++i) {
-        auto& player = world.players[i];
+        auto &player = world.players[i];
         player.state.slot = i;
         player.state.controller_flags = 2;
         player.state.x = static_cast<std::uint16_t>(1184 + i * 160);
@@ -63,7 +63,7 @@ World fixture(unsigned scenario) {
         player.status.hostility[(i + 1) % 4] = scenario % 2 == 0 ? 5 : 0;
     }
     for (unsigned i = 1; i <= 8; ++i) {
-        auto& land = world.lands[i];
+        auto &land = world.lands[i];
         land.id = i;
         land.x = static_cast<std::uint16_t>(960 + i * 32 + (scenario % 9 == 0 ? 700 : 0));
         land.y = static_cast<std::uint16_t>(1024 + (scenario % 9 == 0 ? 700 : 32));
@@ -78,7 +78,7 @@ World fixture(unsigned scenario) {
         }
     }
     for (unsigned i = 1; i <= 2; ++i) {
-        auto& facility = world.facilities[i];
+        auto &facility = world.facilities[i];
         facility.id = i;
         facility.x = static_cast<std::uint16_t>(1248 + i * 32);
         facility.y = 1056;
@@ -111,8 +111,8 @@ World fixture(unsigned scenario) {
 tools_ai::Callbacks callbacks() {
     tools_ai::Callbacks result;
     result.nearby_instances = [](std::size_t) {
-        return std::vector<std::uint16_t>{2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-                                          4001, 4002, 0x8001, 0x8002, 0x8004, 0x8008};
+        return std::vector<std::uint16_t>{2001, 2002, 2003, 2004,   2005,   2006,   2007,
+                                          2008, 4001, 4002, 0x8001, 0x8002, 0x8004, 0x8008};
     };
     return result;
 }
@@ -156,14 +156,13 @@ void visits() {
             "Human visits never draw AI randomness");
     world.players[0].state.controller_flags = 2;
     world.players[0].status.card_strategy = 0;
-    require(!tools_ai::choose(world, random, 0).decision && random.state() == 5,
-            "Profile bit disables AI");
+    require(!tools_ai::choose(world, random, 0).decision && random.state() == 5, "Profile bit disables AI");
     world.players[0].status.rescue_strategy = 2;
     const auto missing = tools_ai::evaluate(world, random, 0, 9);
     require(!missing.supported && !missing.decision, "Missing instance scan is explicit");
 }
 
-void golden(const char* path) {
+void golden(const char *path) {
     std::ifstream file(path);
     require(bool(file), "Cannot open tool AI oracle CSV");
     std::string line;
@@ -174,19 +173,20 @@ void golden(const char* path) {
         std::replace(line.begin(), line.end(), ',', ' ');
         std::istringstream row(line);
         unsigned scenario, tool, seed, used, target, final_seed;
-        require(bool(row >> scenario >> tool >> seed >> used >> target >> final_seed), "Malformed oracle row");
+        require(bool(row >> scenario >> tool >> seed >> used >> target >> final_seed),
+                "Malformed oracle row");
         const auto world = fixture(scenario);
         Random random(seed);
         const auto result = tools_ai::evaluate(world, random, 0, tool, callbacks());
-        const unsigned actual_target = result.decision ?
-            (tool == 11 ? result.decision->destination : result.decision->target) : 0;
-        if (!result.supported || bool(result.decision) != bool(used) ||
-            (used && actual_target != target) || random.state() != final_seed) {
-            throw std::runtime_error("Original mismatch scenario=" + std::to_string(scenario) +
-                " tool=" + std::to_string(tool) + " used=" + std::to_string(bool(result.decision)) +
-                "/" + std::to_string(used) + " target=" + std::to_string(actual_target) +
-                "/" + std::to_string(target) + " seed=" + std::to_string(random.state()) +
-                "/" + std::to_string(final_seed));
+        const unsigned actual_target =
+            result.decision ? (tool == 11 ? result.decision->destination : result.decision->target) : 0;
+        if (!result.supported || bool(result.decision) != bool(used) || (used && actual_target != target) ||
+            random.state() != final_seed) {
+            throw std::runtime_error(
+                "Original mismatch scenario=" + std::to_string(scenario) + " tool=" + std::to_string(tool) +
+                " used=" + std::to_string(bool(result.decision)) + "/" + std::to_string(used) +
+                " target=" + std::to_string(actual_target) + "/" + std::to_string(target) +
+                " seed=" + std::to_string(random.state()) + "/" + std::to_string(final_seed));
         }
         successes[tool - 1] += used;
         ++cases;
@@ -200,14 +200,14 @@ void golden(const char* path) {
 }
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     try {
         visits();
         if (argc > 1) {
             golden(argv[1]);
         }
         std::cout << "Tool AI profile, wrapped visits and missing-selection tests passed\n";
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;
     }

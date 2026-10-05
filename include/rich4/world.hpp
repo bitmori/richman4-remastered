@@ -15,12 +15,12 @@ namespace rich4 {
 
 // Runtime values, never overlays of the original packed 32-bit structures.
 struct PlayerStatus {
-    std::uint8_t card_strategy = 0; // Original profile byte +22; bit 1 permits active-card AI.
+    std::uint8_t card_strategy = 0;   // Original profile byte +22; bit 1 permits active-card AI.
     std::uint8_t rescue_strategy = 0; // Original profile byte +23.
-    std::uint8_t loan_ratio = 0; // Original profile byte +24.
+    std::uint8_t loan_ratio = 0;      // Original profile byte +24.
     std::uint8_t init_cash_ratio = 50;
     std::uint8_t stock_investment_ratio = 0; // Original profile byte +26.
-    std::uint8_t saved_direction = 0; // +27, saved facing while absent/in a facility.
+    std::uint8_t saved_direction = 0;        // +27, saved facing while absent/in a facility.
     std::uint32_t loan_due_date = 0;
     std::uint8_t days_in_hotel = 0;
     std::uint8_t days_disappearing = 0;
@@ -38,10 +38,10 @@ struct PlayerStatus {
     std::uint8_t attached_bomb = 0;
     std::uint8_t allied_player = 0; // One-based owner code, zero means none.
     std::uint8_t total_winter_sleep_days = 0;
-    std::int16_t god_luck_modifier = 0; // Original signed word +68.
+    std::int16_t god_luck_modifier = 0;      // Original signed word +68.
     std::int16_t money_fortune_modifier = 0; // Original signed word +70.
     std::int16_t other_fortune_modifier = 0; // Original signed word +72.
-    std::uint16_t facility_id = 0; // Original word +74.
+    std::uint16_t facility_id = 0;           // Original word +74.
     std::array<std::uint32_t, 4> hostility{};
     std::uint32_t cumulative_spending = 0;
     std::uint32_t cumulative_income = 0;
@@ -67,7 +67,7 @@ struct TradeOffer {
     std::int32_t price = 0;
     std::uint16_t quantity = 0; // Stock quantity; unused for other kinds.
     std::uint8_t property_type = 0, property_level = 0;
-    friend bool operator==(const TradeOffer&, const TradeOffer&) = default;
+    friend bool operator==(const TradeOffer &, const TradeOffer &) = default;
 };
 
 struct StockState {
@@ -109,7 +109,7 @@ struct MapNode {
     std::int16_t x = 0;
     std::int16_t y = 0;
     std::array<std::uint16_t, 4> neighbors{}; // Zero is an unused link.
-    std::uint16_t type_and_index = 0; // Original event/property code, not an enum guess.
+    std::uint16_t type_and_index = 0;         // Original event/property code, not an enum guess.
     std::uint16_t ground_sprite = 0;
     std::uint32_t flags = 0;
 };
@@ -140,8 +140,12 @@ struct Facility {
     std::uint8_t flags_30 = 0; // Original facility byte +0x1e, cleared by sealing card.
     std::uint16_t land_price = 0;
     std::array<std::uint16_t, 6> toll_by_level{};
-    [[nodiscard]] std::uint16_t price_per_level() const noexcept { return toll_by_level[0]; }
-    [[nodiscard]] std::uint16_t& price_per_level() noexcept { return toll_by_level[0]; }
+    [[nodiscard]] std::uint16_t price_per_level() const noexcept {
+        return toll_by_level[0];
+    }
+    [[nodiscard]] std::uint16_t &price_per_level() noexcept {
+        return toll_by_level[0];
+    }
     std::uint32_t removed_building = 0;
     std::uint32_t expired_date = 0;
 };
@@ -156,11 +160,11 @@ struct Commercial {
     std::uint16_t sprite_index = 0;
     std::uint16_t toll_fee = 0;
     std::uint8_t stock_index = 0;
-    std::int32_t funds = 0; // +0x28, company balance.
-    std::int32_t funds_change = 0; // +0x2c, original running cash-flow counter.
-    std::int32_t shares_remaining = 0; // +0x30.
+    std::int32_t funds = 0;                          // +0x28, company balance.
+    std::int32_t funds_change = 0;                   // +0x2c, original running cash-flow counter.
+    std::int32_t shares_remaining = 0;               // +0x30.
     std::array<std::uint8_t, 4> shareholder_order{}; // +0x1c, stable original rank order.
-    std::int32_t valuation = 0; // +0x24.
+    std::int32_t valuation = 0;                      // +0x24.
 };
 
 // Fifth map table. Only rendering placement fields are interpreted; all other
@@ -188,16 +192,14 @@ struct NewGameOptions {
     std::int32_t initial_fund = 200000;
     std::uint32_t lease_mode = 0; // Original 0..5 packed-calendar lease options.
     std::uint32_t random_seed = 1;
-    std::vector<NewGamePlayer> players{{10, 1, 0, 0}, {3, 2, 0, 0},
-                                       {0, 2, 0, 0}, {6, 2, 0, 0}};
+    std::vector<NewGamePlayer> players{{10, 1, 0, 0}, {3, 2, 0, 0}, {0, 2, 0, 0}, {6, 2, 0, 0}};
 };
 
 class World {
-public:
-    static World from_save(const SaveFile& save);
+  public:
+    static World from_save(const SaveFile &save);
     // Accepts the decoded odd MAP.MKF metadata entry, not its compressed bytes.
-    static World from_map_resource(std::span<const std::uint8_t> map,
-                                   const NewGameOptions& options = {});
+    static World from_map_resource(std::span<const std::uint8_t> map, const NewGameOptions &options = {});
 
     SaveHeader header{};
     std::vector<WorldPlayer> players;
@@ -222,30 +224,36 @@ public:
     std::array<std::array<TradeOffer, 7>, 4> offers{};
     std::array<std::array<std::uint32_t, 144>, 12> stock_history_bits{};
     std::int32_t stock_history_cursor = 0;
-    std::int32_t stock_market_index = 0; // Original 0x499078.
+    std::int32_t stock_market_index = 0;          // Original 0x499078.
     std::uint32_t stock_market_movement_bits = 0; // Original binary32 at 0x4990ec.
-    std::int32_t public_fund = 0; // Original recipient -1 payment accumulator.
-    std::int32_t news_effect_days = 0; // Original 0x4990dc, news event 26.
-    std::uint32_t lease_mode = 0; // Original 0x499110, not inferred from expiry dates.
-    std::uint32_t camera_rotation = 0; // Original 0x499088.
-    std::uint32_t round_counter = 0; // Original 0x4990e4, company type 3 fee multiplier.
-    std::uint32_t month_counter = 0; // Original 0x499084, increments at each month boundary.
+    std::int32_t public_fund = 0;                 // Original recipient -1 payment accumulator.
+    std::int32_t news_effect_days = 0;            // Original 0x4990dc, news event 26.
+    std::uint32_t lease_mode = 0;                 // Original 0x499110, not inferred from expiry dates.
+    std::uint32_t camera_rotation = 0;            // Original 0x499088.
+    std::uint32_t round_counter = 0;              // Original 0x4990e4, company type 3 fee multiplier.
+    std::uint32_t month_counter = 0;              // Original 0x499084, increments at each month boundary.
 
-    [[nodiscard]] WorldPlayer& active_player();
-    [[nodiscard]] const WorldPlayer& active_player() const;
+    [[nodiscard]] WorldPlayer &active_player();
+    [[nodiscard]] const WorldPlayer &active_player() const;
     // Original bankruptcy clears record bytes 28..103, including unknown fields.
     // It does not clear separate card/tool inventories or the controller byte.
     void clear_bankrupt_player_fields(std::size_t slot);
-    [[nodiscard]] const MapSummary& map_summary() const noexcept { return map_; }
+    [[nodiscard]] const MapSummary &map_summary() const noexcept {
+        return map_;
+    }
     // The initial spawning stream's final state, for a fresh session to continue.
     // An old SAVE does not persist Watcom's PRNG state. Zero is a valid seed.
-    [[nodiscard]] std::uint32_t initial_random_state() const noexcept { return random_state_; }
-    [[nodiscard]] bool has_initial_random_state() const noexcept { return random_state_available_; }
+    [[nodiscard]] std::uint32_t initial_random_state() const noexcept {
+        return random_state_;
+    }
+    [[nodiscard]] bool has_initial_random_state() const noexcept {
+        return random_state_available_;
+    }
     // Known fields are patched into the retained original bytes. Unknown fields,
     // historical snapshots and trailing bytes are preserved. Resizing is rejected.
     [[nodiscard]] std::vector<std::uint8_t> export_save() const;
 
-private:
+  private:
     MapSummary map_{};
     std::vector<std::uint8_t> backing_;
     std::uint32_t random_state_ = 0;

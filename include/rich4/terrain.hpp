@@ -29,7 +29,7 @@ struct Ground {
 // Rejects malformed dimensions, indices and truncated palette/index/tile data.
 [[nodiscard]] Ground parse_ground(std::span<const std::uint8_t> decoded);
 // Raw top-down texture atlas arranged by the map's tile indices, not the game camera.
-[[nodiscard]] graphics::Image render_overview(const Ground& ground,
+[[nodiscard]] graphics::Image render_overview(const Ground &ground,
                                               std::size_t max_pixels = 16U * 1024U * 1024U);
 
 struct Point {
@@ -39,7 +39,6 @@ using Quad = std::array<Point, 4>;
 
 // Original 16.16 scan conversion, indexed8 sampling and opaque palette lookup.
 // The native destination can have any positive dimensions, with explicit clip.
-void draw_tile(graphics::Image& destination, std::span<const std::uint8_t, tile_pixels> texture,
-               std::span<const std::uint16_t, 256> palette, const Quad& corners,
-               graphics::Rect clip);
+void draw_tile(graphics::Image &destination, std::span<const std::uint8_t, tile_pixels> texture,
+               std::span<const std::uint16_t, 256> palette, const Quad &corners, graphics::Rect clip);
 } // namespace rich4::terrain

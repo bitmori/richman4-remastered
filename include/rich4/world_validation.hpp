@@ -8,5 +8,5 @@ namespace rich4 {
 // Throw std::invalid_argument with the table/index/field on failure. Call before
 // replacing a live session or writing an imported world to a native save slot.
 // Binary archival decode/encode deliberately remains more permissive.
-void validate_playable_world(const World&);
+void validate_playable_world(const World &);
 } // namespace rich4

@@ -18,7 +18,7 @@ std::size_t pixel_count(int width, int height) {
         throw std::invalid_argument("image exceeds the 32-million-pixel allocation limit");
     return count;
 }
-void validate(const Image& image) {
+void validate(const Image &image) {
     if (image.pixels.size() != pixel_count(image.width, image.height))
         throw std::invalid_argument("pixel storage does not match image dimensions");
     if (!image.opaque_pixels.empty() && image.opaque_pixels.size() != image.pixels.size())
@@ -29,7 +29,7 @@ std::uint16_t word(std::span<const std::uint8_t> data, std::size_t offset) {
         throw assets::AssetError("truncated pixel or palette entry");
     return static_cast<std::uint16_t>(data[offset] | (static_cast<unsigned>(data[offset + 1]) << 8));
 }
-}
+} // namespace
 
 Image make_canvas(int width, int height, std::uint16_t fill) {
     return {width, height, 0, 0, std::vector<std::uint16_t>(pixel_count(width, height), fill), {}};
@@ -37,14 +37,16 @@ Image make_canvas(int width, int height, std::uint16_t fill) {
 
 Image decode_frame(std::span<const std::uint8_t> resource, std::size_t frame) {
     const auto graphics = assets::parse_graphics(resource);
-    if (frame >= graphics.entries.size()) throw std::out_of_range("frame index out of range");
-    const auto& entry = graphics.entries[frame];
+    if (frame >= graphics.entries.size())
+        throw std::out_of_range("frame index out of range");
+    const auto &entry = graphics.entries[frame];
     Image result = make_canvas(entry.width, entry.height);
     result.origin_x = entry.x;
     result.origin_y = entry.y;
     const auto count = result.pixels.size();
     if (graphics.kind == assets::GraphicsKind::smp && entry.size == count * 2) {
-        for (std::size_t i = 0; i < count; ++i) result.pixels[i] = word(resource, entry.offset + i * 2);
+        for (std::size_t i = 0; i < count; ++i)
+            result.pixels[i] = word(resource, entry.offset + i * 2);
     } else if (graphics.kind == assets::GraphicsKind::spr && entry.size == count && graphics.palette_offset) {
         result.opaque_pixels.resize(count);
         for (std::size_t i = 0; i < count; ++i) {
@@ -58,11 +60,11 @@ Image decode_frame(std::span<const std::uint8_t> resource, std::size_t frame) {
     return result;
 }
 
-void blit(Image& destination, const Image& source, int x, int y, Transparency transparency) {
+void blit(Image &destination, const Image &source, int x, int y, Transparency transparency) {
     blit(destination, source, x, y, {0, 0, destination.width, destination.height}, transparency);
 }
 
-void blit(Image& destination, const Image& source, int x, int y, Rect clip, Transparency transparency) {
+void blit(Image &destination, const Image &source, int x, int y, Rect clip, Transparency transparency) {
     validate(destination);
     validate(source);
     // Wide intermediates avoid overflow at extreme input coordinates. Intersect
@@ -73,12 +75,15 @@ void blit(Image& destination, const Image& source, int x, int y, Rect clip, Tran
     const auto start_y = std::max<std::int64_t>({0, clip.top, top});
     const auto end_x = std::min<std::int64_t>({destination.width, clip.right, left + source.width});
     const auto end_y = std::min<std::int64_t>({destination.height, clip.bottom, top + source.height});
-    if (start_x >= end_x || start_y >= end_y) return;
+    if (start_x >= end_x || start_y >= end_y)
+        return;
     // Source may alias destination; snapshot only when necessary.
-    const std::vector<std::uint16_t> snapshot = &destination == &source ? source.pixels : std::vector<std::uint16_t>{};
-    const auto& input = &destination == &source ? snapshot : source.pixels;
-    const std::vector<std::uint8_t> mask_snapshot = &destination == &source ? source.opaque_pixels : std::vector<std::uint8_t>{};
-    const auto& opacity = &destination == &source ? mask_snapshot : source.opaque_pixels;
+    const std::vector<std::uint16_t> snapshot =
+        &destination == &source ? source.pixels : std::vector<std::uint16_t>{};
+    const auto &input = &destination == &source ? snapshot : source.pixels;
+    const std::vector<std::uint8_t> mask_snapshot =
+        &destination == &source ? source.opaque_pixels : std::vector<std::uint8_t>{};
+    const auto &opacity = &destination == &source ? mask_snapshot : source.opaque_pixels;
     for (auto row = start_y; row < end_y; ++row) {
         for (auto column = start_x; column < end_x; ++column) {
             const auto source_index = static_cast<std::size_t>((row - top) * source.width + column - left);
@@ -87,7 +92,8 @@ void blit(Image& destination, const Image& source, int x, int y, Rect clip, Tran
             if (transparency == Transparency::opaque || visible) {
                 const auto destination_index = static_cast<std::size_t>(row * destination.width + column);
                 destination.pixels[destination_index] = color;
-                if (!destination.opaque_pixels.empty()) destination.opaque_pixels[destination_index] = 1;
+                if (!destination.opaque_pixels.empty())
+                    destination.opaque_pixels[destination_index] = 1;
             }
         }
     }
@@ -98,7 +104,7 @@ std::uint16_t rgb555_to_rgb565(std::uint16_t color) {
     return static_cast<std::uint16_t>((color & 0x001fU) | ((static_cast<unsigned>(color) << 1U) & 0xffc0U));
 }
 
-std::vector<std::uint32_t> to_argb8888(const Image& image) {
+std::vector<std::uint32_t> to_argb8888(const Image &image) {
     validate(image);
     std::vector<std::uint32_t> result;
     result.reserve(image.pixels.size());
@@ -112,15 +118,18 @@ std::vector<std::uint32_t> to_argb8888(const Image& image) {
     return result;
 }
 
-void write_ppm(const Image& image, const std::filesystem::path& path) {
+void write_ppm(const Image &image, const std::filesystem::path &path) {
     const auto rgba = to_argb8888(image);
     std::ofstream output(path, std::ios::binary);
-    if (!output) throw std::runtime_error("cannot create image: " + path.string());
+    if (!output)
+        throw std::runtime_error("cannot create image: " + path.string());
     output << "P6\n" << image.width << ' ' << image.height << "\n255\n";
     for (const auto color : rgba) {
-        const char rgb[] = {static_cast<char>((color >> 16) & 255), static_cast<char>((color >> 8) & 255), static_cast<char>(color & 255)};
+        const char rgb[] = {static_cast<char>((color >> 16) & 255), static_cast<char>((color >> 8) & 255),
+                            static_cast<char>(color & 255)};
         output.write(rgb, 3);
     }
-    if (!output) throw std::runtime_error("failed to write image: " + path.string());
+    if (!output)
+        throw std::runtime_error("failed to write image: " + path.string());
 }
 } // namespace rich4::graphics

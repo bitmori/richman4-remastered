@@ -6,7 +6,7 @@
 
 namespace rich4::calendar {
 namespace {
-constexpr std::array<std::uint8_t, 12> normal_month_days{31,28,31,30,31,30,31,31,30,31,30,31};
+constexpr std::array<std::uint8_t, 12> normal_month_days{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 constexpr std::int32_t epoch_year = 1998;
 constexpr std::int32_t maximum_year = 65535;
 
@@ -36,8 +36,8 @@ bool is_valid(Date date) noexcept {
     if (date.year < epoch_year || date.month < 1 || date.month > 12 || date.day < 1) {
         return false;
     }
-    const auto month_length = date.month == 2 && is_leap_year(date.year)
-        ? 29 : normal_month_days[date.month - 1];
+    const auto month_length =
+        date.month == 2 && is_leap_year(date.year) ? 29 : normal_month_days[date.month - 1];
     return date.day <= month_length;
 }
 

@@ -22,15 +22,18 @@ std::size_t index_of(std::string_view text) {
         throw std::invalid_argument("expected a non-negative integer index");
     return result;
 }
-void write_bytes(const std::filesystem::path& path, std::span<const std::uint8_t> bytes) {
+void write_bytes(const std::filesystem::path &path, std::span<const std::uint8_t> bytes) {
     std::ofstream stream(path, std::ios::binary);
-    if (!stream) throw std::runtime_error("cannot create " + path.string());
-    stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    if (!stream) throw std::runtime_error("write failed: " + path.string());
+    if (!stream)
+        throw std::runtime_error("cannot create " + path.string());
+    stream.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!stream)
+        throw std::runtime_error("write failed: " + path.string());
 }
-std::vector<std::uint8_t> read_bytes(const std::filesystem::path& path) {
+std::vector<std::uint8_t> read_bytes(const std::filesystem::path &path) {
     std::ifstream input(path, std::ios::binary);
-    if (!input) throw std::runtime_error("cannot open " + path.string());
+    if (!input)
+        throw std::runtime_error("cannot open " + path.string());
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 void usage() {
@@ -42,33 +45,41 @@ void usage() {
               << "  rich4-tool terrain ARCHIVE.mkf ENTRY OUTPUT.ppm\n"
               << "  rich4-tool roundtrip-save INPUT.dat OUTPUT.dat\n";
 }
-}
+} // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     try {
-        if (argc < 3) { usage(); return 2; }
+        if (argc < 3) {
+            usage();
+            return 2;
+        }
         const std::string_view command(argv[1]);
         if (command == "roundtrip-save" && argc == 4) {
             const auto original = read_bytes(argv[2]);
             const auto save = rich4::SaveFile::decode(original);
             const auto encoded = save.encode();
-            if (original != encoded) throw std::runtime_error("save roundtrip changed bytes");
+            if (original != encoded)
+                throw std::runtime_error("save roundtrip changed bytes");
             write_bytes(argv[3], encoded);
             std::cout << "{\"bytes\":" << encoded.size() << ",\"identical\":true}\n";
             return 0;
         }
-        if (command != "inspect" && command != "dump" && command != "extract" && command != "frame" && command != "terrain") {
-            usage(); return 2;
+        if (command != "inspect" && command != "dump" && command != "extract" && command != "frame" &&
+            command != "terrain") {
+            usage();
+            return 2;
         }
         const rich4::assets::Archive archive(argv[2]);
         if (command == "inspect" && argc == 3) {
-            std::size_t compressed{}, decoded_bytes{}, graphical_entries{}, frames{}, pixels{}, grounds{}, tiles{};
+            std::size_t compressed{}, decoded_bytes{}, graphical_entries{}, frames{}, pixels{}, grounds{},
+                tiles{};
             for (std::size_t i = 0; i < archive.size(); ++i) {
-                const auto& entry = archive.metadata(i);
+                const auto &entry = archive.metadata(i);
                 compressed += entry.compressed() ? 1U : 0U;
                 decoded_bytes += entry.decoded_size;
                 const auto data = archive.decode(i);
-                const bool signature = data.size() >= 4 && data[0] == 'S' && data[3] == 0 &&
+                const bool signature =
+                    data.size() >= 4 && data[0] == 'S' && data[3] == 0 &&
                     ((data[1] == 'M' && data[2] == 'P') || (data[1] == 'P' && data[2] == 'R'));
                 if (signature) {
                     ++graphical_entries;
@@ -76,15 +87,17 @@ int main(int argc, char** argv) {
                     frames += parsed.entries.size();
                     for (std::size_t frame = 0; frame < parsed.entries.size(); ++frame)
                         pixels += rich4::graphics::decode_frame(data, frame).pixels.size();
-                } else if (data.size() >= 4 && data[0] == 'G' && data[1] == 'N' && data[2] == 'D' && data[3] == 0) {
+                } else if (data.size() >= 4 && data[0] == 'G' && data[1] == 'N' && data[2] == 'D' &&
+                           data[3] == 0) {
                     ++grounds;
                     tiles += rich4::terrain::parse_ground(data).tile_count();
                 }
             }
             std::cout << "{\"entries\":" << archive.size() << ",\"compressed\":" << compressed
-                      << ",\"decoded_bytes\":" << decoded_bytes << ",\"graphic_resources\":" << graphical_entries
-                      << ",\"frames\":" << frames << ",\"decoded_pixels\":" << pixels
-                      << ",\"ground_resources\":" << grounds << ",\"ground_tiles\":" << tiles << "}\n";
+                      << ",\"decoded_bytes\":" << decoded_bytes
+                      << ",\"graphic_resources\":" << graphical_entries << ",\"frames\":" << frames
+                      << ",\"decoded_pixels\":" << pixels << ",\"ground_resources\":" << grounds
+                      << ",\"ground_tiles\":" << tiles << "}\n";
         } else if (command == "dump" && argc == 4) {
             const std::filesystem::path directory(argv[3]);
             std::filesystem::create_directories(directory);
@@ -102,9 +115,12 @@ int main(int argc, char** argv) {
         } else if (command == "terrain" && argc == 5) {
             const auto ground = rich4::terrain::parse_ground(archive.decode(index_of(argv[3])));
             rich4::graphics::write_ppm(rich4::terrain::render_overview(ground), argv[4]);
-        } else { usage(); return 2; }
+        } else {
+            usage();
+            return 2;
+        }
         return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << "rich4-tool: " << error.what() << '\n';
         return 1;
     }

@@ -21,18 +21,20 @@ struct Image {
     std::vector<std::uint8_t> opaque_pixels;
 };
 
-struct Rect { int left{}, top{}, right{}, bottom{}; }; // right/bottom are exclusive
+struct Rect {
+    int left{}, top{}, right{}, bottom{};
+}; // right/bottom are exclusive
 enum class Transparency { opaque, source_key };
 
 Image decode_frame(std::span<const std::uint8_t> resource, std::size_t frame);
 Image make_canvas(int width, int height, std::uint16_t fill = 0);
 // Anchor positioning matches the source graph_st x/y semantics.
-void blit(Image& destination, const Image& source, int anchor_x, int anchor_y,
+void blit(Image &destination, const Image &source, int anchor_x, int anchor_y,
           Transparency transparency = Transparency::source_key);
-void blit(Image& destination, const Image& source, int anchor_x, int anchor_y,
-          Rect clip, Transparency transparency = Transparency::source_key);
+void blit(Image &destination, const Image &source, int anchor_x, int anchor_y, Rect clip,
+          Transparency transparency = Transparency::source_key);
 std::uint16_t rgb555_to_rgb565(std::uint16_t value);
-std::vector<std::uint32_t> to_argb8888(const Image& image);
-void write_ppm(const Image& image, const std::filesystem::path& path);
+std::vector<std::uint32_t> to_argb8888(const Image &image);
+void write_ppm(const Image &image, const std::filesystem::path &path);
 
 } // namespace rich4::graphics

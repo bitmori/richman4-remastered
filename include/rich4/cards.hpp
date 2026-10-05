@@ -14,7 +14,7 @@ struct CardTarget {
     // Actors/stocks are zero-based; properties retain 2001../4001.. map codes;
     // objects/cards/tools are one-based original IDs.
     std::uint16_t value = 0;
-    bool operator==(const CardTarget&) const = default;
+    bool operator==(const CardTarget &) const = default;
 };
 struct CardUse {
     std::uint8_t card_id = 0;
@@ -25,7 +25,9 @@ enum class CardUseStatus { used, cancelled, invalid, missing_callback };
 struct CardResult {
     CardUseStatus status = CardUseStatus::invalid;
     std::string message;
-    [[nodiscard]] bool used() const noexcept { return status == CardUseStatus::used; }
+    [[nodiscard]] bool used() const noexcept {
+        return status == CardUseStatus::used;
+    }
 };
 struct CardLookahead {
     std::vector<std::uint16_t> nodes;
@@ -59,13 +61,12 @@ struct CardCallbacks : EventCallbacks {
 [[nodiscard]] bool active_card(std::uint8_t id) noexcept;
 // Logical filter from 0x445e4d, plus the original viewport scan when supplied.
 // A UI must supply nearby_instances: card selectors do not enable map panning.
-[[nodiscard]] std::vector<CardTarget> legal_card_targets(const World&, std::size_t actor,
-                                                        std::uint8_t card_id,
-                                                        const CardCallbacks& = {});
-[[nodiscard]] CardResult apply_card(World&, Random&, std::size_t actor, const CardUse&,
-                                     const CardCallbacks& = {});
+[[nodiscard]] std::vector<CardTarget> legal_card_targets(const World &, std::size_t actor,
+                                                         std::uint8_t card_id, const CardCallbacks & = {});
+[[nodiscard]] CardResult apply_card(World &, Random &, std::size_t actor, const CardUse &,
+                                    const CardCallbacks & = {});
 // Original UI visit: scans at most eight cards; at most one is played. This is
 // separate from apply_card so manual actions never draw AI-only random values.
-[[nodiscard]] std::optional<CardUse> choose_ai_card(const World&, Random&, std::size_t actor,
-                                                    const CardCallbacks& = {}, CardAiMemory* = nullptr);
+[[nodiscard]] std::optional<CardUse> choose_ai_card(const World &, Random &, std::size_t actor,
+                                                    const CardCallbacks & = {}, CardAiMemory * = nullptr);
 } // namespace rich4

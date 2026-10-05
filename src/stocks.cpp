@@ -2,9 +2,9 @@
 // Derived from Iru Cai's asm/rich4_stocks.asm, original entries 0x428e23,
 // 0x428ec5, 0x429040 and 0x4294d5. No Windows ABI or host pointer fields.
 #include "rich4/stocks.hpp"
-#include "rich4/world.hpp"
-#include "rich4/random.hpp"
 #include "rich4/legacy_float.hpp"
+#include "rich4/random.hpp"
+#include "rich4/world.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -54,7 +54,7 @@ std::int32_t sale_proceeds(float quote, std::int32_t amount) {
     return integer > INT32_MAX ? INT32_MIN : static_cast<std::int32_t>(integer);
 }
 
-Commercial* linked_commercial(World& world, std::size_t stock) {
+Commercial *linked_commercial(World &world, std::size_t stock) {
     const auto id = world.stocks[stock].flags_4;
     if (id == 0) {
         return nullptr;
@@ -62,7 +62,7 @@ Commercial* linked_commercial(World& world, std::size_t stock) {
     if (id >= world.commercials.size()) {
         throw std::invalid_argument("stock refers to an absent commercial");
     }
-    auto& commercial = world.commercials[id];
+    auto &commercial = world.commercials[id];
     for (const auto owner : commercial.shareholder_order) {
         if (owner > world.players.size()) {
             throw std::invalid_argument("commercial shareholder rank refers to an absent player");
@@ -71,12 +71,11 @@ Commercial* linked_commercial(World& world, std::size_t stock) {
     return &commercial;
 }
 
-bool update_commercial_owner(World& world, Commercial* commercial,
-                             std::size_t player, std::size_t stock) {
+bool update_commercial_owner(World &world, Commercial *commercial, std::size_t player, std::size_t stock) {
     if (!commercial) {
         return false;
     }
-    auto& order = commercial->shareholder_order;
+    auto &order = commercial->shareholder_order;
     const auto owner_code = static_cast<std::uint8_t>(player + 1);
     // Original memcpy moves at most three bytes forward within this four-byte
     // list. Spell out the overlap-safe operation rather than copy raw structs.
@@ -109,7 +108,7 @@ bool update_commercial_owner(World& world, Commercial* commercial,
 
 } // namespace
 
-bool update_commercial_owner(World& world, std::size_t player, std::size_t stock) {
+bool update_commercial_owner(World &world, std::size_t player, std::size_t stock) {
     if (world.players.size() > 4 || player >= world.players.size() || stock >= world.stocks.size()) {
         throw std::out_of_range("commercial shareholder player or stock index out of range");
     }
@@ -124,23 +123,29 @@ float adjusted_price(float previous, float percent) {
     // Explicit binary32 stores mirror the original stack slots. The tick is
     // selected using the unrounded candidate, and rounds the CHANGE relative
     // to the previous quote, not the absolute quote to a decimal grid.
-    const float candidate = ((Extended::from(100) + Extended::from(percent)) /
-                             Extended::from(100) * Extended::from(previous)).single();
+    const float candidate =
+        ((Extended::from(100) + Extended::from(percent)) / Extended::from(100) * Extended::from(previous))
+            .single();
     const float change = (percent > 0 ? Extended::from(candidate) - Extended::from(previous)
-                                     : Extended::from(previous) - Extended::from(candidate)).single();
-    const double tick = candidate < 5 ? 0.01 : candidate < 15 ? 0.05 :
-                        candidate < 50 ? 0.1 : candidate < 150 ? 0.5 : 1.0;
+                                      : Extended::from(previous) - Extended::from(candidate))
+                             .single();
+    const double tick = candidate < 5     ? 0.01
+                        : candidate < 15  ? 0.05
+                        : candidate < 50  ? 0.1
+                        : candidate < 150 ? 0.5
+                                          : 1.0;
     const auto delta = Extended::from(change);
     const auto quantum = Extended::from(tick);
     const auto quotient = (delta / quantum).integer();
     const auto remainder = delta - quantum * Extended::from(quotient);
-    const float rounded = (percent > 0 ? Extended::from(candidate) - remainder
-                                      : Extended::from(candidate) + remainder).single();
+    const float rounded =
+        (percent > 0 ? Extended::from(candidate) - remainder : Extended::from(candidate) + remainder)
+            .single();
     return std::clamp(rounded, 1.0F, 9999.0F);
 }
 
-PriceTrend trend(const World& world, std::size_t stock) {
-    const auto& value = world.stocks.at(stock);
+PriceTrend trend(const World &world, std::size_t stock) {
+    const auto &value = world.stocks.at(stock);
     const auto previous = std::bit_cast<float>(value.float_bits[1]);
     const auto current = std::bit_cast<float>(value.float_bits[2]);
     if (current > previous) {
@@ -152,15 +157,15 @@ PriceTrend trend(const World& world, std::size_t stock) {
     return PriceTrend::unchanged;
 }
 
-PurchaseResult buy_stock(World& world, std::size_t player, std::size_t stock,
-                         std::int32_t amount, bool from_market) {
+PurchaseResult buy_stock(World &world, std::size_t player, std::size_t stock, std::int32_t amount,
+                         bool from_market) {
     if (world.players.size() > 4 || player >= world.players.size() || stock >= world.stocks.size()) {
         throw std::out_of_range("stock purchase player or stock index out of range");
     }
-    auto& account = world.players[player];
-    auto& holding = account.stocks[stock];
-    auto& company = world.stocks[stock];
-    auto* commercial = linked_commercial(world, stock);
+    auto &account = world.players[player];
+    auto &holding = account.stocks[stock];
+    auto &company = world.stocks[stock];
+    auto *commercial = linked_commercial(world, stock);
     if (amount <= 0 || holding.amount < 0 || amount > INT32_MAX - holding.amount) {
         throw std::invalid_argument("stock purchase requires a positive nonoverflowing quantity");
     }
@@ -198,29 +203,28 @@ PurchaseResult buy_stock(World& world, std::size_t player, std::size_t stock,
     return {cost, update_commercial_owner(world, commercial, player, stock)};
 }
 
-SaleResult sell_stock(World& world, std::size_t player, std::size_t stock,
-                      std::int32_t amount, bool credit_bank) {
+SaleResult sell_stock(World &world, std::size_t player, std::size_t stock, std::int32_t amount,
+                      bool credit_bank) {
     if (world.players.size() > 4 || player >= world.players.size() || stock >= world.stocks.size()) {
         throw std::out_of_range("stock sale player or stock index out of range");
     }
-    auto& holding = world.players[player].stocks[stock];
+    auto &holding = world.players[player].stocks[stock];
     if (amount < 0 || amount > holding.amount) {
         throw std::invalid_argument("stock sale amount exceeds available holdings");
     }
-    auto& company = world.stocks[stock];
+    auto &company = world.stocks[stock];
     const auto proceeds = sale_proceeds(std::bit_cast<float>(company.float_bits[2]), amount);
-    auto* commercial = linked_commercial(world, stock);
+    auto *commercial = linked_commercial(world, stock);
     holding.amount -= amount;
     if (holding.amount == 0) {
         holding.raw_cost_basis = 0;
     }
     // ADD word retains the original low 16 bits, independently of share count.
-    company.shares_available = static_cast<std::uint16_t>(company.shares_available +
-                                                         static_cast<std::uint32_t>(amount));
-    company.flags_10 = static_cast<std::uint16_t>(company.flags_10 +
-                                                 static_cast<std::uint32_t>(amount));
+    company.shares_available =
+        static_cast<std::uint16_t>(company.shares_available + static_cast<std::uint32_t>(amount));
+    company.flags_10 = static_cast<std::uint16_t>(company.flags_10 + static_cast<std::uint32_t>(amount));
     if (credit_bank) {
-        auto& bank = world.players[player].state.bank_balance;
+        auto &bank = world.players[player].state.bank_balance;
         bank = add_wrap(bank, proceeds);
     } else {
         world.public_fund = add_wrap(world.public_fund, proceeds);
@@ -228,7 +232,7 @@ SaleResult sell_stock(World& world, std::size_t player, std::size_t stock,
     return {proceeds, update_commercial_owner(world, commercial, player, stock)};
 }
 
-std::size_t update_stocks(World& world, unsigned selection) {
+std::size_t update_stocks(World &world, unsigned selection) {
     if (selection > world.stocks.size() || world.stock_history_cursor < 0 ||
         world.stock_history_cursor >= 144) {
         throw std::out_of_range("forced stock selection or history cursor out of range");
@@ -238,7 +242,7 @@ std::size_t update_stocks(World& world, unsigned selection) {
     const std::size_t end = selection == 0 ? world.stocks.size() : selection;
     std::size_t updated = 0;
     for (std::size_t index = first; index < end; ++index) {
-        auto& stock = world.stocks[index];
+        auto &stock = world.stocks[index];
         if (stock.news_movement == 0) {
             continue;
         }
@@ -252,19 +256,18 @@ std::size_t update_stocks(World& world, unsigned selection) {
     return updated;
 }
 
-std::int32_t player_wealth(const World& world, std::size_t player) {
+std::int32_t player_wealth(const World &world, std::size_t player) {
     if (player >= world.players.size()) {
         throw std::out_of_range("wealth player index out of range");
     }
-    const auto& account = world.players[player];
+    const auto &account = world.players[player];
     auto total = add_wrap(account.state.cash, account.state.bank_balance);
     total = std::bit_cast<std::int32_t>(std::bit_cast<std::uint32_t>(total) -
-                                       std::bit_cast<std::uint32_t>(account.state.loan));
+                                        std::bit_cast<std::uint32_t>(account.state.loan));
     for (std::size_t stock = 0; stock < world.stocks.size(); ++stock) {
         const auto quote = std::bit_cast<float>(world.stocks[stock].float_bits[2]);
         const auto amount = account.stocks[stock].amount;
-        if (!std::isfinite(quote) || quote < 0 || quote > 10000 || amount < 0 ||
-            (quote != 0 && quote < 1)) {
+        if (!std::isfinite(quote) || quote < 0 || quote > 10000 || amount < 0 || (quote != 0 && quote < 1)) {
             throw std::invalid_argument("wealth requires valid market quotes and nonnegative holdings");
         }
         // In the original FILD total / FSTP float loses low integer bits before
@@ -287,14 +290,14 @@ std::int32_t player_wealth(const World& world, std::size_t player) {
     }
     const auto owner = player + 1;
     for (std::size_t id = 1; id < world.lands.size(); ++id) {
-        const auto& land = world.lands[id];
+        const auto &land = world.lands[id];
         if (land.economy.owner_code == owner) {
             const auto levels = land.economy.chain_store != 0 ? 1 : land.economy.level;
             total = add_wrap(total, land.land_price + land.price_per_level * levels);
         }
     }
     for (std::size_t id = 1; id < world.facilities.size(); ++id) {
-        const auto& facility = world.facilities[id];
+        const auto &facility = world.facilities[id];
         if (facility.owner_code == owner) {
             total = add_wrap(total, facility.land_price + facility.price_per_level() * facility.level);
         }
@@ -302,18 +305,19 @@ std::int32_t player_wealth(const World& world, std::size_t player) {
     return total;
 }
 
-void refresh_trade_limits(World& world, Random& random) {
-    for (auto& stock : world.stocks) {
+void refresh_trade_limits(World &world, Random &random) {
+    for (auto &stock : world.stocks) {
         if (stock.shares_available <= 1000) {
             stock.flags_10 = stock.shares_available;
         } else {
             const auto fraction = Extended::from(random.next() % 2000 + 1000) / Extended::from(10000);
-            stock.flags_10 = static_cast<std::uint16_t>((fraction * Extended::from(stock.shares_available)).integer());
+            stock.flags_10 =
+                static_cast<std::uint16_t>((fraction * Extended::from(stock.shares_available)).integer());
         }
     }
 }
 
-bool daily_update(World& world, Random& random, bool calendar_holiday) {
+bool daily_update(World &world, Random &random, bool calendar_holiday) {
     if (calendar_holiday || world.news_effect_days != 0) {
         return false;
     }
@@ -325,7 +329,7 @@ bool daily_update(World& world, Random& random, bool calendar_holiday) {
     world.stock_market_movement_bits = std::bit_cast<std::uint32_t>(market);
     float total = 0;
     for (std::size_t index = 0; index < world.stocks.size(); ++index) {
-        auto& stock = world.stocks[index];
+        auto &stock = world.stocks[index];
         stock.float_bits[1] = stock.float_bits[2];
         const auto previous = std::bit_cast<float>(stock.float_bits[1]);
         float movement;
@@ -337,7 +341,8 @@ bool daily_update(World& world, Random& random, bool calendar_holiday) {
             const auto impulse = Extended::from(int(random.next()) - 16384) / Extended::from(1171);
             stock.raw_32 = std::bit_cast<std::uint32_t>(impulse.single());
             movement = (impulse * Extended::from(std::bit_cast<float>(stock.float_bits[3])) +
-                        Extended::from(std::bit_cast<float>(stock.float_bits[4]))).single();
+                        Extended::from(std::bit_cast<float>(stock.float_bits[4])))
+                           .single();
             movement = (Extended::from(movement) + Extended::from(market)).single();
             // Excessive prices damp positive moves and amplify negative moves;
             // undervalued prices do the opposite. Thresholds differ for linked
@@ -345,7 +350,7 @@ bool daily_update(World& world, Random& random, bool calendar_holiday) {
             float reference;
             float upper_multiple;
             double lower_multiple;
-            if (const auto* commercial = linked_commercial(world, index)) {
+            if (const auto *commercial = linked_commercial(world, index)) {
                 reference = (Extended::from(commercial->valuation) / Extended::from(10000)).single();
                 upper_multiple = 3;
                 lower_multiple = 0.85; // The original constant is binary64.
@@ -370,7 +375,8 @@ bool daily_update(World& world, Random& random, bool calendar_holiday) {
         stock.float_bits[4] = std::bit_cast<std::uint32_t>(movement);
         const auto current = adjusted_price(previous, movement);
         stock.float_bits[2] = std::bit_cast<std::uint32_t>(current);
-        world.stock_history_bits[index][static_cast<std::size_t>(world.stock_history_cursor)] = stock.float_bits[2];
+        world.stock_history_bits[index][static_cast<std::size_t>(world.stock_history_cursor)] =
+            stock.float_bits[2];
         total = (Extended::from(total) + Extended::from(current)).single();
     }
     world.stock_history_cursor = (world.stock_history_cursor + 1) % 144;

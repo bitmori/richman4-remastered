@@ -28,31 +28,30 @@ int floor_divide_32(int value) {
 }
 
 Point fractional_offset(Point position, std::uint8_t rotation) {
-    const auto& basis = fractional_basis[rotation];
+    const auto &basis = fractional_basis[rotation];
     const int x = static_cast<unsigned>(position.x) & 31U;
     const int y = static_cast<unsigned>(position.y) & 31U;
     return {floor_divide_32(basis[0] * x) + floor_divide_32(basis[2] * y),
             floor_divide_32(basis[1] * x) + floor_divide_32(basis[3] * y)};
 }
 
-void validate_camera(const Camera& camera) {
+void validate_camera(const Camera &camera) {
     if (camera.rotation > 7) {
         throw std::invalid_argument("board camera rotation must be 0 through 7");
     }
-    const auto& viewport = camera.viewport;
+    const auto &viewport = camera.viewport;
     if (viewport.left < 0 || viewport.top < 0 || viewport.right <= viewport.left ||
         viewport.bottom <= viewport.top || viewport.right > 8192 || viewport.bottom > 8192) {
-        throw std::invalid_argument(
-            "board viewport must be a positive rectangle within 8192 pixels");
+        throw std::invalid_argument("board viewport must be a positive rectangle within 8192 pixels");
     }
 }
 
-Point screen_center(const Camera& camera) {
+Point screen_center(const Camera &camera) {
     return {(camera.viewport.left + camera.viewport.right) / 2,
             (camera.viewport.top + camera.viewport.bottom) / 2};
 }
 
-Point grid_point(int x, int y, const Camera& camera) {
+Point grid_point(int x, int y, const Camera &camera) {
     return camera_grid[camera.rotation][static_cast<std::size_t>((y + 14) * 29 + x + 14)];
 }
 
@@ -69,12 +68,11 @@ int read_i16(std::span<const std::uint8_t> bytes, std::size_t offset) {
 }
 
 std::uint32_t read_u32(std::span<const std::uint8_t> bytes, std::size_t offset) {
-    return std::uint32_t(read_u16(bytes, offset)) |
-           (std::uint32_t(read_u16(bytes, offset + 2)) << 16);
+    return std::uint32_t(read_u16(bytes, offset)) | (std::uint32_t(read_u16(bytes, offset + 2)) << 16);
 }
 
-std::filesystem::path find_archive(const std::filesystem::path& directory, std::string name) {
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+std::filesystem::path find_archive(const std::filesystem::path &directory, std::string name) {
+    for (const auto &entry : std::filesystem::directory_iterator(directory)) {
         auto candidate = entry.path().filename().string();
         std::transform(candidate.begin(), candidate.end(), candidate.begin(),
                        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
@@ -106,7 +104,7 @@ std::vector<Placement> read_placements(std::span<const std::uint8_t> bytes, std:
     std::vector<Placement> result(count + 1);
     for (std::size_t i = 1; i <= count; ++i) {
         const auto record = bytes.subspan(offset + i * record_size, record_size);
-        auto& placement = result[i];
+        auto &placement = result[i];
         placement.position = {read_i16(record, 0), read_i16(record, 2)};
         if (table == 0) {
             placement.sprite = read_u16(record, 0x22);
@@ -126,7 +124,7 @@ std::vector<Placement> read_placements(std::span<const std::uint8_t> bytes, std:
     return result;
 }
 
-graphics::Rect effective_clip(const graphics::Image& image, const Camera& camera) {
+graphics::Rect effective_clip(const graphics::Image &image, const Camera &camera) {
     validate_camera(camera);
     if (image.width <= 0 || image.height <= 0 || image.width > 8192 || image.height > 8192 ||
         image.pixels.size() != std::size_t(image.width) * std::size_t(image.height)) {
@@ -136,11 +134,11 @@ graphics::Rect effective_clip(const graphics::Image& image, const Camera& camera
             std::min(camera.viewport.bottom, image.height)};
 }
 
-std::uint16_t owner_color(std::uint8_t owner, const Scene& scene) {
+std::uint16_t owner_color(std::uint8_t owner, const Scene &scene) {
     if (owner == 0) {
         return 0;
     }
-    for (const auto& player : scene.players) {
+    for (const auto &player : scene.players) {
         if (player.slot == std::size_t(owner - 1)) {
             return player.color;
         }
@@ -149,8 +147,8 @@ std::uint16_t owner_color(std::uint8_t owner, const Scene& scene) {
     return colors[(owner - 1) % colors.size()];
 }
 
-std::uint8_t owner_character(std::uint8_t owner, const Scene& scene) {
-    for (const auto& player : scene.players) {
+std::uint8_t owner_character(std::uint8_t owner, const Scene &scene) {
+    for (const auto &player : scene.players) {
         if (owner != 0 && player.slot == std::size_t(owner - 1)) {
             return player.character;
         }
@@ -158,9 +156,8 @@ std::uint8_t owner_character(std::uint8_t owner, const Scene& scene) {
     return 0;
 }
 
-Placement with_override(Placement placement, std::size_t id,
-                        std::span<const PropertyState> overrides) {
-    for (const auto& state : overrides) {
+Placement with_override(Placement placement, std::size_t id, std::span<const PropertyState> overrides) {
+    for (const auto &state : overrides) {
         if (state.id == id) {
             placement.owner = state.owner;
             placement.level = state.level;
@@ -173,12 +170,10 @@ Placement with_override(Placement placement, std::size_t id,
 
 } // namespace
 
-std::optional<Point> project(Point world, const Camera& camera) {
+std::optional<Point> project(Point world, const Camera &camera) {
     validate_camera(camera);
-    const std::int64_t tile_x =
-        std::int64_t(floor_divide_32(world.x)) - floor_divide_32(camera.center.x);
-    const std::int64_t tile_y =
-        std::int64_t(floor_divide_32(world.y)) - floor_divide_32(camera.center.y);
+    const std::int64_t tile_x = std::int64_t(floor_divide_32(world.x)) - floor_divide_32(camera.center.x);
+    const std::int64_t tile_y = std::int64_t(floor_divide_32(world.y)) - floor_divide_32(camera.center.y);
     if (tile_x < -14 || tile_x > 14 || tile_y < -14 || tile_y > 14) {
         return std::nullopt;
     }
@@ -206,7 +201,7 @@ struct Renderer::Impl {
     std::map<ResourceKey, SpriteResource> resources;
     std::map<FrameKey, graphics::Image> frames;
 
-    Impl(const std::filesystem::path& directory, std::uint8_t selected_map)
+    Impl(const std::filesystem::path &directory, std::uint8_t selected_map)
         : map_id(selected_map), map_archive(find_archive(directory, "map.mkf")),
           data_archive(find_archive(directory, "data.mkf")),
           ground(terrain::parse_ground(map_archive.decode(selected_map * 2))) {
@@ -216,24 +211,22 @@ struct Renderer::Impl {
         }
     }
 
-    SpriteResource& resource(bool data, std::size_t index) {
+    SpriteResource &resource(bool data, std::size_t index) {
         const ResourceKey key{data, index};
         if (const auto found = resources.find(key); found != resources.end()) {
             return found->second;
         }
         auto bytes = (data ? data_archive : map_archive).decode(index);
         auto layout = assets::parse_graphics(bytes);
-        return resources.emplace(key, SpriteResource{std::move(bytes), std::move(layout)})
-            .first->second;
+        return resources.emplace(key, SpriteResource{std::move(bytes), std::move(layout)}).first->second;
     }
 
-    const graphics::Image& frame(bool data, std::size_t index, std::size_t number,
-                                 int accent = -1) {
+    const graphics::Image &frame(bool data, std::size_t index, std::size_t number, int accent = -1) {
         const FrameKey key{data, index, number, accent};
         if (const auto found = frames.find(key); found != frames.end()) {
             return found->second;
         }
-        const auto& source = resource(data, index);
+        const auto &source = resource(data, index);
         if (number >= source.layout.entries.size()) {
             throw assets::AssetError("board sprite frame outside original resource");
         }
@@ -241,7 +234,7 @@ struct Renderer::Impl {
         // The original changes only SPR palette slot 255 for property ownership.
         // Preserve the immutable resource and transparent slot zero separately.
         if (accent >= 0 && source.layout.kind == assets::GraphicsKind::spr) {
-            const auto& entry = source.layout.entries[number];
+            const auto &entry = source.layout.entries[number];
             for (std::size_t i = 0; i < image.pixels.size(); ++i) {
                 if (source.bytes[entry.offset + i] == 255) {
                     image.pixels[i] = static_cast<std::uint16_t>(accent);
@@ -251,7 +244,9 @@ struct Renderer::Impl {
         return frames.emplace(key, std::move(image)).first->second;
     }
 
-    std::size_t facility_base() const { return map_id < 4 ? 0x57 : 0x68 + (map_id - 4) * 17; }
+    std::size_t facility_base() const {
+        return map_id < 4 ? 0x57 : 0x68 + (map_id - 4) * 17;
+    }
 
     std::size_t scenery_resource(std::uint16_t id) const {
         if (id < 5) {
@@ -270,15 +265,15 @@ struct Renderer::Impl {
     }
 };
 
-Renderer::Renderer(const std::filesystem::path& directory, std::uint8_t map_id) {
+Renderer::Renderer(const std::filesystem::path &directory, std::uint8_t map_id) {
     if (map_id > 7) {
         throw std::invalid_argument("global board map id must be 0 through 7");
     }
     impl_ = std::make_unique<Impl>(directory, map_id);
 }
 Renderer::~Renderer() = default;
-Renderer::Renderer(Renderer&&) noexcept = default;
-Renderer& Renderer::operator=(Renderer&&) noexcept = default;
+Renderer::Renderer(Renderer &&) noexcept = default;
+Renderer &Renderer::operator=(Renderer &&) noexcept = default;
 
 std::optional<Point> Renderer::node_position(std::uint32_t id) const {
     if (id == 0 || id >= impl_->placements[0].size()) {
@@ -287,20 +282,23 @@ std::optional<Point> Renderer::node_position(std::uint32_t id) const {
     return impl_->placements[0][id].position;
 }
 
-std::size_t Renderer::node_count() const noexcept { return impl_->placements[0].size() - 1; }
-std::uint8_t Renderer::map_id() const noexcept { return impl_->map_id; }
+std::size_t Renderer::node_count() const noexcept {
+    return impl_->placements[0].size() - 1;
+}
+std::uint8_t Renderer::map_id() const noexcept {
+    return impl_->map_id;
+}
 
-RenderStats Renderer::render_ground(graphics::Image& destination, const Camera& camera) {
+RenderStats Renderer::render_ground(graphics::Image &destination, const Camera &camera) {
     const auto clip = effective_clip(destination, camera);
     RenderStats stats;
     if (clip.right <= clip.left || clip.bottom <= clip.top) {
         return stats;
     }
-    const auto& ground = impl_->ground;
+    const auto &ground = impl_->ground;
     for (int y = clip.top; y < clip.bottom; ++y) {
         std::fill(destination.pixels.begin() + (y * destination.width + clip.left),
-                  destination.pixels.begin() + (y * destination.width + clip.right),
-                  ground.palette[0]);
+                  destination.pixels.begin() + (y * destination.width + clip.right), ground.palette[0]);
     }
     const auto center = screen_center(camera);
     const auto fraction = fractional_offset(camera.center, camera.rotation);
@@ -311,10 +309,9 @@ RenderStats Renderer::render_ground(graphics::Image& destination, const Camera& 
         if (offset.y == -128) {
             break;
         }
-        const std::array<Point, 4> corners{grid_point(offset.x, offset.y, camera),
-                                           grid_point(offset.x + 1, offset.y, camera),
-                                           grid_point(offset.x + 1, offset.y + 1, camera),
-                                           grid_point(offset.x, offset.y + 1, camera)};
+        const std::array<Point, 4> corners{
+            grid_point(offset.x, offset.y, camera), grid_point(offset.x + 1, offset.y, camera),
+            grid_point(offset.x + 1, offset.y + 1, camera), grid_point(offset.x, offset.y + 1, camera)};
         terrain::Quad quad;
         for (std::size_t i = 0; i < quad.size(); ++i) {
             quad[i] = {static_cast<std::int16_t>(corners[i].y + center.y + fraction.y),
@@ -323,17 +320,15 @@ RenderStats Renderer::render_ground(graphics::Image& destination, const Camera& 
         const auto tile_x = std::int64_t(center_tile_x) + offset.x;
         const auto tile_y = std::int64_t(center_tile_y) + offset.y;
         std::span<const std::uint8_t, terrain::tile_pixels> texture = outside;
-        if (tile_x >= 0 && tile_x < ground.width_tiles && tile_y >= 0 &&
-            tile_y < ground.height_tiles) {
-            const auto tile_index =
-                ground.tile_indices[std::size_t(tile_y * ground.width_tiles + tile_x)];
+        if (tile_x >= 0 && tile_x < ground.width_tiles && tile_y >= 0 && tile_y < ground.height_tiles) {
+            const auto tile_index = ground.tile_indices[std::size_t(tile_y * ground.width_tiles + tile_x)];
             texture = ground.tile(tile_index);
         }
         terrain::draw_tile(destination, texture, ground.palette, quad, clip);
         ++stats.ground_tiles;
     }
     for (std::size_t i = 1; i < impl_->placements[0].size(); ++i) {
-        const auto& marker = impl_->placements[0][i];
+        const auto &marker = impl_->placements[0][i];
         if (marker.sprite == 0) {
             continue;
         }
@@ -346,14 +341,13 @@ RenderStats Renderer::render_ground(graphics::Image& destination, const Camera& 
     return stats;
 }
 
-RenderStats Renderer::render(graphics::Image& destination, const Scene& scene,
-                             const Camera& camera) {
+RenderStats Renderer::render(graphics::Image &destination, const Scene &scene, const Camera &camera) {
     auto stats = render_ground(destination, camera);
     const auto clip = effective_clip(destination, camera);
     struct DrawCommand {
         Point anchor;
         int priority;
-        const graphics::Image* image;
+        const graphics::Image *image;
     };
     std::vector<DrawCommand> commands;
     const auto enqueue = [&](Point world, bool data, std::size_t resource, std::size_t frame,
@@ -363,38 +357,42 @@ RenderStats Renderer::render(graphics::Image& destination, const Scene& scene,
         }
     };
 
-    for (const auto& player : scene.players) {
+    for (const auto &player : scene.players) {
         if (player.character >= 12 || player.direction > 7 || player.traffic_method > 3) {
             throw std::invalid_argument("invalid board player sprite selection");
         }
-        const unsigned pose = player.injured ? 18U : player.sleepwalking ? 16U + unsigned(player.walking)
-            : player.on_water ? 13U + unsigned(player.walking)
-                              : player.traffic_method * 3U + unsigned(player.walking);
+        const unsigned pose = player.injured        ? 18U
+                              : player.sleepwalking ? 16U + unsigned(player.walking)
+                              : player.on_water     ? 13U + unsigned(player.walking)
+                                                    : player.traffic_method * 3U + unsigned(player.walking);
         const std::size_t resource_index = 0x80U + player.character * 21U + pose;
-        const auto& resource = impl_->resource(true, resource_index);
+        const auto &resource = impl_->resource(true, resource_index);
         const auto frames_per_direction = resource.layout.entries.size() / 8;
         if (frames_per_direction == 0) {
             throw assets::AssetError("player sprite has fewer than eight directional frames");
         }
         const auto direction = std::size_t((player.direction + 8 - camera.rotation) & 7);
-        const auto frame =
-            direction * frames_per_direction + player.animation_frame % frames_per_direction;
+        const auto frame = direction * frames_per_direction + player.animation_frame % frames_per_direction;
         enqueue(player.position, true, resource_index, frame, player.active ? 13 : 12);
     }
-    for (const auto& actor : scene.special_players) {
+    for (const auto &actor : scene.special_players) {
         if (actor.slot < 4 || actor.slot > 8 || actor.direction > 7) {
             throw std::invalid_argument("invalid board special actor selection");
         }
-        const auto pose = actor.sleepwalking ? (actor.walking ? 3U : 0U) : actor.on_water ? 2U : actor.walking ? 1U : 0U;
-        const std::size_t index = actor.slot == 8 ? 0x209U + unsigned(actor.walking)
-                                                : 0x16cU + actor.slot * 4U + pose;
+        const auto pose = actor.sleepwalking ? (actor.walking ? 3U : 0U)
+                          : actor.on_water   ? 2U
+                          : actor.walking    ? 1U
+                                             : 0U;
+        const std::size_t index =
+            actor.slot == 8 ? 0x209U + unsigned(actor.walking) : 0x16cU + actor.slot * 4U + pose;
         const auto count = impl_->resource(true, index).layout.entries.size() / 8;
-        if (count == 0) throw assets::AssetError("special actor sprite has fewer than eight directions");
+        if (count == 0)
+            throw assets::AssetError("special actor sprite has fewer than eight directions");
         const auto direction = std::size_t((actor.direction + 8 - camera.rotation) & 7);
         enqueue(actor.position, true, index, direction * count + actor.animation_frame % count,
                 actor.active ? 13 : 12);
     }
-    for (const auto& object : scene.objects) {
+    for (const auto &object : scene.objects) {
         if (object.kind == 0 || object.kind > 20 || object.direction > 7) {
             throw std::invalid_argument("invalid board object sprite selection");
         }
@@ -426,8 +424,8 @@ RenderStats Renderer::render(graphics::Image& destination, const Scene& scene,
                 if (property.level > 5) {
                     throw std::invalid_argument("land building level exceeds five");
                 }
-                resource = property.type ? 0x4f + impl_->map_id
-                                         : 0x27 + impl_->map_id * 5 + property.level - 1;
+                resource =
+                    property.type ? 0x4f + impl_->map_id : 0x27 + impl_->map_id * 5 + property.level - 1;
             } else {
                 const auto base = impl_->facility_base();
                 switch (property.type) {
@@ -453,8 +451,7 @@ RenderStats Renderer::render(graphics::Image& destination, const Scene& scene,
                     throw std::invalid_argument("facility level exceeds original sprite range");
                 }
             }
-            enqueue(property.position, false, resource, direction, 0,
-                    owner_color(property.owner, scene));
+            enqueue(property.position, false, resource, direction, 0, owner_color(property.owner, scene));
         }
     }
     for (std::size_t table = 3; table <= 4; ++table) {
@@ -472,15 +469,15 @@ RenderStats Renderer::render(graphics::Image& destination, const Scene& scene,
     // The original signed16 sort key is (screen_y << 4) | category. Its
     // insertion order is players, objects, lands, facilities, companies, scenery.
     // Stable ties remove the platform dependence of the original qsort.
-    const auto depth_key = [](const DrawCommand& command) {
+    const auto depth_key = [](const DrawCommand &command) {
         const auto bits = ((static_cast<unsigned>(command.anchor.y) << 4) & 0xfff0U) |
                           static_cast<unsigned>(command.priority);
         return bits >= 0x8000U ? int(bits) - 0x10000 : int(bits);
     };
-    std::stable_sort(commands.begin(), commands.end(), [&](const auto& first, const auto& second) {
+    std::stable_sort(commands.begin(), commands.end(), [&](const auto &first, const auto &second) {
         return depth_key(first) < depth_key(second);
     });
-    for (const auto& command : commands) {
+    for (const auto &command : commands) {
         graphics::blit(destination, *command.image, command.anchor.x, command.anchor.y, clip);
         ++stats.sprites;
     }

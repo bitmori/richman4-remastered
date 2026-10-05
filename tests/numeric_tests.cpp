@@ -13,7 +13,7 @@
 namespace {
 using rich4::numeric::Extended;
 
-void check(bool condition, const char* description) {
+void check(bool condition, const char *description) {
     if (!condition) {
         throw std::runtime_error(description);
     }
@@ -21,11 +21,16 @@ void check(bool condition, const char* description) {
 
 Extended expression(unsigned operation, double a, double b, double c) {
     switch (operation) {
-    case 0: return (Extended::from(a) + Extended::from(b)) * Extended::from(c);
-    case 1: return (Extended::from(a) - Extended::from(b)) / Extended::from(c);
-    case 2: return (Extended::from(a) * Extended::from(b)) + Extended::from(c);
-    case 3: return (Extended::from(a) / Extended::from(b)) - Extended::from(c);
-    default: throw std::runtime_error("unknown numeric probe operation");
+    case 0:
+        return (Extended::from(a) + Extended::from(b)) * Extended::from(c);
+    case 1:
+        return (Extended::from(a) - Extended::from(b)) / Extended::from(c);
+    case 2:
+        return (Extended::from(a) * Extended::from(b)) + Extended::from(c);
+    case 3:
+        return (Extended::from(a) / Extended::from(b)) - Extended::from(c);
+    default:
+        throw std::runtime_error("unknown numeric probe operation");
     }
 }
 
@@ -34,7 +39,8 @@ void unit_tests() {
     const auto large = Extended::from(0x1p53);
     check(((large + one) - large).integer() == 1, "preserve integer bit beyond binary64 precision");
     check((large + one).double_precision() == 0x1p53, "binary64 midpoint ties to even");
-    check((large + Extended::from(3)).double_precision() == 0x1p53 + 4, "binary64 midpoint odd rounds upward");
+    check((large + Extended::from(3)).double_precision() == 0x1p53 + 4,
+          "binary64 midpoint odd rounds upward");
     const auto huge = Extended::from(0x1p64);
     check(((huge + one) - huge).integer() == 0, "arithmetic rounds at x87 precision");
     check(((huge + Extended::from(3)) - huge).integer() == 4, "x87 midpoint ties to even");
@@ -45,7 +51,8 @@ void unit_tests() {
     check(std::bit_cast<std::uint32_t>((midpoint - extra_bit).single()) == 0x3f800000,
           "binary32 spill below midpoint");
     const auto double_midpoint = one + Extended::from(0x1p-53);
-    check(std::bit_cast<std::uint64_t>((double_midpoint + extra_bit).double_precision()) == 0x3ff0000000000001ULL,
+    check(std::bit_cast<std::uint64_t>((double_midpoint + extra_bit).double_precision()) ==
+              0x3ff0000000000001ULL,
           "binary64 spill retains extended bit above midpoint");
     check((-Extended::from(100.9)).integer() == -100, "negative integer conversion truncates toward zero");
     check(Extended::from(2147483648.0).integer() == INT32_MIN, "positive integer overflow is x87 indefinite");
@@ -54,13 +61,13 @@ void unit_tests() {
     bool rejected = false;
     try {
         (void)(one / Extended::from(0));
-    } catch (const std::invalid_argument&) {
+    } catch (const std::invalid_argument &) {
         rejected = true;
     }
     check(rejected, "division by zero is a defined boundary");
 }
 
-void compare_probe(const char* path) {
+void compare_probe(const char *path) {
     std::ifstream file(path);
     check(bool(file), "cannot open independent x87 probe results");
     std::string line;
@@ -86,9 +93,9 @@ void compare_probe(const char* path) {
     check(count == 40000, "numeric probe is truncated");
     std::cout << "Independent x87 expressions: " << count << ", mismatches: 0\n";
 }
-}
+} // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     try {
         unit_tests();
         if (argc == 2) {
@@ -98,7 +105,7 @@ int main(int argc, char** argv) {
         }
         std::cout << "Numeric tests passed\n";
         return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;
     }

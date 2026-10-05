@@ -17,16 +17,17 @@ namespace {
 using Bytes = std::vector<std::uint8_t>;
 constexpr std::size_t kMapOffset = 0x274b;
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
+void require(bool condition, const std::string &message) {
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
-void put_u16(Bytes& bytes, std::size_t offset, std::uint16_t value) {
+void put_u16(Bytes &bytes, std::size_t offset, std::uint16_t value) {
     bytes.at(offset) = static_cast<std::uint8_t>(value);
     bytes.at(offset + 1) = static_cast<std::uint8_t>(value >> 8);
 }
 
-void put_u32(Bytes& bytes, std::size_t offset, std::uint32_t value) {
+void put_u32(Bytes &bytes, std::size_t offset, std::uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) {
         bytes.at(offset + i) = static_cast<std::uint8_t>(value >> (i * 8));
     }
@@ -90,19 +91,19 @@ Bytes fixture(std::uint32_t players = 4) {
 }
 
 template <typename Exception, typename Function>
-void expect_error(Function&& function, const std::string& label) {
+void expect_error(Function &&function, const std::string &label) {
     try {
         function();
-    } catch (const Exception&) {
+    } catch (const Exception &) {
         return;
     }
     throw std::runtime_error("Expected rejection: " + label);
 }
 
-void verify_regions(const rich4::SaveFile& save, std::size_t total_size) {
+void verify_regions(const rich4::SaveFile &save, std::size_t total_size) {
     std::size_t next = 0;
     bool found_raw = false;
-    for (const auto& region : save.regions()) {
+    for (const auto &region : save.regions()) {
         require(region.offset == next, "regions cover every byte once, without gaps");
         require(region.byte_size > 0, "nonempty region");
         next += region.byte_size;
@@ -121,22 +122,21 @@ void check_decode_and_roundtrip() {
     verify_regions(save, bytes.size());
     const auto header = save.header();
     require(header.signature == 0x26 && header.date.day == 29 && header.date.month == 2 &&
-            header.date.year == 2000 && header.map_id == 2 && header.stage_id == 1 &&
-            header.player_count == 4 && header.human_player_count == 1 &&
-            header.current_player == 3 && header.initial_fund == 200000 &&
-            header.price_index == 3, "header fields decode at the documented offsets");
+                header.date.year == 2000 && header.map_id == 2 && header.stage_id == 1 &&
+                header.player_count == 4 && header.human_player_count == 1 && header.current_player == 3 &&
+                header.initial_fund == 200000 && header.price_index == 3,
+            "header fields decode at the documented offsets");
     for (std::size_t i = 0; i < 4; ++i) {
         const auto player = save.player(i);
-        require(player.slot == i && player.color == 0x01234567 + i &&
-                player.character == 7 + i && player.cash == -7 &&
-                player.bank_balance == 100000 + static_cast<std::int32_t>(i) &&
-                player.loan == 12345 + static_cast<std::int32_t>(i) &&
-                player.special_finance == 6789 + static_cast<std::int32_t>(i),
+        require(player.slot == i && player.color == 0x01234567 + i && player.character == 7 + i &&
+                    player.cash == -7 && player.bank_balance == 100000 + static_cast<std::int32_t>(i) &&
+                    player.loan == 12345 + static_cast<std::int32_t>(i) &&
+                    player.special_finance == 6789 + static_cast<std::int32_t>(i),
                 "player financial and identity fields");
         require(player.x == 320 + i && player.y == 240 + i && player.node_id == 5 + i &&
-                player.last_node_id == 4 + i && player.direction == 1 &&
-                player.traffic_method == 2 && player.dice_count == 3 && player.sex == 1 &&
-                player.controller_flags == (i == 0 ? 5 : 2) && player.points == 90 + i,
+                    player.last_node_id == 4 + i && player.direction == 1 && player.traffic_method == 2 &&
+                    player.dice_count == 3 && player.sex == 1 &&
+                    player.controller_flags == (i == 0 ? 5 : 2) && player.points == 90 + i,
                 "player position and controller fields");
         for (std::size_t j = 0; j < 15; ++j) {
             require(player.cards[j] == j + 1 && player.tool_amounts[j] == j * 2,
@@ -145,8 +145,8 @@ void check_decode_and_roundtrip() {
     }
     const auto map = save.map_summary();
     require(map.nodes.count == 7 && map.nodes.byte_offset == 40 && map.nodes.record_bytes == 40 &&
-            map.lands.count == 3 && map.facilities.count == 1 && map.commercials.count == 2 &&
-            map.raw_reserved_table_4.count == 4 && map.byte_size == 976,
+                map.lands.count == 3 && map.facilities.count == 1 && map.commercials.count == 2 &&
+                map.raw_reserved_table_4.count == 4 && map.byte_size == 976,
             "map count/offset pairs and record strides");
 
     auto unaligned = bytes;
@@ -163,9 +163,8 @@ void check_decode_and_roundtrip() {
 
 void check_edits() {
     const auto bytes = fixture();
-    constexpr std::array<std::int32_t, 5> values{
-        0, -1, 123456789, std::numeric_limits<std::int32_t>::min(),
-        std::numeric_limits<std::int32_t>::max()};
+    constexpr std::array<std::int32_t, 5> values{0, -1, 123456789, std::numeric_limits<std::int32_t>::min(),
+                                                 std::numeric_limits<std::int32_t>::max()};
     for (std::size_t slot = 0; slot < 4; ++slot) {
         for (const auto value : values) {
             auto save = rich4::SaveFile::decode(bytes);
@@ -194,11 +193,10 @@ void check_edits() {
 void check_invalid_input() {
     const auto bytes = fixture(1);
     for (std::size_t size = 0; size < bytes.size(); ++size) {
-        expect_error<rich4::SaveError>([&] {
-            (void)rich4::SaveFile::decode(std::span(bytes).first(size));
-        }, "every truncated prefix");
+        expect_error<rich4::SaveError>([&] { (void)rich4::SaveFile::decode(std::span(bytes).first(size)); },
+                                       "every truncated prefix");
     }
-    const auto corrupt = [&](std::size_t offset, std::uint32_t value, const char* label) {
+    const auto corrupt = [&](std::size_t offset, std::uint32_t value, const char *label) {
         auto changed = bytes;
         put_u32(changed, offset, value);
         expect_error<rich4::SaveError>([&] { (void)rich4::SaveFile::decode(changed); }, label);
@@ -217,7 +215,7 @@ void check_invalid_input() {
     corrupt(kMapOffset + 12, 40, "tables overlap each other");
 }
 
-void verify_local_file(const char* path) {
+void verify_local_file(const char *path) {
     std::ifstream stream(path, std::ios::binary);
     require(stream.good(), std::string("Cannot read save: ") + path);
     const Bytes bytes{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
@@ -227,28 +225,29 @@ void verify_local_file(const char* path) {
     const auto header = save.header();
     std::cout << "Local save verified (read only): " << path << "\n"
               << "  bytes=" << bytes.size() << " date=" << header.date.year << '-'
-              << static_cast<unsigned>(header.date.month) << '-'
-              << static_cast<unsigned>(header.date.day) << " players=" << header.player_count
-              << " current=" << header.current_player << " nodes=" << save.map_summary().nodes.count << '\n';
+              << static_cast<unsigned>(header.date.month) << '-' << static_cast<unsigned>(header.date.day)
+              << " players=" << header.player_count << " current=" << header.current_player
+              << " nodes=" << save.map_summary().nodes.count << '\n';
     for (std::size_t i = 0; i < header.player_count; ++i) {
         const auto player = save.player(i);
         std::cout << "  slot=" << player.slot << " character=" << static_cast<unsigned>(player.character)
-                  << " cash=" << player.cash << " bank=" << player.bank_balance
-                  << " node=" << player.node_id << '\n';
+                  << " cash=" << player.cash << " bank=" << player.bank_balance << " node=" << player.node_id
+                  << '\n';
     }
 }
 
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     try {
         check_decode_and_roundtrip();
         check_edits();
         check_invalid_input();
-        for (int i = 1; i < argc; ++i) verify_local_file(argv[i]);
+        for (int i = 1; i < argc; ++i)
+            verify_local_file(argv[i]);
         std::cout << "Save codec tests passed\n";
         return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << "Save codec test failed: " << error.what() << '\n';
         return 1;
     }

@@ -8,8 +8,9 @@
 #include <stdexcept>
 
 namespace {
-void require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+void require(bool condition, const char *message) {
+    if (!condition)
+        throw std::runtime_error(message);
 }
 rich4::World world(std::size_t count = 3) {
     rich4::World value;
@@ -22,7 +23,7 @@ rich4::World world(std::size_t count = 3) {
     value.lands[1].economy.street_name = "road";
     value.facilities[1].land_price = 2000;
     for (std::size_t slot = 0; slot < count; ++slot) {
-        auto& player = value.players[slot].state;
+        auto &player = value.players[slot].state;
         player.slot = slot;
         player.controller_flags = 1;
         player.cash = 100000;
@@ -44,7 +45,8 @@ void start_price_and_eligibility() {
     require(session.decision()->player == 3, "initial auction cash/status eligibility");
     require(random.state() == 47, "human-only setup consumes no economic random draws");
     require(session.bid(rich4::AuctionAction::raise_100), "single human can raise");
-    require(session.finished() && session.result().winner == 3, "single eligible bidder wins after first raise");
+    require(session.finished() && session.result().winner == 3,
+            "single eligible bidder wins after first raise");
     require(value.players[3].state.cash == 94896, "initial value plus increment debited");
     require(value.public_fund == 5104, "unowned auction payment credited to public fund");
 }
@@ -69,7 +71,8 @@ void pass_raise_withdraw_and_settlement() {
     require(value.players[0].status.cumulative_spending == 2100 && value.public_fund == 2100,
             "auction accounting matches toll payment");
     require(value.lands[1].economy.owner_code == 1 && value.lands[1].economy.level == 2 &&
-            value.lands[1].temporary_state == 0x12, "sale changes ownership without resetting property effects");
+                value.lands[1].temporary_state == 0x12,
+            "sale changes ownership without resetting property effects");
     require(!session.bid(rich4::AuctionAction::raise_100), "finished auction cannot pay twice");
 }
 void no_sale_and_invalid_actions() {
@@ -92,8 +95,7 @@ void no_sale_and_invalid_actions() {
     require(empty.bid(rich4::AuctionAction::raise_100), "bid using exactly all available cash is legal");
     require(value.players[1].state.cash == 0 && value.players[1].state.bank_balance == 50000,
             "exact cash bid does not borrow from savings");
-    require(value.players[0].state.bank_balance == 51100 &&
-            value.players[0].status.cumulative_income == 1100,
+    require(value.players[0].state.bank_balance == 51100 && value.players[0].status.cumulative_income == 1100,
             "seller receives bank income, not cash");
 }
 void leases_and_facilities() {
@@ -143,14 +145,16 @@ void ai_draws_and_bid_limits() {
             battle.players[i].state.cash = static_cast<std::int32_t>(2000 + seed * (i + 1));
         }
         std::int64_t before = 0;
-        for (const auto& player : battle.players) before += player.state.cash;
+        for (const auto &player : battle.players)
+            before += player.state.cash;
         rich4::Random stream(seed);
         rich4::AuctionSession auction(battle, stream, 2001);
         unsigned steps = 0;
-        while (!auction.finished() && steps++ < 1000) require(auction.tick(), "AI auction must progress");
+        while (!auction.finished() && steps++ < 1000)
+            require(auction.tick(), "AI auction must progress");
         require(auction.finished(), "AI auction must terminate");
         std::int64_t after = battle.public_fund;
-        for (const auto& player : battle.players) {
+        for (const auto &player : battle.players) {
             after += player.state.cash;
             require(player.state.cash >= 0, "winner paid beyond available cash");
         }
@@ -167,7 +171,7 @@ int main() {
         leases_and_facilities();
         ai_draws_and_bid_limits();
         std::cout << "auction tests passed\n";
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;
     }

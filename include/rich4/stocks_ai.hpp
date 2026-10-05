@@ -20,7 +20,7 @@ struct Trade {
 // Original 0x42bf03 and 0x42c79f. These include their own probability/profile/
 // loan gates, so callers must not prefilter them or consume an extra RNG draw.
 // market_closed is the original news/calendar result, not a UI availability flag.
-[[nodiscard]] std::vector<Trade> buy(World&, Random&, std::size_t player, bool market_closed);
-[[nodiscard]] std::vector<Trade> sell(World&, Random&, std::size_t player, bool market_closed);
+[[nodiscard]] std::vector<Trade> buy(World &, Random &, std::size_t player, bool market_closed);
+[[nodiscard]] std::vector<Trade> sell(World &, Random &, std::size_t player, bool market_closed);
 } // namespace stocks_ai
 } // namespace rich4

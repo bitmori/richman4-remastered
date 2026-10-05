@@ -9,8 +9,8 @@
 
 namespace rich4::numeric {
 
-static_assert(sizeof(float) == 4 && sizeof(double) == 8 &&
-              std::numeric_limits<float>::is_iec559 && std::numeric_limits<double>::is_iec559);
+static_assert(sizeof(float) == 4 && sizeof(double) == 8 && std::numeric_limits<float>::is_iec559 &&
+              std::numeric_limits<double>::is_iec559);
 
 // Finite x87 arithmetic, rounded to its 64-bit significand after every
 // operation. ARM long double is only binary64, so it cannot preserve the
@@ -56,13 +56,13 @@ struct Extended {
         if (exponent_bits == 2047) {
             throw std::invalid_argument("nonfinite legacy floating arithmetic");
         }
-        const auto mantissa = (raw & 0xfffffffffffffULL) |
-                              (exponent_bits == 0 ? 0 : 0x10000000000000ULL);
-        return normalized(mantissa, exponent_bits == 0 ? -1074 : int(exponent_bits) - 1075,
-                          (raw >> 63) != 0);
+        const auto mantissa = (raw & 0xfffffffffffffULL) | (exponent_bits == 0 ? 0 : 0x10000000000000ULL);
+        return normalized(mantissa, exponent_bits == 0 ? -1074 : int(exponent_bits) - 1075, (raw >> 63) != 0);
     }
 
-    Extended operator-() const { return {significand, exponent, !negative}; }
+    Extended operator-() const {
+        return {significand, exponent, !negative};
+    }
 
     friend Extended operator+(Extended a, Extended b) {
         if (!a.significand) {
@@ -86,10 +86,12 @@ struct Extended {
             small = b.significand >> shift;
             small |= (Wide{b.significand} & ((Wide{1} << shift) - 1)) != 0;
         }
-        return normalized(a.negative == b.negative ? large + small : large - small,
-                          a.exponent - 3, a.negative);
+        return normalized(a.negative == b.negative ? large + small : large - small, a.exponent - 3,
+                          a.negative);
     }
-    friend Extended operator-(Extended a, Extended b) { return a + -b; }
+    friend Extended operator-(Extended a, Extended b) {
+        return a + -b;
+    }
     friend Extended operator*(Extended a, Extended b) {
         return normalized(Wide{a.significand} * b.significand, a.exponent + b.exponent,
                           a.negative != b.negative);
@@ -105,8 +107,7 @@ struct Extended {
         const Wide dividend = Wide{a.significand} << shift;
         Wide quotient = dividend / b.significand;
         const Wide doubled_remainder = (dividend % b.significand) * 2;
-        if (doubled_remainder > b.significand ||
-            (doubled_remainder == b.significand && (quotient & 1))) {
+        if (doubled_remainder > b.significand || (doubled_remainder == b.significand && (quotient & 1))) {
             ++quotient;
         }
         return normalized(quotient, a.exponent - b.exponent - static_cast<int>(shift),

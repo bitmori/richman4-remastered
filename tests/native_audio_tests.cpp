@@ -5,10 +5,9 @@
 #include <iostream>
 #include <stdexcept>
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     if (argc > 3) {
-        std::cerr
-            << "usage: native_audio_tests [original-asset-directory [soundbank.sf2-or-dls]]\n";
+        std::cerr << "usage: native_audio_tests [original-asset-directory [soundbank.sf2-or-dls]]\n";
         return 1;
     }
     // Force the device before constructing the mixer, even if the parent shell
@@ -26,8 +25,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("disabled mode touched audio");
         }
         if (argc == 1) {
-            std::cout
-                << "disabled audio lifecycle passed; supply original assets for PCM/MIDI tests\n";
+            std::cout << "disabled audio lifecycle passed; supply original assets for PCM/MIDI tests\n";
             return 0;
         }
         rich4::audio::Audio mixer(argv[1], true, argc == 3 ? argv[2] : "");
@@ -43,8 +41,8 @@ int main(int argc, char** argv) {
             SDL_Delay(5);
         }
         auto midi = mixer.statistics();
-        std::cout << "initial MIDI frames=" << midi.music_frames
-                  << " nonzero=" << midi.nonzero_samples << std::endl;
+        std::cout << "initial MIDI frames=" << midi.music_frames << " nonzero=" << midi.nonzero_samples
+                  << std::endl;
         if (midi.nonzero_samples == 0 || midi.music_frames < 24000) {
             throw std::runtime_error("MIDI did not produce PCM");
         }
@@ -78,19 +76,17 @@ int main(int argc, char** argv) {
         bool invalid = false;
         try {
             mixer.play_voice(12, 0);
-        } catch (const std::invalid_argument&) {
+        } catch (const std::invalid_argument &) {
             invalid = true;
         }
         if (!invalid) {
             throw std::runtime_error("invalid character accepted");
         }
-        std::cout << "driver=" << SDL_GetCurrentAudioDriver()
-                  << " rendered_frames=" << stats.rendered_frames
-                  << " nonzero_samples=" << stats.nonzero_samples
-                  << " music_frames=" << stats.music_frames << " effects=" << stats.effects_started
-                  << " voices=" << stats.voices_started << " completed=" << stats.clips_completed
-                  << " drained=yes playlist_wrap=yes\n";
-    } catch (const std::exception& error) {
+        std::cout << "driver=" << SDL_GetCurrentAudioDriver() << " rendered_frames=" << stats.rendered_frames
+                  << " nonzero_samples=" << stats.nonzero_samples << " music_frames=" << stats.music_frames
+                  << " effects=" << stats.effects_started << " voices=" << stats.voices_started
+                  << " completed=" << stats.clips_completed << " drained=yes playlist_wrap=yes\n";
+    } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;
     }

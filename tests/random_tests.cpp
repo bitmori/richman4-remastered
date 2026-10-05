@@ -10,26 +10,31 @@
 #include <string_view>
 
 namespace {
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+void check(bool condition, const char *message) {
+    if (!condition)
+        throw std::runtime_error(message);
 }
 std::array<std::uint32_t, 4> parse_row(std::string_view line) {
     std::array<std::uint32_t, 4> values{};
     for (std::size_t i = 0; i < values.size(); ++i) {
         const auto [end, error] = std::from_chars(line.data(), line.data() + line.size(), values[i]);
-        if (error != std::errc{}) throw std::runtime_error("invalid RNG golden number");
+        if (error != std::errc{})
+            throw std::runtime_error("invalid RNG golden number");
         line.remove_prefix(static_cast<std::size_t>(end - line.data()));
         if (i + 1 < values.size()) {
-            if (line.empty() || line.front() != ',') throw std::runtime_error("invalid RNG golden delimiter");
+            if (line.empty() || line.front() != ',')
+                throw std::runtime_error("invalid RNG golden delimiter");
             line.remove_prefix(1);
         }
     }
-    if (line != "" && line != "\r") throw std::runtime_error("unexpected RNG golden data");
+    if (line != "" && line != "\r")
+        throw std::runtime_error("unexpected RNG golden data");
     return values;
 }
-void compare_original(const char* path) {
+void compare_original(const char *path) {
     std::ifstream input(path);
-    if (!input) throw std::runtime_error("missing original RNG vectors");
+    if (!input)
+        throw std::runtime_error("missing original RNG vectors");
     std::string line;
     std::getline(input, line);
     if (line != "seed,index,return,state" && line != "seed,index,return,state\r")
@@ -37,8 +42,7 @@ void compare_original(const char* path) {
     rich4::Random random(0);
     std::uint32_t seed{}, step{};
     constexpr std::array<std::uint32_t, 12> seeds{
-        0, 1, 2, 3, 42, 12345, 0x7fffffffU, 0x80000000U,
-        0xfffffffeU, 0xffffffffU, 0x12345678U, 0xdeadbeefU};
+        0, 1, 2, 3, 42, 12345, 0x7fffffffU, 0x80000000U, 0xfffffffeU, 0xffffffffU, 0x12345678U, 0xdeadbeefU};
     std::set<std::uint32_t> remaining(seeds.begin(), seeds.end());
     std::size_t cases{};
     while (std::getline(input, line)) {
@@ -46,20 +50,23 @@ void compare_original(const char* path) {
         if (row[1] == 0) {
             check(cases == 0 || step == 1024, "truncated original RNG stream");
             check(remaining.erase(row[0]) == 1, "duplicate or unknown original RNG seed");
-            random.seed(row[0]); seed = row[0]; step = 0;
+            random.seed(row[0]);
+            seed = row[0];
+            step = 0;
         }
         check(row[0] == seed && row[1] == step, "nonsequential original RNG corpus");
         check(step < 1024, "too many steps in original RNG stream");
         check(random.next() == row[2], "original RNG result differs");
         check(random.state() == row[3], "original RNG state differs");
-        ++step; ++cases;
+        ++step;
+        ++cases;
     }
     check(remaining.empty() && step == 1024 && cases == 12288, "incomplete original RNG corpus");
     std::cout << cases << " original random steps matched\n";
 }
-}
+} // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     try {
         rich4::Random random(1);
         for (const auto expected : {16838, 5758, 10113, 17515, 31051})
@@ -75,11 +82,13 @@ int main(int argc, char** argv) {
         check(copy.next() == first.next(), "copied state must resume the same stream");
         first.seed(1);
         check(first.next() == 16838, "reseed must reset the full state");
-        if (argc == 2) compare_original(argv[1]);
-        else if (argc != 1) throw std::runtime_error("usage: random_tests [random.csv]");
+        if (argc == 2)
+            compare_original(argv[1]);
+        else if (argc != 1)
+            throw std::runtime_error("usage: random_tests [random.csv]");
         std::cout << "Random tests passed\n";
         return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << "random: " << error.what() << '\n';
         return 1;
     }

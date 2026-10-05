@@ -14,7 +14,7 @@ namespace rich4::board {
 
 struct Point {
     int x{}, y{};
-    friend bool operator==(const Point&, const Point&) = default;
+    friend bool operator==(const Point &, const Point &) = default;
 };
 
 struct Camera {
@@ -76,18 +76,18 @@ struct RenderStats {
 
 // Exact original lookup and fractional-coordinate rounding. Points outside the
 // original 29-by-29 camera neighborhood return nullopt, as the game culls them.
-[[nodiscard]] std::optional<Point> project(Point world, const Camera& camera);
+[[nodiscard]] std::optional<Point> project(Point world, const Camera &camera);
 
 class Renderer {
   public:
     // map_id is global: stage * 4 + map, in [0, 7]. MAP.MKF and DATA.MKF are
     // resolved without filename-case assumptions. No original EXE is loaded.
-    Renderer(const std::filesystem::path& asset_directory, std::uint8_t map_id);
+    Renderer(const std::filesystem::path &asset_directory, std::uint8_t map_id);
     ~Renderer();
-    Renderer(Renderer&&) noexcept;
-    Renderer& operator=(Renderer&&) noexcept;
-    Renderer(const Renderer&) = delete;
-    Renderer& operator=(const Renderer&) = delete;
+    Renderer(Renderer &&) noexcept;
+    Renderer &operator=(Renderer &&) noexcept;
+    Renderer(const Renderer &) = delete;
+    Renderer &operator=(const Renderer &) = delete;
 
     [[nodiscard]] std::optional<Point> node_position(std::uint32_t id) const;
     [[nodiscard]] std::size_t node_count() const noexcept;
@@ -95,8 +95,8 @@ class Renderer {
 
     // Paints only viewport; the application owns the toolbar and side panel.
     // Lazily caches decoded original sprites. Use one renderer per render thread.
-    RenderStats render(graphics::Image& destination, const Scene& scene, const Camera& camera);
-    RenderStats render_ground(graphics::Image& destination, const Camera& camera);
+    RenderStats render(graphics::Image &destination, const Scene &scene, const Camera &camera);
+    RenderStats render_ground(graphics::Image &destination, const Camera &camera);
 
   private:
     struct Impl;

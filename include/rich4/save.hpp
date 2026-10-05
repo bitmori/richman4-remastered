@@ -12,7 +12,7 @@
 namespace rich4 {
 
 class SaveError : public std::runtime_error {
-public:
+  public:
     using std::runtime_error::runtime_error;
 };
 
@@ -52,12 +52,12 @@ struct PlayerState {
     std::int32_t loan;
     std::int32_t special_finance;
     std::uint16_t points;
-    std::array<std::uint8_t, 15> cards; // Card IDs in inventory slot order.
+    std::array<std::uint8_t, 15> cards;        // Card IDs in inventory slot order.
     std::array<std::uint8_t, 15> tool_amounts; // Counts indexed by tool type.
 };
 
 struct MapTableSummary {
-    std::uint32_t count; // Excludes the record at index zero.
+    std::uint32_t count;       // Excludes the record at index zero.
     std::uint32_t byte_offset; // Relative to the map block, never a host pointer.
     std::uint32_t record_bytes;
 };
@@ -84,7 +84,7 @@ struct SaveRegion {
 // a running game's state, interpret every reserved field, or migrate its rules.
 // No serialized address is ever interpreted as a host pointer.
 class SaveFile {
-public:
+  public:
     static SaveFile decode(std::span<const std::uint8_t> bytes);
 
     [[nodiscard]] SaveHeader header() const;
@@ -98,7 +98,7 @@ public:
     void set_cash(std::size_t slot, std::int32_t value);
     void set_bank_balance(std::size_t slot, std::int32_t value);
 
-private:
+  private:
     SaveFile(std::vector<std::uint8_t> bytes, std::vector<SaveRegion> regions);
     [[nodiscard]] std::size_t player_offset(std::size_t slot) const;
 

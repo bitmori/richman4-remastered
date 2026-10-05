@@ -19,8 +19,8 @@ constexpr std::size_t kMapByteSize = 0x2747;
 constexpr std::size_t kMapBlock = 0x274b;
 constexpr std::size_t kSnapshotBytes = 0x2718;
 
-void require_range(std::span<const std::uint8_t> bytes, std::size_t offset,
-                   std::size_t size, const char* label) {
+void require_range(std::span<const std::uint8_t> bytes, std::size_t offset, std::size_t size,
+                   const char *label) {
     if (offset > bytes.size() || size > bytes.size() - offset) {
         throw SaveError(std::string("Truncated save region: ") + label);
     }
@@ -34,8 +34,7 @@ std::uint16_t read_u16(std::span<const std::uint8_t> bytes, std::size_t offset) 
 
 std::uint32_t read_u32(std::span<const std::uint8_t> bytes, std::size_t offset) {
     require_range(bytes, offset, 4, "32-bit field");
-    return static_cast<std::uint32_t>(bytes[offset]) |
-           (static_cast<std::uint32_t>(bytes[offset + 1]) << 8) |
+    return static_cast<std::uint32_t>(bytes[offset]) | (static_cast<std::uint32_t>(bytes[offset + 1]) << 8) |
            (static_cast<std::uint32_t>(bytes[offset + 2]) << 16) |
            (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
 }
@@ -44,7 +43,7 @@ std::int32_t read_i32(std::span<const std::uint8_t> bytes, std::size_t offset) {
     return std::bit_cast<std::int32_t>(read_u32(bytes, offset));
 }
 
-void write_i32(std::vector<std::uint8_t>& bytes, std::size_t offset, std::int32_t value) {
+void write_i32(std::vector<std::uint8_t> &bytes, std::size_t offset, std::int32_t value) {
     const auto bits = std::bit_cast<std::uint32_t>(value);
     for (unsigned i = 0; i < 4; ++i) {
         bytes[offset + i] = static_cast<std::uint8_t>(bits >> (8 * i));
@@ -56,20 +55,18 @@ MapSummary read_map_summary(std::span<const std::uint8_t> bytes) {
         return MapTableSummary{read_u32(bytes, kMapBlock + entry * 8),
                                read_u32(bytes, kMapBlock + entry * 8 + 4), stride};
     };
-    return {read_u32(bytes, kMapByteSize), table(0, 40), table(1, 52),
-            table(2, 56), table(3, 52), table(4, 28)};
+    return {
+        read_u32(bytes, kMapByteSize), table(0, 40), table(1, 52), table(2, 56), table(3, 52), table(4, 28)};
 }
 
-void validate_map(const MapSummary& map) {
-    const std::array tables{map.nodes, map.lands, map.facilities,
-                            map.commercials, map.raw_reserved_table_4};
+void validate_map(const MapSummary &map) {
+    const std::array tables{map.nodes, map.lands, map.facilities, map.commercials, map.raw_reserved_table_4};
     std::array<std::uint64_t, 5> ends{};
     for (std::size_t i = 0; i < tables.size(); ++i) {
-        const auto& table = tables[i];
+        const auto &table = tables[i];
         // Arithmetic is explicitly widened before count + 1, including on a
         // 32-bit build. Every table includes its original index-zero record.
-        ends[i] = table.byte_offset +
-                  (static_cast<std::uint64_t>(table.count) + 1) * table.record_bytes;
+        ends[i] = table.byte_offset + (static_cast<std::uint64_t>(table.count) + 1) * table.record_bytes;
         if (table.byte_offset < 40 || ends[i] > map.byte_size) {
             throw SaveError("Map table exceeds the serialized map block");
         }
@@ -168,10 +165,15 @@ SaveFile SaveFile::decode(std::span<const std::uint8_t> bytes) {
 }
 
 SaveHeader SaveFile::header() const {
-    return {read_u32(bytes_, 0), {bytes_[4], bytes_[5], read_u16(bytes_, 6)},
-            read_u16(bytes_, 8), read_u16(bytes_, 10), read_u32(bytes_, 12),
-            read_u32(bytes_, 0x1b0), read_u32(bytes_, kCurrentPlayer),
-            read_i32(bytes_, 0x268a), read_i32(bytes_, 0x268e)};
+    return {read_u32(bytes_, 0),
+            {bytes_[4], bytes_[5], read_u16(bytes_, 6)},
+            read_u16(bytes_, 8),
+            read_u16(bytes_, 10),
+            read_u32(bytes_, 12),
+            read_u32(bytes_, 0x1b0),
+            read_u32(bytes_, kCurrentPlayer),
+            read_i32(bytes_, 0x268a),
+            read_i32(bytes_, 0x268e)};
 }
 
 std::size_t SaveFile::player_offset(std::size_t slot) const {
@@ -201,18 +203,24 @@ PlayerState SaveFile::player(std::size_t slot) const {
     result.loan = read_i32(bytes_, base + 36);
     result.special_finance = read_i32(bytes_, base + 40);
     result.points = read_u16(bytes_, base + 48);
-    std::copy_n(bytes_.begin() + static_cast<std::ptrdiff_t>(kPlayerCards + slot * 15),
-                15, result.cards.begin());
-    std::copy_n(bytes_.begin() + static_cast<std::ptrdiff_t>(kPlayerTools + slot * 15),
-                15, result.tool_amounts.begin());
+    std::copy_n(bytes_.begin() + static_cast<std::ptrdiff_t>(kPlayerCards + slot * 15), 15,
+                result.cards.begin());
+    std::copy_n(bytes_.begin() + static_cast<std::ptrdiff_t>(kPlayerTools + slot * 15), 15,
+                result.tool_amounts.begin());
     return result;
 }
 
-MapSummary SaveFile::map_summary() const { return read_map_summary(bytes_); }
+MapSummary SaveFile::map_summary() const {
+    return read_map_summary(bytes_);
+}
 
-std::span<const SaveRegion> SaveFile::regions() const noexcept { return regions_; }
+std::span<const SaveRegion> SaveFile::regions() const noexcept {
+    return regions_;
+}
 
-std::vector<std::uint8_t> SaveFile::encode() const { return bytes_; }
+std::vector<std::uint8_t> SaveFile::encode() const {
+    return bytes_;
+}
 
 void SaveFile::set_cash(std::size_t slot, std::int32_t value) {
     write_i32(bytes_, player_offset(slot) + 28, value);

@@ -7,7 +7,7 @@
 
 namespace rich4::direction {
 namespace {
-constexpr std::array<std::uint8_t, 8> original_direction_order{2,3,4,5,6,7,0,1};
+constexpr std::array<std::uint8_t, 8> original_direction_order{2, 3, 4, 5, 6, 7, 0, 1};
 
 std::uint32_t magnitude(std::uint32_t bits) {
     return (bits & 0x80000000U) != 0 ? 0U - bits : bits;

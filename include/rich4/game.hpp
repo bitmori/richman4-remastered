@@ -8,23 +8,58 @@
 #include <string>
 #include <vector>
 
-#include "rich4/save.hpp"
 #include "rich4/cards.hpp"
+#include "rich4/save.hpp"
 
 namespace rich4 {
 
 class World;
-namespace trading { struct Listing; }
+namespace trading {
+struct Listing;
+}
 
 enum class GamePhase { human_ready, rolling, moving, awaiting_decision, advancing_turn, finished };
-enum class DecisionKind { buy_land, upgrade_land, bank, card_target, choose_card, rescue, buy_facility, construct_facility, upgrade_facility, roulette, shop, magic_category, magic_effect, auction, lottery, primary_stock, property_target, action_target, notice, money_spinner };
+enum class DecisionKind {
+    buy_land,
+    upgrade_land,
+    bank,
+    card_target,
+    choose_card,
+    rescue,
+    buy_facility,
+    construct_facility,
+    upgrade_facility,
+    roulette,
+    shop,
+    magic_category,
+    magic_effect,
+    auction,
+    lottery,
+    primary_stock,
+    property_target,
+    action_target,
+    notice,
+    money_spinner
+};
 enum class GameEventKind {
-    turn_started, dice_rolled, moved, land_purchased, land_upgraded, rent_paid,
-    bank_transfer, date_changed, points_received, player_bankrupt, game_finished,
-    unsupported_event, notice
+    turn_started,
+    dice_rolled,
+    moved,
+    land_purchased,
+    land_upgraded,
+    rent_paid,
+    bank_transfer,
+    date_changed,
+    points_received,
+    player_bankrupt,
+    game_finished,
+    unsupported_event,
+    notice
 };
 
-struct DecisionLocation { std::int32_t x, y; };
+struct DecisionLocation {
+    std::int32_t x, y;
+};
 
 struct DecisionOption {
     std::string label;
@@ -61,19 +96,19 @@ struct MoveAnimation {
 // participates in the rule implementation. tick() changes animation timing;
 // rolling and path selection consume randomness only once per rule action.
 class GameSession {
-public:
+  public:
     explicit GameSession(World world, std::uint32_t seed = 1);
     ~GameSession();
-    GameSession(GameSession&&) noexcept;
-    GameSession& operator=(GameSession&&) noexcept;
-    GameSession(const GameSession&) = delete;
-    GameSession& operator=(const GameSession&) = delete;
+    GameSession(GameSession &&) noexcept;
+    GameSession &operator=(GameSession &&) noexcept;
+    GameSession(const GameSession &) = delete;
+    GameSession &operator=(const GameSession &) = delete;
 
-    [[nodiscard]] const World& world() const noexcept;
+    [[nodiscard]] const World &world() const noexcept;
     [[nodiscard]] GamePhase phase() const noexcept;
-    [[nodiscard]] const std::optional<GameDecision>& pending_decision() const noexcept;
-    [[nodiscard]] const std::optional<MoveAnimation>& animation() const noexcept;
-    [[nodiscard]] const std::vector<std::uint8_t>& dice() const noexcept;
+    [[nodiscard]] const std::optional<GameDecision> &pending_decision() const noexcept;
+    [[nodiscard]] const std::optional<MoveAnimation> &animation() const noexcept;
+    [[nodiscard]] const std::vector<std::uint8_t> &dice() const noexcept;
     [[nodiscard]] std::uint32_t random_state() const noexcept;
     [[nodiscard]] int steps_remaining() const noexcept;
     [[nodiscard]] std::uint64_t completed_days() const noexcept;
@@ -85,14 +120,14 @@ public:
     [[nodiscard]] std::optional<std::size_t> winning_player() const noexcept;
     void set_camera_rotation(std::uint8_t rotation);
     [[nodiscard]] std::vector<CardTarget> card_targets(std::uint8_t card) const;
-    bool use_card(const CardUse& card);
+    bool use_card(const CardUse &card);
     bool use_tool(unsigned id, std::uint16_t target = 0, std::uint16_t destination = 0);
     bool dismount();
     bool buy_stock(std::size_t stock, std::int32_t quantity);
     bool sell_stock(std::size_t stock, std::int32_t quantity);
     bool close_stock_market();
     bool open_trading();
-    bool post_offer(const trading::Listing& offer);
+    bool post_offer(const trading::Listing &offer);
     bool cancel_offer(std::size_t index);
     bool buy_offer(std::size_t seller, std::size_t index);
     bool close_trading();
@@ -105,7 +140,7 @@ public:
     [[nodiscard]] bool can_save() const noexcept;
     [[nodiscard]] SaveFile export_save() const;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

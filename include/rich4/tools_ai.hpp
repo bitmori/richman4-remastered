@@ -15,7 +15,7 @@ struct Decision {
     unsigned tool = 0;
     std::uint16_t target = 0;
     std::uint16_t destination = 0; // Teleport source is self; destination is a road ID.
-    friend bool operator==(const Decision&, const Decision&) = default;
+    friend bool operator==(const Decision &, const Decision &) = default;
 };
 
 struct Callbacks {
@@ -35,10 +35,10 @@ struct Result {
 
 // One predicate including the original aggression gate. Does not consume a tool
 // or change World. Random draws, including rejected path forks, are retained.
-[[nodiscard]] Result evaluate(const World&, Random&, std::size_t actor, unsigned tool,
-                              const Callbacks& = {});
+[[nodiscard]] Result evaluate(const World &, Random &, std::size_t actor, unsigned tool,
+                              const Callbacks & = {});
 // Original AI UI visit: inventory order, randomized start only above four tool
 // types, at most four attempts (wrapping even when fewer types are held).
-[[nodiscard]] Result choose(const World&, Random&, std::size_t actor, const Callbacks& = {});
+[[nodiscard]] Result choose(const World &, Random &, std::size_t actor, const Callbacks & = {});
 
 } // namespace rich4::tools_ai

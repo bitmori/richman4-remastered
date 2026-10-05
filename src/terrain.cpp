@@ -9,7 +9,7 @@
 
 namespace rich4::terrain {
 namespace {
-void require_range(std::size_t offset, std::size_t count, std::size_t total, const char* message) {
+void require_range(std::size_t offset, std::size_t count, std::size_t total, const char *message) {
     if (offset > total || count > total - offset) {
         throw assets::AssetError(message);
     }
@@ -17,8 +17,7 @@ void require_range(std::size_t offset, std::size_t count, std::size_t total, con
 
 std::uint16_t read_u16(std::span<const std::uint8_t> bytes, std::size_t offset) {
     require_range(offset, 2, bytes.size(), "Truncated GND 16-bit field");
-    return static_cast<std::uint16_t>(bytes[offset] |
-                                      (static_cast<unsigned>(bytes[offset + 1]) << 8U));
+    return static_cast<std::uint16_t>(bytes[offset] | (static_cast<unsigned>(bytes[offset + 1]) << 8U));
 }
 
 std::uint32_t read_u32(std::span<const std::uint8_t> bytes, std::size_t offset) {
@@ -32,8 +31,7 @@ std::span<const std::uint8_t, tile_pixels> Ground::tile(std::size_t index) const
     if (index >= tile_count()) {
         throw std::out_of_range("GND tile index out of range");
     }
-    return std::span<const std::uint8_t, tile_pixels>(tile_bytes.data() + index * tile_pixels,
-                                                      tile_pixels);
+    return std::span<const std::uint8_t, tile_pixels>(tile_bytes.data() + index * tile_pixels, tile_pixels);
 }
 
 Ground parse_ground(std::span<const std::uint8_t> decoded) {
@@ -74,14 +72,13 @@ Ground parse_ground(std::span<const std::uint8_t> decoded) {
     return ground;
 }
 
-graphics::Image render_overview(const Ground& ground, std::size_t max_pixels) {
+graphics::Image render_overview(const Ground &ground, std::size_t max_pixels) {
     const auto width = static_cast<std::size_t>(ground.width_tiles) * tile_side;
     const auto height = static_cast<std::size_t>(ground.height_tiles) * tile_side;
     if (width == 0 || height == 0 || width > max_pixels / height) {
         throw std::invalid_argument("GND overview exceeds the configured pixel limit");
     }
-    if (ground.tile_indices.size() !=
-        static_cast<std::size_t>(ground.width_tiles) * ground.height_tiles) {
+    if (ground.tile_indices.size() != static_cast<std::size_t>(ground.width_tiles) * ground.height_tiles) {
         throw std::invalid_argument("GND index count does not match dimensions");
     }
     auto image = graphics::make_canvas(static_cast<int>(width), static_cast<int>(height));
@@ -133,15 +130,14 @@ std::int32_t floor_fixed(std::int32_t value) {
 }
 
 void scan_edge(Point first, Point second, TexturePoint uv_first, TexturePoint uv_second,
-               TexturePoint texture_delta, graphics::Rect clip, std::vector<Scanline>& lines,
-               int& first_row) {
+               TexturePoint texture_delta, graphics::Rect clip, std::vector<Scanline> &lines,
+               int &first_row) {
     const auto signed_height = static_cast<int>(second.y) - first.y;
     if (signed_height == 0) {
         return;
     }
     if (signed_height < -32768 || signed_height > 32767) {
-        throw std::invalid_argument(
-            "Terrain edge height exceeds the original signed-16-bit domain");
+        throw std::invalid_argument("Terrain edge height exceeds the original signed-16-bit domain");
     }
     auto top = first;
     auto bottom = second;
@@ -158,19 +154,17 @@ void scan_edge(Point first, Point second, TexturePoint uv_first, TexturePoint uv
     first_row = std::min(first_row, top_row);
     const auto du = fixed_integer(texture_delta.u) / signed_height;
     const auto dv = fixed_integer(texture_delta.v) / signed_height;
-    auto u = signed_bits(static_cast<std::uint32_t>(fixed_integer(start_uv.u)) |
-                         (du < 0 ? 0xffffU : 0U));
-    auto v = signed_bits(static_cast<std::uint32_t>(fixed_integer(start_uv.v)) |
-                         (dv < 0 ? 0xffffU : 0U));
+    auto u = signed_bits(static_cast<std::uint32_t>(fixed_integer(start_uv.u)) | (du < 0 ? 0xffffU : 0U));
+    auto v = signed_bits(static_cast<std::uint32_t>(fixed_integer(start_uv.v)) | (dv < 0 ? 0xffffU : 0U));
     auto x = fixed_integer(top.x);
-    const auto dx = wrapped_subtract(fixed_integer(bottom.x), x) /
-                    (signed_height < 0 ? -signed_height : signed_height);
+    const auto dx =
+        wrapped_subtract(fixed_integer(bottom.x), x) / (signed_height < 0 ? -signed_height : signed_height);
     const auto skipped = top_row - top.y;
     u = advance_fixed(u, du, skipped);
     v = advance_fixed(v, dv, skipped);
     x = advance_fixed(x, dx, skipped);
     for (int y = top_row; y < bottom_row; ++y) {
-        auto& line = lines[static_cast<std::size_t>(y)];
+        auto &line = lines[static_cast<std::size_t>(y)];
         const auto store_uv = [&] {
             // UV side follows the edge's original vertical direction, even
             // when that edge updates the opposite X bound (reverse winding).
@@ -197,17 +191,15 @@ void scan_edge(Point first, Point second, TexturePoint uv_first, TexturePoint uv
 }
 } // namespace
 
-void draw_tile(graphics::Image& destination, std::span<const std::uint8_t, tile_pixels> texture,
-               std::span<const std::uint16_t, 256> palette, const Quad& corners,
-               graphics::Rect clip) {
+void draw_tile(graphics::Image &destination, std::span<const std::uint8_t, tile_pixels> texture,
+               std::span<const std::uint16_t, 256> palette, const Quad &corners, graphics::Rect clip) {
     if (destination.width <= 0 || destination.height <= 0 || destination.width > 32767 ||
         destination.height > 32767 ||
-        destination.pixels.size() != static_cast<std::size_t>(destination.width) *
-                                         static_cast<std::size_t>(destination.height)) {
+        destination.pixels.size() !=
+            static_cast<std::size_t>(destination.width) * static_cast<std::size_t>(destination.height)) {
         throw std::invalid_argument("Invalid terrain destination dimensions or storage");
     }
-    if (!destination.opaque_pixels.empty() &&
-        destination.opaque_pixels.size() != destination.pixels.size()) {
+    if (!destination.opaque_pixels.empty() && destination.opaque_pixels.size() != destination.pixels.size()) {
         throw std::invalid_argument("Invalid terrain destination opacity storage");
     }
     clip.left = std::max(clip.left, 0);
@@ -223,11 +215,10 @@ void draw_tile(graphics::Image& destination, std::span<const std::uint8_t, tile_
     auto first_row = destination.height;
     for (std::size_t edge = 0; edge < 4; ++edge) {
         const auto next = (edge + 1) % 4;
-        scan_edge(corners[edge], corners[next], uv[edge], uv[next], delta[edge], clip, lines,
-                  first_row);
+        scan_edge(corners[edge], corners[next], uv[edge], uv[next], delta[edge], clip, lines, first_row);
     }
     for (int y = first_row; y < destination.height; ++y) {
-        const auto& line = lines[static_cast<std::size_t>(y)];
+        const auto &line = lines[static_cast<std::size_t>(y)];
         // The original exits at the first untouched scanline, not merely at the
         // bottom clipping boundary. Each native call owns fresh scratch state.
         if (line.left == empty_left) {
@@ -248,9 +239,8 @@ void draw_tile(graphics::Image& destination, std::span<const std::uint8_t, tile_
         for (int x = begin; x < end; ++x) {
             const auto texture_x = (static_cast<std::uint32_t>(u) >> 16U) & 31U;
             const auto texture_y = (static_cast<std::uint32_t>(v) >> 16U) & 31U;
-            const auto pixel =
-                static_cast<std::size_t>(y) * static_cast<std::size_t>(destination.width) +
-                static_cast<std::size_t>(x);
+            const auto pixel = static_cast<std::size_t>(y) * static_cast<std::size_t>(destination.width) +
+                               static_cast<std::size_t>(x);
             destination.pixels[pixel] = palette[texture[texture_y * 32U + texture_x]];
             if (!destination.opaque_pixels.empty()) {
                 destination.opaque_pixels[pixel] = 1;

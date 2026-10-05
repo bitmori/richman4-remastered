@@ -8,7 +8,7 @@ struct Date {
     std::uint16_t year;
     std::uint8_t month;
     std::uint8_t day;
-    bool operator==(const Date&) const = default;
+    bool operator==(const Date &) const = default;
 };
 
 struct DayAdvance {
@@ -17,19 +17,21 @@ struct DayAdvance {
 };
 
 // The game uses year % 4, including 2100. This is deliberately not Gregorian.
-[[nodiscard]] constexpr bool is_leap_year(std::uint16_t year) noexcept { return year % 4 == 0; }
+[[nodiscard]] constexpr bool is_leap_year(std::uint16_t year) noexcept {
+    return year % 4 == 0;
+}
 [[nodiscard]] std::uint8_t days_in_month(std::uint16_t year, std::uint8_t month);
 [[nodiscard]] bool is_valid(Date date) noexcept;
 
 // Explicit serialization of the original YYYYYYYY YYYYYYYY MMMMMMMM DDDDDDDD
 // encoding. Pack/unpack preserve fields; calendar operations validate them.
 [[nodiscard]] constexpr std::uint32_t pack(Date date) noexcept {
-    return (static_cast<std::uint32_t>(date.year) << 16U) |
-           (static_cast<std::uint32_t>(date.month) << 8U) | date.day;
+    return (static_cast<std::uint32_t>(date.year) << 16U) | (static_cast<std::uint32_t>(date.month) << 8U) |
+           date.day;
 }
 [[nodiscard]] constexpr Date unpack(std::uint32_t packed) noexcept {
-    return {static_cast<std::uint16_t>(packed >> 16U),
-            static_cast<std::uint8_t>(packed >> 8U), static_cast<std::uint8_t>(packed)};
+    return {static_cast<std::uint16_t>(packed >> 16U), static_cast<std::uint8_t>(packed >> 8U),
+            static_cast<std::uint8_t>(packed)};
 }
 
 // Valid date domain: 1998-01-01 through 65535-12-31 in the original calendar.
@@ -43,7 +45,7 @@ struct DayAdvance {
 
 // Legacy event expiry arithmetic (0x4521cb): a packed integer addition followed
 // by a single month carry. Deliberately does not clamp days or normalize dates.
-[[nodiscard]] std::uint32_t add_packed_interval(
-    std::uint32_t packed_date, std::uint32_t packed_interval) noexcept;
+[[nodiscard]] std::uint32_t add_packed_interval(std::uint32_t packed_date,
+                                                std::uint32_t packed_interval) noexcept;
 
 } // namespace rich4::calendar

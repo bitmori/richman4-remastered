@@ -12,7 +12,7 @@ namespace rich4 {
 
 struct EventSelection {
     std::uint8_t source_id = 0; // Card in the saved deck, before transport/map remapping.
-    std::uint8_t event_id = 0; // Effective handler: news0..35, fortune0..48.
+    std::uint8_t event_id = 0;  // Effective handler: news0..35, fortune0..48.
     std::uint32_t next_cursor = 0;
     std::uint32_t skipped = 0;
 };
@@ -41,7 +41,8 @@ struct EventCallbacks {
     // Final flag: true credits original bank account, false sends proceeds to public fund.
     std::function<void(std::size_t, std::size_t, std::int32_t, bool)> sell_stock;
     std::function<void(std::uint16_t)> auction; // Original property code, seller-1/mode1.
-    std::function<std::uint8_t(std::size_t, std::size_t)> choose_card; // Actor,victim -> card ID; zero cancels this victim.
+    std::function<std::uint8_t(std::size_t, std::size_t)>
+        choose_card; // Actor,victim -> card ID; zero cancels this victim.
     // Exact original square pick-buffer selection; center is a property anchor.
     // Mode1 confiscates, mode0 downgrades; actors=true also applies hospital/objects.
     std::function<void(std::uint16_t, std::uint16_t, std::uint8_t, bool)> area_damage;
@@ -49,19 +50,19 @@ struct EventCallbacks {
     std::function<void(std::uint32_t)> update_stocks;
 };
 
-[[nodiscard]] bool news_eligible(const World& world, std::uint8_t id);
-[[nodiscard]] std::optional<std::uint8_t> fortune_eligible(const World& world,
-                                                         std::size_t actor, std::uint8_t id);
-[[nodiscard]] EventSelection select_news(const World& world);
-[[nodiscard]] EventSelection select_fortune(const World& world, std::size_t actor);
-[[nodiscard]] EventResult apply_news(World& world, Random& random, const EventCallbacks& callbacks = {});
-[[nodiscard]] EventResult apply_fortune(World& world, Random& random, std::size_t actor,
-                                      const EventCallbacks& callbacks = {});
+[[nodiscard]] bool news_eligible(const World &world, std::uint8_t id);
+[[nodiscard]] std::optional<std::uint8_t> fortune_eligible(const World &world, std::size_t actor,
+                                                           std::uint8_t id);
+[[nodiscard]] EventSelection select_news(const World &world);
+[[nodiscard]] EventSelection select_fortune(const World &world, std::size_t actor);
+[[nodiscard]] EventResult apply_news(World &world, Random &random, const EventCallbacks &callbacks = {});
+[[nodiscard]] EventResult apply_fortune(World &world, Random &random, std::size_t actor,
+                                        const EventCallbacks &callbacks = {});
 // Direct effective IDs for original-oracle tests and explicit replay. These do
 // not advance the saved deck or silently substitute a different event.
-[[nodiscard]] EventResult apply_news_id(World& world, Random& random, std::uint8_t id,
-                                      const EventCallbacks& callbacks = {});
-[[nodiscard]] EventResult apply_fortune_id(World& world, Random& random, std::size_t actor,
-                                         std::uint8_t id, const EventCallbacks& callbacks = {});
+[[nodiscard]] EventResult apply_news_id(World &world, Random &random, std::uint8_t id,
+                                        const EventCallbacks &callbacks = {});
+[[nodiscard]] EventResult apply_fortune_id(World &world, Random &random, std::size_t actor, std::uint8_t id,
+                                           const EventCallbacks &callbacks = {});
 
 } // namespace rich4

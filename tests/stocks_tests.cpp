@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "rich4/random.hpp"
 #include "rich4/stocks.hpp"
 #include "rich4/world.hpp"
-#include "rich4/random.hpp"
 
 #include <bit>
 #include <filesystem>
@@ -14,14 +14,18 @@
 
 namespace {
 
-void check(bool condition, const char* message) {
+void check(bool condition, const char *message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
 }
 
-std::uint32_t bits(float value) { return std::bit_cast<std::uint32_t>(value); }
-float floating(std::uint32_t value) { return std::bit_cast<float>(value); }
+std::uint32_t bits(float value) {
+    return std::bit_cast<std::uint32_t>(value);
+}
+float floating(std::uint32_t value) {
+    return std::bit_cast<float>(value);
+}
 
 rich4::World fixture() {
     rich4::World world;
@@ -42,7 +46,7 @@ rich4::World fixture() {
     return world;
 }
 
-std::uint32_t packed_order(const rich4::Commercial& commercial) {
+std::uint32_t packed_order(const rich4::Commercial &commercial) {
     std::uint32_t result = 0;
     for (std::size_t i = 0; i < 4; ++i) {
         result |= std::uint32_t(commercial.shareholder_order[i]) << (i * 8);
@@ -51,7 +55,7 @@ std::uint32_t packed_order(const rich4::Commercial& commercial) {
 }
 
 using Row = std::vector<std::uint32_t>;
-std::vector<Row> read_csv(const std::filesystem::path& path, std::size_t columns) {
+std::vector<Row> read_csv(const std::filesystem::path &path, std::size_t columns) {
     std::ifstream file(path);
     if (!file) {
         throw std::runtime_error("cannot open " + path.string());
@@ -99,12 +103,13 @@ void unit_tests() {
     world.players[0].state.bank_balance = INT32_MAX;
     world.stocks[0].float_bits[2] = bits(1.0F);
     rich4::stocks::sell_stock(world, 0, 0, 1, true);
-    check(world.stocks[0].shares_available == 0 && world.stocks[0].flags_10 == 0, "share counters wrap at sixteen bits");
+    check(world.stocks[0].shares_available == 0 && world.stocks[0].flags_10 == 0,
+          "share counters wrap at sixteen bits");
     check(world.players[0].state.bank_balance == INT32_MIN, "bank addition wraps at thirty-two bits");
     bool rejected = false;
     try {
         rich4::stocks::sell_stock(world, 0, 0, 1000, true);
-    } catch (const std::invalid_argument&) {
+    } catch (const std::invalid_argument &) {
         rejected = true;
     }
     check(rejected && world.players[0].stocks[0].amount == 999, "oversell fails before mutation");
@@ -113,35 +118,44 @@ void unit_tests() {
     world.stocks[0].suspension_days = 5;
     world.stocks[0].news_movement = 0x11;
     world.stocks[0].float_bits[1] = bits(1000.0F);
-    check(rich4::stocks::update_stocks(world, 1) == 1, "forced update ignores suspension and honors high nibble");
+    check(rich4::stocks::update_stocks(world, 1) == 1,
+          "forced update ignores suspension and honors high nibble");
     check(world.stocks[0].float_bits[2] == bits(1100.0F), "forced increase reads previous price");
-    check(world.stock_history_cursor == 0 && world.stock_history_bits[0][143] == bits(1100.0F), "history zero wraps to previous sample");
+    check(world.stock_history_cursor == 0 && world.stock_history_bits[0][143] == bits(1100.0F),
+          "history zero wraps to previous sample");
     check(world.stocks[0].news_movement == 0x11, "forced update preserves news flags");
     check(rich4::stocks::adjusted_price(1.0F, -10.0F) == 1.0F, "lower price clamp");
     check(rich4::stocks::adjusted_price(9999.0F, 10.0F) == 9999.0F, "upper price clamp");
 
     world = fixture();
     const auto purchase = rich4::stocks::buy_stock(world, 3, 0, 500, true);
-    check(purchase.cost == 7775 && purchase.commercial_owner_changed, "market purchase changes controlling shareholder");
-    check(world.players[3].state.bank_balance == 2225 && world.players[3].state.cash == 20000, "market purchase uses bank");
-    check(world.players[3].stocks[0].amount == 1200 && world.commercials[1].owner_code == 4, "market purchase quantity and owner");
+    check(purchase.cost == 7775 && purchase.commercial_owner_changed,
+          "market purchase changes controlling shareholder");
+    check(world.players[3].state.bank_balance == 2225 && world.players[3].state.cash == 20000,
+          "market purchase uses bank");
+    check(world.players[3].stocks[0].amount == 1200 && world.commercials[1].owner_code == 4,
+          "market purchase quantity and owner");
     world = fixture();
     world.commercials[1].valuation = 155599;
     world.commercials[1].shares_remaining = 5000;
     const auto primary = rich4::stocks::buy_stock(world, 3, 0, 500, false);
     check(primary.cost == 7500, "primary purchase truncates unit valuation before multiplying");
-    check(world.players[3].state.cash == 12500 && world.players[3].state.bank_balance == 10000, "primary purchase uses cash");
-    check(world.commercials[1].shares_remaining == 4500 && world.stocks[0].shares_available == 6600, "primary purchase preserves market shares");
+    check(world.players[3].state.cash == 12500 && world.players[3].state.bank_balance == 10000,
+          "primary purchase uses cash");
+    check(world.commercials[1].shares_remaining == 4500 && world.stocks[0].shares_available == 6600,
+          "primary purchase preserves market shares");
     rich4::Random random(123);
-    check(!rich4::stocks::daily_update(world, random, true) && random.state() == 123, "holiday preserves random stream");
+    check(!rich4::stocks::daily_update(world, random, true) && random.state() == 123,
+          "holiday preserves random stream");
     world.news_effect_days = 0x80;
-    check(!rich4::stocks::daily_update(world, random, false) && random.state() == 123, "news freeze preserves random stream");
+    check(!rich4::stocks::daily_update(world, random, false) && random.state() == 123,
+          "news freeze preserves random stream");
 }
 
-void compare_oracle(const std::filesystem::path& directory) {
+void compare_oracle(const std::filesystem::path &directory) {
     const auto prices = read_csv(directory / "prices.csv", 3);
     std::size_t failures = 0;
-    for (const auto& row : prices) {
+    for (const auto &row : prices) {
         const auto actual = bits(rich4::stocks::adjusted_price(floating(row[0]), floating(row[1])));
         if (actual != row[2]) {
             if (failures++ < 10) {
@@ -154,7 +168,7 @@ void compare_oracle(const std::filesystem::path& directory) {
     check(failures == 0, "original price result differs");
 
     const auto sales = read_csv(directory / "sales.csv", 19);
-    for (const auto& row : sales) {
+    for (const auto &row : sales) {
         auto world = fixture();
         const auto player = row[0];
         world.stocks[0].float_bits[2] = row[3];
@@ -163,14 +177,19 @@ void compare_oracle(const std::filesystem::path& directory) {
             world.commercials[1].shareholder_order[i] = static_cast<std::uint8_t>(row[8] >> (8 * i));
         }
         world.commercials[1].owner_code = static_cast<std::uint8_t>(row[9]);
-        const auto result = rich4::stocks::sell_stock(world, player, 0, static_cast<std::int32_t>(row[1]), row[2] != 0);
+        const auto result =
+            rich4::stocks::sell_stock(world, player, 0, static_cast<std::int32_t>(row[1]), row[2] != 0);
         check(std::bit_cast<std::uint32_t>(result.proceeds) == row[10], "original sale proceeds differs");
-        check(std::bit_cast<std::uint32_t>(world.players[player].state.bank_balance) == row[11], "original sale bank differs");
+        check(std::bit_cast<std::uint32_t>(world.players[player].state.bank_balance) == row[11],
+              "original sale bank differs");
         check(std::bit_cast<std::uint32_t>(world.public_fund) == row[12], "original sale fund differs");
-        check(std::uint32_t(world.players[player].stocks[0].amount) == row[13], "original sale quantity differs");
+        check(std::uint32_t(world.players[player].stocks[0].amount) == row[13],
+              "original sale quantity differs");
         check(world.players[player].stocks[0].raw_cost_basis == row[14], "original sale basis differs");
-        check(world.stocks[0].shares_available == row[15] && world.stocks[0].flags_10 == row[16], "original sale counters differ");
-        check(packed_order(world.commercials[1]) == row[17] && world.commercials[1].owner_code == row[18], "original shareholder order differs");
+        check(world.stocks[0].shares_available == row[15] && world.stocks[0].flags_10 == row[16],
+              "original sale counters differ");
+        check(packed_order(world.commercials[1]) == row[17] && world.commercials[1].owner_code == row[18],
+              "original shareholder order differs");
         check(result.commercial_owner_changed == (row[9] != row[18]), "owner change result differs");
     }
     const auto updates = read_csv(directory / "updates.csv", 8);
@@ -181,33 +200,37 @@ void compare_oracle(const std::filesystem::path& directory) {
         const auto selection = updates[group][1];
         std::size_t changed = 0;
         for (std::size_t index = 0; index < 12; ++index) {
-            const auto& row = updates[group + index];
-            check(row[2] == index && row[0] == updates[group][0] && row[1] == selection, "inconsistent update group");
+            const auto &row = updates[group + index];
+            check(row[2] == index && row[0] == updates[group][0] && row[1] == selection,
+                  "inconsistent update group");
             world.stocks[index].news_movement = static_cast<std::uint8_t>(row[3]);
             world.stocks[index].float_bits[1] = row[4];
             world.stocks[index].float_bits[2] = bits(123.0F);
             changed += row[3] != 0 && (selection == 0 || selection == index + 1);
         }
-        check(rich4::stocks::update_stocks(world, selection) == changed, "original forced update count differs");
-        check(world.stock_history_cursor == static_cast<std::int32_t>(updates[group][0]), "forced update advances cursor");
+        check(rich4::stocks::update_stocks(world, selection) == changed,
+              "original forced update count differs");
+        check(world.stock_history_cursor == static_cast<std::int32_t>(updates[group][0]),
+              "forced update advances cursor");
         const auto sample = world.stock_history_cursor == 0 ? 143 : world.stock_history_cursor - 1;
         for (std::size_t index = 0; index < 12; ++index) {
-            const auto& row = updates[group + index];
+            const auto &row = updates[group + index];
             check(world.stocks[index].float_bits[2] == row[5], "original forced quote differs");
             check(world.stocks[index].float_bits[4] == row[6], "original forced movement differs");
             for (std::size_t history = 0; history < 144; ++history) {
                 const auto expected = history == static_cast<std::size_t>(sample) ? row[7] : 0;
-                check(world.stock_history_bits[index][history] == expected, "original forced history differs");
+                check(world.stock_history_bits[index][history] == expected,
+                      "original forced history differs");
             }
         }
     }
     std::cout << "Original sales: " << sales.size() << "; update fields: " << updates.size() << '\n';
     if (std::filesystem::exists(directory / "wealth.csv")) {
         const auto wealth = read_csv(directory / "wealth.csv", 30);
-        for (const auto& row : wealth) {
+        for (const auto &row : wealth) {
             auto world = fixture();
             const auto player = row[1];
-            auto& account = world.players[player];
+            auto &account = world.players[player];
             account.state.cash = std::bit_cast<std::int32_t>(row[2]);
             account.state.bank_balance = std::bit_cast<std::int32_t>(row[3]);
             account.state.loan = std::bit_cast<std::int32_t>(row[4]);
@@ -218,7 +241,7 @@ void compare_oracle(const std::filesystem::path& directory) {
             world.lands.resize(5);
             world.facilities.resize(4);
             for (std::size_t index = 1; index < 5; ++index) {
-                auto& land = world.lands[index];
+                auto &land = world.lands[index];
                 land.economy.chain_store = static_cast<std::uint8_t>(index % 2);
                 land.economy.owner_code = static_cast<std::uint8_t>(1 + ((player + index - 1) % 4));
                 land.economy.level = static_cast<std::uint8_t>(index + 1);
@@ -226,7 +249,7 @@ void compare_oracle(const std::filesystem::path& directory) {
                 land.price_per_level = static_cast<std::uint16_t>(234 * index);
             }
             for (std::size_t index = 1; index < 4; ++index) {
-                auto& facility = world.facilities[index];
+                auto &facility = world.facilities[index];
                 facility.owner_code = static_cast<std::uint8_t>(1 + ((player + index - 1) % 4));
                 facility.level = static_cast<std::uint8_t>(index + 2);
                 facility.land_price = static_cast<std::uint16_t>(4321 * index);
@@ -234,7 +257,8 @@ void compare_oracle(const std::filesystem::path& directory) {
             }
             const auto actual = std::bit_cast<std::uint32_t>(rich4::stocks::player_wealth(world, player));
             if (actual != row[5]) {
-                std::cerr << "wealth case " << row[0] << " expected " << row[5] << " actual " << actual << '\n';
+                std::cerr << "wealth case " << row[0] << " expected " << row[5] << " actual " << actual
+                          << '\n';
                 throw std::runtime_error("original wealth differs");
             }
         }
@@ -271,9 +295,9 @@ void compare_oracle(const std::filesystem::path& directory) {
             world.stock_market_index = 12345;
             world.stock_market_movement_bits = bits(2.25F);
             for (std::size_t index = 0; index < 12; ++index) {
-                const auto& row = daily[group + index];
+                const auto &row = daily[group + index];
                 check(row[5] == index && row[0] == daily[group][0], "daily index order");
-                auto& stock = world.stocks[index];
+                auto &stock = world.stocks[index];
                 stock.flags_4 = static_cast<std::uint16_t>(row[6]);
                 stock.suspension_days = static_cast<std::uint8_t>(row[7]);
                 stock.news_movement = static_cast<std::uint8_t>(row[8]);
@@ -281,15 +305,22 @@ void compare_oracle(const std::filesystem::path& directory) {
                 stock.raw_32 = row[13];
                 world.commercials[stock.flags_4].valuation = static_cast<std::int32_t>(row[14]);
             }
-            check(rich4::stocks::daily_update(world, random, holiday) == (!holiday && world.news_effect_days == 0),
+            check(rich4::stocks::daily_update(world, random, holiday) ==
+                      (!holiday && world.news_effect_days == 0),
                   "daily closed/open result differs");
             for (std::size_t index = 0; index < 12; ++index) {
-                const auto& row = daily[group + index];
-                const auto& stock = world.stocks[index];
+                const auto &row = daily[group + index];
+                const auto &stock = world.stocks[index];
                 const std::array<std::uint32_t, 9> actual{
-                    stock.float_bits[1], stock.float_bits[2], stock.float_bits[4], stock.raw_32,
-                    world.stock_history_bits[index][row[4]], std::bit_cast<std::uint32_t>(world.stock_market_index),
-                    world.stock_market_movement_bits, std::uint32_t(world.stock_history_cursor), random.state()};
+                    stock.float_bits[1],
+                    stock.float_bits[2],
+                    stock.float_bits[4],
+                    stock.raw_32,
+                    world.stock_history_bits[index][row[4]],
+                    std::bit_cast<std::uint32_t>(world.stock_market_index),
+                    world.stock_market_movement_bits,
+                    std::uint32_t(world.stock_history_cursor),
+                    random.state()};
                 for (std::size_t field = 0; field < actual.size(); ++field) {
                     if (actual[field] != row[15 + field]) {
                         std::cerr << "daily case " << row[0] << " stock " << index << " field " << field
@@ -297,17 +328,18 @@ void compare_oracle(const std::filesystem::path& directory) {
                         throw std::runtime_error("original daily state differs");
                     }
                 }
-                check(stock.suspension_days == row[7] && stock.news_movement == row[8], "daily changes caller-owned counters");
+                check(stock.suspension_days == row[7] && stock.news_movement == row[8],
+                      "daily changes caller-owned counters");
             }
         }
         std::cout << "Original daily records: " << daily.size() << '\n';
     }
     if (std::filesystem::exists(directory / "purchases.csv")) {
         const auto purchases = read_csv(directory / "purchases.csv", 16);
-        for (const auto& row : purchases) {
+        for (const auto &row : purchases) {
             auto world = fixture();
             const auto player = row[1];
-            for (auto& account : world.players) {
+            for (auto &account : world.players) {
                 account.state.cash = account.state.bank_balance = 100000000;
                 account.stocks[0].raw_cost_basis = row[5];
             }
@@ -315,31 +347,39 @@ void compare_oracle(const std::filesystem::path& directory) {
             world.stocks[0].shares_available = world.stocks[0].flags_10 = 5000;
             world.commercials[1].valuation = static_cast<std::int32_t>(row[6]);
             world.commercials[1].shares_remaining = 5000;
-            const auto result = rich4::stocks::buy_stock(world, player, 0, static_cast<std::int32_t>(row[2]), row[3] != 0);
-            const auto& account = world.players[player];
+            const auto result =
+                rich4::stocks::buy_stock(world, player, 0, static_cast<std::int32_t>(row[2]), row[3] != 0);
+            const auto &account = world.players[player];
             const std::array<std::uint32_t, 9> actual{
-                std::uint32_t(account.stocks[0].amount), account.stocks[0].raw_cost_basis,
-                world.stocks[0].shares_available, world.stocks[0].flags_10,
-                std::bit_cast<std::uint32_t>(account.state.cash), std::bit_cast<std::uint32_t>(account.state.bank_balance),
-                std::uint32_t(world.commercials[1].shares_remaining), packed_order(world.commercials[1]), world.commercials[1].owner_code};
+                std::uint32_t(account.stocks[0].amount),
+                account.stocks[0].raw_cost_basis,
+                world.stocks[0].shares_available,
+                world.stocks[0].flags_10,
+                std::bit_cast<std::uint32_t>(account.state.cash),
+                std::bit_cast<std::uint32_t>(account.state.bank_balance),
+                std::uint32_t(world.commercials[1].shares_remaining),
+                packed_order(world.commercials[1]),
+                world.commercials[1].owner_code};
             for (std::size_t field = 0; field < actual.size(); ++field) {
                 if (actual[field] != row[7 + field]) {
-                    std::cerr << "purchase case " << row[0] << " field " << field
-                              << " expected " << row[7 + field] << " actual " << actual[field] << '\n';
+                    std::cerr << "purchase case " << row[0] << " field " << field << " expected "
+                              << row[7 + field] << " actual " << actual[field] << '\n';
                     throw std::runtime_error("original purchase state differs");
                 }
             }
-            check(result.cost == 100000000 - static_cast<std::int32_t>(row[row[3] ? 12 : 11]), "purchase cost differs");
+            check(result.cost == 100000000 - static_cast<std::int32_t>(row[row[3] ? 12 : 11]),
+                  "purchase cost differs");
         }
         std::cout << "Original purchase cases: " << purchases.size() << '\n';
     }
     if (std::filesystem::exists(directory / "trends.csv")) {
         const auto trends = read_csv(directory / "trends.csv", 3);
         auto world = fixture();
-        for (const auto& row : trends) {
+        for (const auto &row : trends) {
             world.stocks[0].float_bits[1] = row[0];
             world.stocks[0].float_bits[2] = row[1];
-            check(static_cast<std::uint8_t>(rich4::stocks::trend(world, 0)) == row[2], "original price trend differs");
+            check(static_cast<std::uint8_t>(rich4::stocks::trend(world, 0)) == row[2],
+                  "original price trend differs");
         }
         std::cout << "Original price-trend cases: " << trends.size() << '\n';
     }
@@ -347,7 +387,7 @@ void compare_oracle(const std::filesystem::path& directory) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     try {
         unit_tests();
         if (argc == 2) {
@@ -357,7 +397,7 @@ int main(int argc, char** argv) {
         }
         std::cout << "Stocks tests passed\n";
         return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;
     }

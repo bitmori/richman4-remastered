@@ -15,28 +15,28 @@
 namespace {
 using namespace rich4::terrain;
 using Bytes = std::vector<std::uint8_t>;
-void check(bool condition, const char* message) {
+void check(bool condition, const char *message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
 }
-template <class Operation> void rejects(Operation operation, const char* message) {
+template <class Operation> void rejects(Operation operation, const char *message) {
     try {
         operation();
-    } catch (const rich4::assets::AssetError&) {
+    } catch (const rich4::assets::AssetError &) {
         return;
-    } catch (const std::invalid_argument&) {
+    } catch (const std::invalid_argument &) {
         return;
-    } catch (const std::out_of_range&) {
+    } catch (const std::out_of_range &) {
         return;
     }
     throw std::runtime_error(message);
 }
-void set16(Bytes& bytes, std::size_t at, std::uint16_t value) {
+void set16(Bytes &bytes, std::size_t at, std::uint16_t value) {
     bytes.at(at) = static_cast<std::uint8_t>(value);
     bytes.at(at + 1) = static_cast<std::uint8_t>(value >> 8U);
 }
-void set32(Bytes& bytes, std::size_t at, std::uint32_t value) {
+void set32(Bytes &bytes, std::size_t at, std::uint32_t value) {
     set16(bytes, at, static_cast<std::uint16_t>(value));
     set16(bytes, at + 2, static_cast<std::uint16_t>(value >> 16U));
 }
@@ -60,8 +60,7 @@ void ground_tests() {
     const auto original = bytes;
     const auto ground = parse_ground(bytes);
     check(bytes == original, "GND parsing changed input bytes");
-    check(ground.width_tiles == 2 && ground.height_tiles == 1 && ground.tile_count() == 2,
-          "GND dimensions");
+    check(ground.width_tiles == 2 && ground.height_tiles == 1 && ground.tile_count() == 2, "GND dimensions");
     check(ground.reserved == 0x12345678U, "GND reserved field lost");
     check(ground.palette[1] == 0x1234 && ground.palette[2] == 0x4321, "GND little-endian palette");
     check(ground.tile_indices == std::vector<std::uint16_t>{1, 0}, "GND tile order");
@@ -77,8 +76,7 @@ void ground_tests() {
     rejects([&] { (void)ground.tile(2); }, "Invalid GND tile accepted");
     rejects([&] { (void)render_overview(ground, 2047); }, "GND overview limit ignored");
     for (const auto length : {0U, 15U, 527U, 531U, 2579U}) {
-        rejects([&] { (void)parse_ground(std::span(bytes).first(length)); },
-                "Truncated GND accepted");
+        rejects([&] { (void)parse_ground(std::span(bytes).first(length)); }, "Truncated GND accepted");
     }
     bytes = original;
     bytes[3] = 1;
@@ -108,22 +106,19 @@ void draw_tests() {
             const auto index = static_cast<std::size_t>(y * 8 + x);
             check(image.pixels[index] == (inside ? 0x1234 : 0x7bde),
                   "Opaque zero-index tile or half-open boundaries");
-            check(image.opaque_pixels[index] == static_cast<unsigned>(inside),
-                  "Terrain opacity not marked");
+            check(image.opaque_pixels[index] == static_cast<unsigned>(inside), "Terrain opacity not marked");
         }
     }
     image = rich4::graphics::make_canvas(8, 8, 0x7bde);
     draw_tile(image, texture, palette, corners, {3, 3, 5, 5});
-    check(std::count(image.pixels.begin(), image.pixels.end(), 0x1234) == 4,
-          "Terrain rectangular clip");
+    check(std::count(image.pixels.begin(), image.pixels.end(), 0x1234) == 4, "Terrain rectangular clip");
     auto saved = image.pixels;
     draw_tile(image, texture, palette, corners, {3, 3, 3, 5});
     draw_tile(image, texture, palette, Quad{}, {0, 0, 8, 8});
     check(image.pixels == saved, "Empty or degenerate tile changed canvas");
     rejects(
         [&] {
-            draw_tile(image, texture, palette, Quad{{{-32768, 0}, {0, 2}, {2, 2}, {2, 0}}},
-                      {0, 0, 8, 8});
+            draw_tile(image, texture, palette, Quad{{{-32768, 0}, {0, 2}, {2, 2}, {2, 0}}}, {0, 0, 8, 8});
         },
         "Ambiguous 16-bit edge-height overflow accepted");
     image.pixels.pop_back();
@@ -131,7 +126,7 @@ void draw_tests() {
             "Invalid destination storage accepted");
 }
 
-std::vector<int> numbers(const std::string& line, const std::string& key) {
+std::vector<int> numbers(const std::string &line, const std::string &key) {
     const auto label = line.find('"' + key + '"');
     if (label == std::string::npos) {
         throw std::runtime_error("Missing terrain golden field");
@@ -151,7 +146,7 @@ std::vector<int> numbers(const std::string& line, const std::string& key) {
     return result;
 }
 
-std::size_t check_original(const std::filesystem::path& manifest) {
+std::size_t check_original(const std::filesystem::path &manifest) {
     std::ifstream input(manifest);
     if (!input) {
         throw std::runtime_error("Cannot open terrain golden manifest");
@@ -175,8 +170,8 @@ std::size_t check_original(const std::filesystem::path& manifest) {
         const auto colon = line.find(':', file_key);
         const auto start = line.find('"', colon + 1);
         const auto end = line.find('"', start + 1);
-        if (file_key == std::string::npos || colon == std::string::npos ||
-            start == std::string::npos || end == std::string::npos) {
+        if (file_key == std::string::npos || colon == std::string::npos || start == std::string::npos ||
+            end == std::string::npos) {
             throw std::runtime_error("Missing terrain golden filename");
         }
         const auto filename = line.substr(start + 1, end - start - 1);
@@ -185,15 +180,14 @@ std::size_t check_original(const std::filesystem::path& manifest) {
         check(points.size() == 8 && rectangle.size() == 4, "Malformed terrain golden geometry");
         Quad corners;
         for (std::size_t i = 0; i < 4; ++i) {
-            check(points[i * 2] >= -32768 && points[i * 2] <= 32767 &&
-                      points[i * 2 + 1] >= -32768 && points[i * 2 + 1] <= 32767,
+            check(points[i * 2] >= -32768 && points[i * 2] <= 32767 && points[i * 2 + 1] >= -32768 &&
+                      points[i * 2 + 1] <= 32767,
                   "Terrain golden vertex out of range");
             corners[i] = {static_cast<std::int16_t>(points[i * 2]),
                           static_cast<std::int16_t>(points[i * 2 + 1])};
         }
         auto image = rich4::graphics::make_canvas(640, 480, 0x7bde);
-        draw_tile(image, texture, palette, corners,
-                  {rectangle[0], rectangle[1], rectangle[2], rectangle[3]});
+        draw_tile(image, texture, palette, corners, {rectangle[0], rectangle[1], rectangle[2], rectangle[3]});
         std::ifstream pixels(manifest.parent_path() / filename, std::ios::binary);
         if (!pixels) {
             throw std::runtime_error("Cannot open terrain golden pixels");
@@ -201,8 +195,8 @@ std::size_t check_original(const std::filesystem::path& manifest) {
         const Bytes expected(std::istreambuf_iterator<char>{pixels}, {});
         check(expected.size() == image.pixels.size() * 2, "Wrong terrain golden payload size");
         for (std::size_t i = 0; i < image.pixels.size(); ++i) {
-            const auto value = static_cast<std::uint16_t>(
-                expected[i * 2] | (static_cast<unsigned>(expected[i * 2 + 1]) << 8U));
+            const auto value = static_cast<std::uint16_t>(expected[i * 2] |
+                                                          (static_cast<unsigned>(expected[i * 2 + 1]) << 8U));
             if (image.pixels[i] != value) {
                 throw std::runtime_error(
                     "Terrain oracle mismatch in " + filename + " at x=" + std::to_string(i % 640) +
@@ -217,17 +211,16 @@ std::size_t check_original(const std::filesystem::path& manifest) {
 }
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     try {
         ground_tests();
         draw_tests();
         std::cout << "Terrain unit tests passed\n";
         if (argc > 1) {
-            std::cout << check_original(argv[1])
-                      << " original terrain frames matched pixel-for-pixel\n";
+            std::cout << check_original(argv[1]) << " original terrain frames matched pixel-for-pixel\n";
         }
         return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << "Terrain test failed: " << error.what() << '\n';
         return 1;
     }

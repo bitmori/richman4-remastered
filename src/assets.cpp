@@ -17,8 +17,7 @@
 namespace rich4::assets {
 namespace {
 
-void require_range(std::size_t offset, std::size_t length, std::size_t total,
-                   const char* description) {
+void require_range(std::size_t offset, std::size_t length, std::size_t total, const char *description) {
     if (offset > total || length > total - offset) {
         throw AssetError(std::string(description) + " exceeds resource bounds");
     }
@@ -26,38 +25,37 @@ void require_range(std::size_t offset, std::size_t length, std::size_t total,
 
 std::uint16_t read_u16(std::span<const std::uint8_t> bytes, std::size_t offset) {
     require_range(offset, 2, bytes.size(), "16-bit field");
-    return static_cast<std::uint16_t>(
-        static_cast<std::uint16_t>(bytes[offset]) |
-        (static_cast<std::uint16_t>(bytes[offset + 1]) << 8U));
+    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[offset]) |
+                                      (static_cast<std::uint16_t>(bytes[offset + 1]) << 8U));
 }
 
 std::uint32_t read_u32(std::span<const std::uint8_t> bytes, std::size_t offset) {
     require_range(offset, 4, bytes.size(), "32-bit field");
-    return static_cast<std::uint32_t>(bytes[offset]) |
-        (static_cast<std::uint32_t>(bytes[offset + 1]) << 8U) |
-        (static_cast<std::uint32_t>(bytes[offset + 2]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[offset + 3]) << 24U);
+    return static_cast<std::uint32_t>(bytes[offset]) | (static_cast<std::uint32_t>(bytes[offset + 1]) << 8U) |
+           (static_cast<std::uint32_t>(bytes[offset + 2]) << 16U) |
+           (static_cast<std::uint32_t>(bytes[offset + 3]) << 24U);
 }
 
 std::int16_t read_i16(std::span<const std::uint8_t> bytes, std::size_t offset) {
     return std::bit_cast<std::int16_t>(read_u16(bytes, offset));
 }
 
-std::vector<std::uint8_t> read_file(const std::filesystem::path& path) {
+std::vector<std::uint8_t> read_file(const std::filesystem::path &path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
         throw AssetError("Cannot open archive: " + path.string());
     }
     const auto length = file.tellg();
-    if (length < 0 || static_cast<std::uintmax_t>(length) >
+    if (length < 0 ||
+        static_cast<std::uintmax_t>(length) >
             static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max()) ||
         static_cast<std::uintmax_t>(length) > std::numeric_limits<std::size_t>::max()) {
         throw AssetError("Unsupported archive size: " + path.string());
     }
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
     file.seekg(0);
-    if (!bytes.empty() && !file.read(reinterpret_cast<char*>(bytes.data()),
-                                     static_cast<std::streamsize>(bytes.size()))) {
+    if (!bytes.empty() &&
+        !file.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
         throw AssetError("Cannot read complete archive: " + path.string());
     }
     return bytes;
@@ -66,7 +64,7 @@ std::vector<std::uint8_t> read_file(const std::filesystem::path& path) {
 // Rich4 consumes each byte least-significant bit first. Separate byte/bit positions
 // avoid overflowing a bit count for large inputs; no speculative word reads occur.
 class BitReader {
-public:
+  public:
     explicit BitReader(std::span<const std::uint8_t> source) : source_(source) {}
 
     std::uint32_t read(unsigned count) {
@@ -89,7 +87,7 @@ public:
         return copy.read(count);
     }
 
-private:
+  private:
     std::span<const std::uint8_t> source_;
     std::size_t byte_ = 0;
     unsigned bit_ = 0;
@@ -100,7 +98,7 @@ private:
 // Upstream stored byte offsets and let parent[641..961] alias another struct
 // member. Here every link is an explicit array index in a single valid array.
 class AdaptiveTree {
-public:
+  public:
     static constexpr std::size_t symbol_count = 321;
     static constexpr std::size_t node_count = 2 * symbol_count - 1;
     static constexpr std::size_t root = node_count - 1;
@@ -114,8 +112,8 @@ public:
         for (std::size_t node = symbol_count; node < node_count; ++node) {
             const auto first_child = 2 * (node - symbol_count);
             child_[node] = first_child;
-            frequency_[node] = static_cast<std::uint16_t>(
-                frequency_[first_child] + frequency_[first_child + 1]);
+            frequency_[node] =
+                static_cast<std::uint16_t>(frequency_[first_child] + frequency_[first_child + 1]);
             parent_[first_child] = node;
             parent_[first_child + 1] = node;
         }
@@ -123,7 +121,7 @@ public:
         frequency_[node_count] = 0xffffU; // Search sentinel, never a tree node.
     }
 
-    std::size_t decode(BitReader& bits) {
+    std::size_t decode(BitReader &bits) {
         std::size_t node = root;
         while (child_[node] < node_count) {
             node = child_[node] + bits.read(1);
@@ -136,7 +134,7 @@ public:
         return symbol;
     }
 
-private:
+  private:
     std::array<std::uint16_t, node_count + 1> frequency_{};
     std::array<std::size_t, node_count> child_{};
     std::array<std::size_t, node_count + symbol_count> parent_{};
@@ -193,7 +191,7 @@ void check_output_limit(std::size_t size, std::size_t maximum) {
 
 } // namespace
 
-Archive::Archive(const std::filesystem::path& path) : Archive(read_file(path)) {}
+Archive::Archive(const std::filesystem::path &path) : Archive(read_file(path)) {}
 
 Archive::Archive(std::vector<std::uint8_t> bytes) : bytes_(std::move(bytes)) {
     read_index();
@@ -201,8 +199,7 @@ Archive::Archive(std::vector<std::uint8_t> bytes) : bytes_(std::move(bytes)) {
 
 void Archive::read_index() {
     const auto index_offset = read_u32(bytes_, 0);
-    if (index_offset < 4 || index_offset > bytes_.size() ||
-        (bytes_.size() - index_offset) % 4 != 0) {
+    if (index_offset < 4 || index_offset > bytes_.size() || (bytes_.size() - index_offset) % 4 != 0) {
         throw AssetError("Invalid MKF index table");
     }
     const auto entry_count = (bytes_.size() - index_offset) / 4;
@@ -220,17 +217,17 @@ void Archive::read_index() {
             read_u32(bytes_, static_cast<std::size_t>(offset) + 8),
             read_u32(bytes_, static_cast<std::size_t>(offset) + 12),
         };
-        require_range(static_cast<std::size_t>(offset) + 16, entry.stored_size,
-                      index_offset, "MKF entry payload");
+        require_range(static_cast<std::size_t>(offset) + 16, entry.stored_size, index_offset,
+                      "MKF entry payload");
         if (entry.graphics_size != 0) {
-            require_range(entry.graphics_offset, entry.graphics_size,
-                          entry.decoded_size, "MKF graphics metadata");
+            require_range(entry.graphics_offset, entry.graphics_size, entry.decoded_size,
+                          "MKF graphics metadata");
         }
         entries_.push_back(entry);
     }
 }
 
-const EntryInfo& Archive::metadata(std::size_t index) const {
+const EntryInfo &Archive::metadata(std::size_t index) const {
     if (index >= entries_.size()) {
         throw AssetError("MKF entry index out of range: " + std::to_string(index));
     }
@@ -238,7 +235,7 @@ const EntryInfo& Archive::metadata(std::size_t index) const {
 }
 
 std::vector<std::uint8_t> Archive::decode(std::size_t index, std::size_t max_output_bytes) const {
-    const auto& entry = metadata(index);
+    const auto &entry = metadata(index);
     check_output_limit(entry.decoded_size, max_output_bytes);
     const auto stored = std::span<const std::uint8_t>(bytes_).subspan(
         static_cast<std::size_t>(entry.offset) + 16, entry.stored_size);
@@ -248,8 +245,7 @@ std::vector<std::uint8_t> Archive::decode(std::size_t index, std::size_t max_out
     return decompress(stored, entry.decoded_size, max_output_bytes);
 }
 
-std::vector<std::uint8_t> decompress(std::span<const std::uint8_t> source,
-                                     std::size_t decoded_size,
+std::vector<std::uint8_t> decompress(std::span<const std::uint8_t> source, std::size_t decoded_size,
                                      std::size_t max_output_bytes) {
     check_output_limit(decoded_size, max_output_bytes);
     std::vector<std::uint8_t> output;
@@ -265,8 +261,7 @@ std::vector<std::uint8_t> decompress(std::span<const std::uint8_t> source,
         const auto prefix = bits.peek(8);
         const auto prefix_length = distance_prefix_bits[prefix & 0xfU];
         (void)bits.read(prefix_length);
-        const auto distance_code = (static_cast<std::size_t>(distance_prefix[prefix]) << 6U) |
-            bits.read(6);
+        const auto distance_code = (static_cast<std::size_t>(distance_prefix[prefix]) << 6U) | bits.read(6);
         if (distance_code == 0xfffU) {
             throw AssetError("Compressed resource ended before its declared decoded size");
         }
@@ -319,8 +314,8 @@ Graphics parse_graphics(std::span<const std::uint8_t> decoded) {
         const auto size = read_u32(decoded, record + 8);
         require_range(data_offset, size, decoded.size(), "SPR/SMP graphic");
         graphics.entries.push_back({read_i16(decoded, record), read_i16(decoded, record + 2),
-                                    read_i16(decoded, record + 4), read_i16(decoded, record + 6),
-                                    data_offset, size});
+                                    read_i16(decoded, record + 4), read_i16(decoded, record + 6), data_offset,
+                                    size});
         data_offset += size;
     }
     return graphics;

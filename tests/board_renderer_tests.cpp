@@ -14,16 +14,16 @@
 
 namespace {
 
-void require(bool condition, const char* message) {
+void require(bool condition, const char *message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
 }
 
-template <class Function> void requires_error(Function&& action) {
+template <class Function> void requires_error(Function &&action) {
     try {
         action();
-    } catch (const std::exception&) {
+    } catch (const std::exception &) {
         return;
     }
     throw std::runtime_error("invalid board input did not fail");
@@ -38,8 +38,7 @@ void projection_tests() {
     require(project({-32, 0}, camera) == Point{183, 269}, "negative tile rounding changed");
     require(project({1, 0}, camera) == Point{222, 260}, "fractional signed floor changed");
     require(project({31, 0}, camera) == Point{253, 250}, "fractional endpoint changed");
-    require(project({-14 * 32, -14 * 32}, camera) == Point{-494, 49},
-            "original camera table corner changed");
+    require(project({-14 * 32, -14 * 32}, camera) == Point{-494, 49}, "original camera table corner changed");
     require(!project({15 * 32, 0}, camera), "horizontal camera culling changed");
     require(!project({0, -15 * 32}, camera), "vertical camera culling changed");
     require(!project({std::numeric_limits<int>::max(), 0}, camera), "extreme point was not culled");
@@ -58,7 +57,7 @@ void projection_tests() {
     requires_error([] { Renderer renderer("does-not-exist", 8); });
 }
 
-std::size_t compare_projection_golden(const std::filesystem::path& path) {
+std::size_t compare_projection_golden(const std::filesystem::path &path) {
     std::ifstream input(path);
     if (!input) {
         throw std::runtime_error("cannot read projection golden CSV");
@@ -70,23 +69,20 @@ std::size_t compare_projection_golden(const std::filesystem::path& path) {
         std::replace(row.begin(), row.end(), ',', ' ');
         std::istringstream fields(row);
         int center_x, center_y, rotation, world_x, world_y, screen_x, screen_y;
-        if (!(fields >> center_x >> center_y >> rotation >> world_x >> world_y >> screen_x >>
-              screen_y)) {
+        if (!(fields >> center_x >> center_y >> rotation >> world_x >> world_y >> screen_x >> screen_y)) {
             throw std::runtime_error("malformed projection golden CSV row");
         }
-        const rich4::board::Camera camera{{center_x, center_y},
-                                          static_cast<std::uint8_t>(rotation)};
+        const rich4::board::Camera camera{{center_x, center_y}, static_cast<std::uint8_t>(rotation)};
         const auto actual =
             rich4::board::project({world_x, world_y}, camera).value_or(rich4::board::Point{0, 0});
-        require(actual == rich4::board::Point{screen_x, screen_y},
-                "original EXE projection mismatch");
+        require(actual == rich4::board::Point{screen_x, screen_y}, "original EXE projection mismatch");
         ++count;
     }
     require(count != 0, "projection golden CSV is empty");
     return count;
 }
 
-void asset_tests(const std::filesystem::path& assets, const std::filesystem::path& output) {
+void asset_tests(const std::filesystem::path &assets, const std::filesystem::path &output) {
     using namespace rich4;
     std::filesystem::create_directories(output);
     // Put two actors on an otherwise empty, off-map camera. Their shared anchor
@@ -112,14 +108,14 @@ void asset_tests(const std::filesystem::path& assets, const std::filesystem::pat
         graphics::blit(expected, active, 220, 260, camera.viewport);
         auto actual = graphics::make_canvas(640, 480, 0x1234);
         renderer.render(actual, scene, camera);
-        require(actual.pixels == expected.pixels,
-                "actor asset selection, anchor, or depth order changed");
+        require(actual.pixels == expected.pixels, "actor asset selection, anchor, or depth order changed");
         for (unsigned character = 0; character < 12; ++character) {
             for (unsigned pose : {13U, 14U, 16U, 17U, 18U}) {
                 const auto bytes = data.decode(0x80U + character * 21U + pose);
                 require(assets::parse_graphics(bytes).entries.size() >= 8,
                         "boat, sleepwalk, or injury art lacks direction frames");
-                if (character != 10) continue;
+                if (character != 10)
+                    continue;
                 std::array<board::PlayerSprite, 1> actors{};
                 actors[0].position = camera.center;
                 actors[0].character = 10;
@@ -141,9 +137,9 @@ void asset_tests(const std::filesystem::path& assets, const std::filesystem::pat
             for (unsigned pose = 0; pose < (slot == 8 ? 2U : 4U); ++pose) {
                 for (unsigned view = 0; view < 8; ++view) {
                     const board::Camera rotated{camera.center, static_cast<std::uint8_t>(view)};
-                    const std::array<board::SpecialPlayerSprite, 1> actors{{{
-                        camera.center, static_cast<std::uint8_t>(slot), 3, 5, false,
-                        pose == 1 || pose == 3, pose == 2, pose == 3}}};
+                    const std::array<board::SpecialPlayerSprite, 1> actors{
+                        {{camera.center, static_cast<std::uint8_t>(slot), 3, 5, false, pose == 1 || pose == 3,
+                          pose == 2, pose == 3}}};
                     const auto index = slot == 8 ? 0x209U + pose : 0x16cU + slot * 4U + pose;
                     const auto bytes = data.decode(index);
                     const auto count = assets::parse_graphics(bytes).entries.size() / 8;
@@ -191,8 +187,8 @@ void asset_tests(const std::filesystem::path& assets, const std::filesystem::pat
                     "board drawing overwrote application chrome");
             require(std::count(image.pixels.begin(), image.pixels.end(), 0x1234) < 150000,
                     "board output is unexpectedly blank");
-            const auto path = output / ("map-" + std::to_string(map) + "-view-" +
-                                        std::to_string(rotation) + ".ppm");
+            const auto path =
+                output / ("map-" + std::to_string(map) + "-view-" + std::to_string(rotation) + ".ppm");
             graphics::write_ppm(image, path);
             total_sprites += stats.sprites;
             ++renders;
@@ -204,25 +200,24 @@ void asset_tests(const std::filesystem::path& assets, const std::filesystem::pat
         players[0].direction = 8;
         requires_error([&] { renderer.render(image, scene, camera); });
     }
-    std::cout << renders << " original-asset board renders, " << total_sprites
-              << " sprite draws; output " << output << '\n';
+    std::cout << renders << " original-asset board renders, " << total_sprites << " sprite draws; output "
+              << output << '\n';
 }
 
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     try {
         projection_tests();
         if (argc >= 3) {
             asset_tests(argv[1], argv[2]);
         }
         if (argc >= 4) {
-            std::cout << compare_projection_golden(argv[3])
-                      << " original EXE projection rows matched\n";
+            std::cout << compare_projection_golden(argv[3]) << " original EXE projection rows matched\n";
         }
         std::cout << "board renderer tests passed\n";
         return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << "board renderer tests failed: " << error.what() << '\n';
         return 1;
     }

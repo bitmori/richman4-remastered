@@ -33,12 +33,11 @@ constexpr int block_frames = 512;
 constexpr int bytes_per_frame = channels * int(sizeof(float));
 constexpr int queue_target_frames = 3072; // 64 ms: enough for the 40-ms original animation tick.
 constexpr SDL_AudioSpec mixer_format{SDL_AUDIO_F32, channels, sample_rate};
-constexpr std::array<std::string_view, 8> music_files{"rich08.mid", "rich16.mid", "rich17.mid",
-                                                      "rich18.mid", "rich19.mid", "rich20.mid",
-                                                      "rich21.mid", "rich22.mid"};
+constexpr std::array<std::string_view, 8> music_files{"rich08.mid", "rich16.mid", "rich17.mid", "rich18.mid",
+                                                      "rich19.mid", "rich20.mid", "rich21.mid", "rich22.mid"};
 
-std::filesystem::path asset_path(const std::filesystem::path& directory, std::string_view name) {
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+std::filesystem::path asset_path(const std::filesystem::path &directory, std::string_view name) {
+    for (const auto &entry : std::filesystem::directory_iterator(directory)) {
         auto candidate = entry.path().filename().string();
         std::transform(candidate.begin(), candidate.end(), candidate.begin(),
                        [](unsigned char value) { return char(std::tolower(value)); });
@@ -49,7 +48,7 @@ std::filesystem::path asset_path(const std::filesystem::path& directory, std::st
     throw assets::AssetError("missing audio asset: " + (directory / name).string());
 }
 
-std::vector<std::uint8_t> read_bytes(const std::filesystem::path& path) {
+std::vector<std::uint8_t> read_bytes(const std::filesystem::path &path) {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) {
         throw std::runtime_error("cannot open MIDI: " + path.string());
@@ -60,7 +59,7 @@ std::vector<std::uint8_t> read_bytes(const std::filesystem::path& path) {
     }
     std::vector<std::uint8_t> result(static_cast<std::size_t>(length));
     input.seekg(0);
-    if (!input.read(reinterpret_cast<char*>(result.data()), length)) {
+    if (!input.read(reinterpret_cast<char *>(result.data()), length)) {
         throw std::runtime_error("truncated MIDI: " + path.string());
     }
     return result;
@@ -76,20 +75,24 @@ struct AudioSubsystem {
             throw sdl_error("initialize SDL audio");
         }
     }
-    ~AudioSubsystem() { SDL_QuitSubSystem(SDL_INIT_AUDIO); }
+    ~AudioSubsystem() {
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    }
 };
 
 struct SdlFree {
-    void operator()(void* pointer) const { SDL_free(pointer); }
+    void operator()(void *pointer) const {
+        SDL_free(pointer);
+    }
 };
 
 std::vector<float> decode_wave(std::span<const std::uint8_t> bytes) {
-    auto* input = SDL_IOFromConstMem(bytes.data(), bytes.size());
+    auto *input = SDL_IOFromConstMem(bytes.data(), bytes.size());
     if (!input) {
         throw sdl_error("open WAV memory");
     }
     SDL_AudioSpec source_format{};
-    Uint8* wav_pointer = nullptr;
+    Uint8 *wav_pointer = nullptr;
     Uint32 wav_length = 0;
     if (!SDL_LoadWAV_IO(input, true, &source_format, &wav_pointer, &wav_length)) {
         throw sdl_error("decode original WAV");
@@ -98,10 +101,10 @@ std::vector<float> decode_wave(std::span<const std::uint8_t> bytes) {
     if (wav_length > std::uint32_t(std::numeric_limits<int>::max())) {
         throw assets::AssetError("WAV exceeds SDL conversion length range");
     }
-    Uint8* converted_pointer = nullptr;
+    Uint8 *converted_pointer = nullptr;
     int converted_length = 0;
-    if (!SDL_ConvertAudioSamples(&source_format, wav.get(), static_cast<int>(wav_length),
-                                 &mixer_format, &converted_pointer, &converted_length)) {
+    if (!SDL_ConvertAudioSamples(&source_format, wav.get(), static_cast<int>(wav_length), &mixer_format,
+                                 &converted_pointer, &converted_length)) {
         throw sdl_error("convert original WAV to mixer format");
     }
     std::unique_ptr<Uint8, SdlFree> converted(converted_pointer);
@@ -123,34 +126,32 @@ struct Audio::Impl {
     Statistics stats;
     std::filesystem::path directory;
     std::unique_ptr<AudioSubsystem> subsystem;
-    std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> stream{
-        nullptr, SDL_DestroyAudioStream};
-    std::unique_ptr<fluid_settings_t, decltype(&delete_fluid_settings)> settings{
-        nullptr, delete_fluid_settings};
-    std::unique_ptr<fluid_synth_t, decltype(&delete_fluid_synth)> synth{nullptr,
-                                                                        delete_fluid_synth};
-    std::unique_ptr<fluid_player_t, decltype(&delete_fluid_player)> player{nullptr,
-                                                                           delete_fluid_player};
+    std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> stream{nullptr,
+                                                                               SDL_DestroyAudioStream};
+    std::unique_ptr<fluid_settings_t, decltype(&delete_fluid_settings)> settings{nullptr,
+                                                                                 delete_fluid_settings};
+    std::unique_ptr<fluid_synth_t, decltype(&delete_fluid_synth)> synth{nullptr, delete_fluid_synth};
+    std::unique_ptr<fluid_player_t, decltype(&delete_fluid_player)> player{nullptr, delete_fluid_player};
     std::vector<std::uint8_t> midi_bytes;
     std::optional<assets::Archive> effects;
     std::optional<assets::Archive> voices;
     std::map<std::pair<bool, std::size_t>, std::vector<float>> samples;
 
     struct Clip {
-        const std::vector<float>* samples;
+        const std::vector<float> *samples;
         std::size_t position{};
         bool voice{};
     };
     std::vector<Clip> clips;
 
-    Impl(const std::filesystem::path& assets, bool requested, const std::filesystem::path& bank)
+    Impl(const std::filesystem::path &assets, bool requested, const std::filesystem::path &bank)
         : enabled(requested), directory(assets) {
         if (!enabled) {
             return;
         }
         subsystem = std::make_unique<AudioSubsystem>();
-        stream.reset(SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &mixer_format,
-                                               nullptr, nullptr));
+        stream.reset(
+            SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &mixer_format, nullptr, nullptr));
         if (!stream) {
             throw sdl_error("open SDL audio stream");
         }
@@ -171,7 +172,7 @@ struct Audio::Impl {
 
     void initialize_music(std::filesystem::path bank) {
         if (bank.empty()) {
-            if (const auto* environment = std::getenv("RICH4_SOUNDFONT")) {
+            if (const auto *environment = std::getenv("RICH4_SOUNDFONT")) {
                 bank = environment;
             }
         }
@@ -182,8 +183,7 @@ struct Audio::Impl {
         }
 #endif
         if (bank.empty() || !std::filesystem::is_regular_file(bank)) {
-            diagnostic =
-                "MIDI soundbank unavailable; set RICH4_SOUNDFONT to a General MIDI SF2/DLS file";
+            diagnostic = "MIDI soundbank unavailable; set RICH4_SOUNDFONT to a General MIDI SF2/DLS file";
             return;
         }
         settings.reset(new_fluid_settings());
@@ -212,19 +212,18 @@ struct Audio::Impl {
         fluid_synth_system_reset(synth.get());
         midi_bytes = read_bytes(asset_path(directory, music_files[track - 1]));
         player.reset(new_fluid_player(synth.get()));
-        if (!player ||
-            fluid_player_add_mem(player.get(), midi_bytes.data(), midi_bytes.size()) != FLUID_OK ||
+        if (!player || fluid_player_add_mem(player.get(), midi_bytes.data(), midi_bytes.size()) != FLUID_OK ||
             fluid_player_play(player.get()) != FLUID_OK) {
             throw std::runtime_error("cannot start original MIDI track " + std::to_string(track));
         }
     }
 
-    const std::vector<float>& load_clip(bool voice, std::size_t index) {
+    const std::vector<float> &load_clip(bool voice, std::size_t index) {
         const auto key = std::pair{voice, index};
         if (const auto found = samples.find(key); found != samples.end()) {
             return found->second;
         }
-        auto& archive = voice ? voices : effects;
+        auto &archive = voice ? voices : effects;
         if (!archive) {
             archive.emplace(asset_path(directory, voice ? "speaking.mkf" : "effect.mkf"));
         }
@@ -236,19 +235,19 @@ struct Audio::Impl {
         if (!enabled) {
             return;
         }
-        const auto& pcm = load_clip(voice, index);
+        const auto &pcm = load_clip(voice, index);
         if (voice) {
-            std::erase_if(clips, [](const Clip& clip) { return clip.voice; });
+            std::erase_if(clips, [](const Clip &clip) { return clip.voice; });
             ++stats.voices_started;
         } else {
             ++stats.effects_started;
         }
         // Bound bursts of user input. Voice always has its own single slot;
         // effects can overlap, with the oldest effect replaced after 16 voices.
-        if (!voice && std::count_if(clips.begin(), clips.end(),
-                                    [](const Clip& clip) { return !clip.voice; }) >= 16) {
-            clips.erase(std::find_if(clips.begin(), clips.end(),
-                                     [](const Clip& clip) { return !clip.voice; }));
+        if (!voice &&
+            std::count_if(clips.begin(), clips.end(), [](const Clip &clip) { return !clip.voice; }) >= 16) {
+            clips.erase(
+                std::find_if(clips.begin(), clips.end(), [](const Clip &clip) { return !clip.voice; }));
         }
         clips.push_back({&pcm, 0, voice});
     }
@@ -260,13 +259,13 @@ struct Audio::Impl {
                 track = track % 8 + 1;
                 start_track();
             }
-            if (fluid_synth_write_float(synth.get(), block_frames, output.data(), 0, 2,
-                                        output.data(), 1, 2) != FLUID_OK) {
+            if (fluid_synth_write_float(synth.get(), block_frames, output.data(), 0, 2, output.data(), 1,
+                                        2) != FLUID_OK) {
                 throw std::runtime_error("MIDI software rendering failed");
             }
             stats.music_frames += block_frames;
         }
-        for (auto& clip : clips) {
+        for (auto &clip : clips) {
             const auto available = clip.samples->size() - clip.position;
             const auto count = std::min(output.size(), available);
             for (std::size_t i = 0; i < count; ++i) {
@@ -277,9 +276,8 @@ struct Audio::Impl {
                 ++stats.clips_completed;
             }
         }
-        std::erase_if(clips,
-                      [](const Clip& clip) { return clip.position == clip.samples->size(); });
-        for (auto& sample : output) {
+        std::erase_if(clips, [](const Clip &clip) { return clip.position == clip.samples->size(); });
+        for (auto &sample : output) {
             sample = std::clamp(sample, -1.0F, 1.0F);
             if (std::abs(sample) > 0.000001F) {
                 ++stats.nonzero_samples;
@@ -311,14 +309,15 @@ struct Audio::Impl {
     }
 };
 
-Audio::Audio(const std::filesystem::path& directory, bool enabled,
-             const std::filesystem::path& soundbank)
+Audio::Audio(const std::filesystem::path &directory, bool enabled, const std::filesystem::path &soundbank)
     : impl_(std::make_unique<Impl>(directory, enabled, soundbank)) {}
 Audio::~Audio() = default;
-Audio::Audio(Audio&&) noexcept = default;
-Audio& Audio::operator=(Audio&&) noexcept = default;
+Audio::Audio(Audio &&) noexcept = default;
+Audio &Audio::operator=(Audio &&) noexcept = default;
 
-void Audio::play_sound(std::size_t index) { impl_->play_clip(false, index); }
+void Audio::play_sound(std::size_t index) {
+    impl_->play_clip(false, index);
+}
 
 void Audio::play_voice(std::uint8_t character, std::uint16_t category) {
     if (character >= 12 || category >= 27) {
@@ -327,7 +326,9 @@ void Audio::play_voice(std::uint8_t character, std::uint16_t category) {
     impl_->play_clip(true, 1050U + character * 27U + category);
 }
 
-void Audio::set_music(bool enabled) { impl_->music_on = enabled; }
+void Audio::set_music(bool enabled) {
+    impl_->music_on = enabled;
+}
 
 void Audio::select_music(unsigned track) {
     if (track > 8) {
@@ -337,15 +338,29 @@ void Audio::select_music(unsigned track) {
     impl_->start_track();
 }
 
-void Audio::update() { impl_->update(); }
-bool Audio::enabled() const noexcept { return impl_->enabled; }
-bool Audio::music_available() const noexcept { return impl_->synth != nullptr; }
-bool Audio::music_enabled() const noexcept { return impl_->music_on; }
-unsigned Audio::music_track() const noexcept { return impl_->track; }
-Statistics Audio::statistics() const noexcept { return impl_->stats; }
+void Audio::update() {
+    impl_->update();
+}
+bool Audio::enabled() const noexcept {
+    return impl_->enabled;
+}
+bool Audio::music_available() const noexcept {
+    return impl_->synth != nullptr;
+}
+bool Audio::music_enabled() const noexcept {
+    return impl_->music_on;
+}
+unsigned Audio::music_track() const noexcept {
+    return impl_->track;
+}
+Statistics Audio::statistics() const noexcept {
+    return impl_->stats;
+}
 int Audio::queued_bytes() const {
     return impl_->stream ? SDL_GetAudioStreamQueued(impl_->stream.get()) : 0;
 }
-const std::string& Audio::music_diagnostic() const noexcept { return impl_->diagnostic; }
+const std::string &Audio::music_diagnostic() const noexcept {
+    return impl_->diagnostic;
+}
 
 } // namespace rich4::audio

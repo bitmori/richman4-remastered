@@ -14,8 +14,13 @@ namespace rich4 {
 
 // Values match the original auction callback's action numbers.
 enum class AuctionAction : std::uint8_t {
-    pass = 0, raise_100 = 1, raise_500 = 2, raise_1000 = 3,
-    raise_5000 = 4, raise_10000 = 5, withdraw = 6
+    pass = 0,
+    raise_100 = 1,
+    raise_500 = 2,
+    raise_1000 = 3,
+    raise_5000 = 4,
+    raise_10000 = 5,
+    withdraw = 6
 };
 
 struct AuctionDecision {
@@ -42,14 +47,22 @@ struct AuctionOptions {
 // tick/bid consume no randomness. Win32 timer/announcer animation draws are
 // deliberately outside this game-state module (see migration 016).
 class AuctionSession {
-public:
-    AuctionSession(World& world, Random& random, std::uint16_t property,
-                   std::int32_t seller = -1, AuctionOptions options = {});
+  public:
+    AuctionSession(World &world, Random &random, std::uint16_t property, std::int32_t seller = -1,
+                   AuctionOptions options = {});
 
-    [[nodiscard]] bool finished() const noexcept { return finished_; }
-    [[nodiscard]] const AuctionResult& result() const noexcept { return result_; }
-    [[nodiscard]] std::int32_t price() const noexcept { return price_; }
-    [[nodiscard]] std::int32_t initial_price() const noexcept { return initial_price_; }
+    [[nodiscard]] bool finished() const noexcept {
+        return finished_;
+    }
+    [[nodiscard]] const AuctionResult &result() const noexcept {
+        return result_;
+    }
+    [[nodiscard]] std::int32_t price() const noexcept {
+        return price_;
+    }
+    [[nodiscard]] std::int32_t initial_price() const noexcept {
+        return initial_price_;
+    }
     [[nodiscard]] std::optional<AuctionDecision> decision() const;
     // Execute one AI decision, or return false while waiting for a human.
     bool tick();
@@ -58,7 +71,7 @@ public:
     bool bid(AuctionAction action);
     [[nodiscard]] std::optional<std::int32_t> ai_limit(std::size_t player) const noexcept;
 
-private:
+  private:
     struct Bidder {
         std::size_t player = 0;
         std::int32_t limit = 0;
@@ -70,7 +83,7 @@ private:
     [[nodiscard]] bool legal(AuctionAction action) const;
     void after_action();
     void settle();
-    World* world_;
+    World *world_;
     std::uint16_t property_;
     std::int32_t seller_;
     AuctionOptions options_;

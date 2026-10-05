@@ -17,7 +17,9 @@
 namespace rich4::stocks_ai {
 namespace {
 using numeric::Extended;
-Extended number(double value) { return Extended::from(value); }
+Extended number(double value) {
+    return Extended::from(value);
+}
 
 bool less(Extended a, Extended b) {
     if (!a.significand && !b.significand) {
@@ -26,9 +28,9 @@ bool less(Extended a, Extended b) {
     if (a.negative != b.negative) {
         return a.negative;
     }
-    const bool magnitude_less = !a.significand ||
-        (b.significand && (a.exponent < b.exponent ||
-                          (a.exponent == b.exponent && a.significand < b.significand)));
+    const bool magnitude_less =
+        !a.significand || (b.significand && (a.exponent < b.exponent ||
+                                             (a.exponent == b.exponent && a.significand < b.significand)));
     const bool equal = a.significand == b.significand && a.exponent == b.exponent;
     return a.negative ? !magnitude_less && !equal : magnitude_less;
 }
@@ -41,12 +43,16 @@ std::int32_t subtract(std::int32_t a, std::int32_t b) {
 std::int32_t multiply(std::int32_t a, std::int32_t b) {
     return std::bit_cast<std::int32_t>(std::uint32_t(a) * std::uint32_t(b));
 }
-float scalar(const StockState& stock, std::size_t index) {
+float scalar(const StockState &stock, std::size_t index) {
     return std::bit_cast<float>(stock.float_bits[index]);
 }
-float quote(const StockState& stock) { return scalar(stock, 2); }
-float basis(const StockHolding& holding) { return std::bit_cast<float>(holding.raw_cost_basis); }
-std::int32_t liquidity(const WorldPlayer& player) {
+float quote(const StockState &stock) {
+    return scalar(stock, 2);
+}
+float basis(const StockHolding &holding) {
+    return std::bit_cast<float>(holding.raw_cost_basis);
+}
+std::int32_t liquidity(const WorldPlayer &player) {
     return add(player.state.cash, player.state.bank_balance);
 }
 
@@ -59,13 +65,13 @@ std::int32_t original_day_index(std::uint32_t packed) {
     const auto date = calendar::unpack(packed);
     return add(calendar::days_from_1998({date.year, date.month, 1}), int(date.day) - 1);
 }
-std::int32_t days_until_loan(const World& world, const WorldPlayer& player) {
-    const auto& date = world.header.date;
+std::int32_t days_until_loan(const World &world, const WorldPlayer &player) {
+    const auto &date = world.header.date;
     const auto today = calendar::days_from_1998({date.year, date.month, date.day});
     return subtract(original_day_index(player.status.loan_due_date), today);
 }
 
-float history_average(const World& world, std::size_t stock, int periods) {
+float history_average(const World &world, std::size_t stock, int periods) {
     int cursor = world.stock_history_cursor - periods;
     if (cursor < 0) {
         cursor += 144;
@@ -84,36 +90,37 @@ float history_average(const World& world, std::size_t stock, int periods) {
     }
     return count ? (number(sum) / number(count)).single() : sum;
 }
-float company_average_profit(const World& world, const Commercial& company) {
+float company_average_profit(const World &world, const Commercial &company) {
     const auto months = static_cast<std::int64_t>(world.month_counter);
-    const auto value = months ? static_cast<std::int32_t>(company.funds_change / months) : company.funds_change;
+    const auto value =
+        months ? static_cast<std::int32_t>(company.funds_change / months) : company.funds_change;
     return number(value).single();
 }
-float company_unit_value(const Commercial& company) {
+float company_unit_value(const Commercial &company) {
     return number(company.valuation / 10000).single();
 }
-const Commercial& company_for(const World& world, const StockState& stock) {
+const Commercial &company_for(const World &world, const StockState &stock) {
     if (!stock.flags_4 || stock.flags_4 >= world.commercials.size()) {
         throw std::invalid_argument("Stock AI references an absent commercial property");
     }
     return world.commercials[stock.flags_4];
 }
-std::int32_t holdings_value(const World& world, std::size_t actor) {
+std::int32_t holdings_value(const World &world, std::size_t actor) {
     std::int32_t total = 0;
     for (std::size_t i = 0; i < world.stocks.size(); ++i) {
         const auto quantity = world.players[actor].stocks[i].amount;
         if (quantity) {
-            total = (number(quantity) * number(quote(world.stocks[i])) +
-                     number(number(total).single())).integer();
+            total = (number(quantity) * number(quote(world.stocks[i])) + number(number(total).single()))
+                        .integer();
         }
     }
     return total;
 }
 
-std::int32_t company_buy_score(const World& world, std::size_t actor, std::size_t index) {
-    const auto& stock = world.stocks[index];
-    const auto& company = company_for(world, stock);
-    const auto& holding = world.players[actor].stocks[index];
+std::int32_t company_buy_score(const World &world, std::size_t actor, std::size_t index) {
+    const auto &stock = world.stocks[index];
+    const auto &company = company_for(world, stock);
+    const auto &holding = world.players[actor].stocks[index];
     const auto price = number(quote(stock));
     const auto valuation = number(company_unit_value(company));
     const auto profit = number(company_average_profit(world, company));
@@ -150,8 +157,8 @@ std::int32_t company_buy_score(const World& world, std::size_t actor, std::size_
     return score;
 }
 
-std::int32_t market_buy_score(const World& world, std::size_t index) {
-    const auto& stock = world.stocks[index];
+std::int32_t market_buy_score(const World &world, std::size_t index) {
+    const auto &stock = world.stocks[index];
     const auto price = number(quote(stock));
     const auto baseline = number(scalar(stock, 0));
     const auto long_average = number(history_average(world, index, 24));
@@ -174,7 +181,7 @@ struct RatedStock {
     std::size_t index = 0;
     std::int32_t score = 0;
 };
-void original_sort(std::array<RatedStock, 12>& entries) {
+void original_sort(std::array<RatedStock, 12> &entries) {
     // Watcom qsort's <16 branch at 0x457ecc: gap=3 then gap=1, advancing
     // the outer insertion position by the gap too. Preserve ties explicitly.
     for (const std::size_t gap : {3U, 1U}) {
@@ -186,16 +193,16 @@ void original_sort(std::array<RatedStock, 12>& entries) {
     }
 }
 
-std::int32_t company_sell_score(const World& world, std::size_t actor, std::size_t index, bool urgent) {
-    const auto& stock = world.stocks[index];
-    const auto& company = company_for(world, stock);
-    const auto& holding = world.players[actor].stocks[index];
+std::int32_t company_sell_score(const World &world, std::size_t actor, std::size_t index, bool urgent) {
+    const auto &stock = world.stocks[index];
+    const auto &company = company_for(world, stock);
+    const auto &holding = world.players[actor].stocks[index];
     const auto price = number(quote(stock));
     const auto cost = number(basis(holding));
     const auto valuation = number(company_unit_value(company));
     const auto profit = number(company_average_profit(world, company));
     std::int32_t total_quantity = 0;
-    for (const auto& player : world.players) {
+    for (const auto &player : world.players) {
         total_quantity = add(total_quantity, player.stocks[index].amount);
     }
     // Original DE F1 is FDIVRP: total / own, not the intuitive ownership fraction.
@@ -203,12 +210,12 @@ std::int32_t company_sell_score(const World& world, std::size_t actor, std::size
     const bool owns_company = company.owner_code == actor + 1;
     const auto day = world.header.date.day;
     std::int32_t score = 0;
-    if (company.funds <= multiply(-10000, world.header.price_index) &&
-        less(number(0.6), number(share)) && day > 10 && day < 15) {
+    if (company.funds <= multiply(-10000, world.header.price_index) && less(number(0.6), number(share)) &&
+        day > 10 && day < 15) {
         score += 3;
     }
-    if (company.funds <= multiply(-6000, world.header.price_index) &&
-        less(cost * number(1.2), price) && !owns_company && day > 8 && day < 15) {
+    if (company.funds <= multiply(-6000, world.header.price_index) && less(cost * number(1.2), price) &&
+        !owns_company && day > 8 && day < 15) {
         score += 2;
     }
     if (!less(number(multiply(10000, world.header.price_index)), profit) &&
@@ -240,13 +247,13 @@ std::int32_t ratio_points(float ratio, float offset) {
     }
     return ((number(ratio) + number(offset)) / number(0.5) + number(1)).integer();
 }
-std::int32_t market_sell_score(const World& world, std::size_t actor, std::size_t index, bool urgent) {
-    const auto& stock = world.stocks[index];
-    const auto& holding = world.players[actor].stocks[index];
+std::int32_t market_sell_score(const World &world, std::size_t actor, std::size_t index, bool urgent) {
+    const auto &stock = world.stocks[index];
+    const auto &holding = world.players[actor].stocks[index];
     const auto price = quote(stock);
     const auto cost = basis(holding);
-    const auto ratio = cost == 0 ? std::numeric_limits<float>::infinity() :
-                                  (number(price) / number(cost)).single();
+    const auto ratio =
+        cost == 0 ? std::numeric_limits<float>::infinity() : (number(price) / number(cost)).single();
     float minimum = 10000;
     for (auto bits : world.stock_history_bits[index]) {
         const auto value = std::bit_cast<float>(bits);
@@ -280,16 +287,17 @@ std::int32_t market_sell_score(const World& world, std::size_t actor, std::size_
     return urgent ? add(score, score) : score;
 }
 
-void validate(const World& world, std::size_t actor) {
-    if (actor >= world.players.size() || world.stock_history_cursor < 0 || world.stock_history_cursor >= 144) {
+void validate(const World &world, std::size_t actor) {
+    if (actor >= world.players.size() || world.stock_history_cursor < 0 ||
+        world.stock_history_cursor >= 144) {
         throw std::invalid_argument("Stock AI actor or history cursor is outside original bounds");
     }
 }
 } // namespace
 
-std::vector<Trade> buy(World& world, Random& random, std::size_t actor, bool market_closed) {
+std::vector<Trade> buy(World &world, Random &random, std::size_t actor, bool market_closed) {
     validate(world, actor);
-    auto& player = world.players[actor];
+    auto &player = world.players[actor];
     if (random.next() % 3 != 0 || !player.status.stock_investment_ratio || market_closed) {
         return {};
     }
@@ -304,10 +312,11 @@ std::vector<Trade> buy(World& world, Random& random, std::size_t actor, bool mar
     budget = std::min(subtract(budget, value), player.state.bank_balance);
     std::array<RatedStock, 12> candidates{};
     for (std::size_t i = 0; i < candidates.size(); ++i) {
-        auto& candidate = candidates[i];
+        auto &candidate = candidates[i];
         candidate.index = i;
-        const auto& stock = world.stocks[i];
-        if (stock.suspension_days || stocks::trend(world, i) == stocks::PriceTrend::limit_up || !stock.flags_10) {
+        const auto &stock = world.stocks[i];
+        if (stock.suspension_days || stocks::trend(world, i) == stocks::PriceTrend::limit_up ||
+            !stock.flags_10) {
             continue;
         }
         if (stock.flags_4) {
@@ -324,7 +333,7 @@ std::vector<Trade> buy(World& world, Random& random, std::size_t actor, bool mar
         if (!candidate.score || random.next() % 24 > 12 - rank) {
             continue;
         }
-        const auto& stock = world.stocks[candidate.index];
+        const auto &stock = world.stocks[candidate.index];
         const auto quantity = std::min((number(budget) / number(quote(stock))).integer(),
                                        static_cast<std::int32_t>(stock.flags_10));
         if (!quantity) {
@@ -336,9 +345,9 @@ std::vector<Trade> buy(World& world, Random& random, std::size_t actor, bool mar
     return {};
 }
 
-std::vector<Trade> sell(World& world, Random& random, std::size_t actor, bool market_closed) {
+std::vector<Trade> sell(World &world, Random &random, std::size_t actor, bool market_closed) {
     validate(world, actor);
-    auto& player = world.players[actor];
+    auto &player = world.players[actor];
     const bool urgent = days_until_loan(world, player) <= 6 && liquidity(player) < player.state.loan;
     if ((!urgent && random.next() % 3 != 0) || market_closed) {
         return {};
@@ -348,13 +357,13 @@ std::vector<Trade> sell(World& world, Random& random, std::size_t actor, bool ma
         std::int32_t highest_score = 0;
         std::size_t selected = world.stocks.size();
         for (std::size_t i = 0; i < world.stocks.size(); ++i) {
-            const auto& stock = world.stocks[i];
+            const auto &stock = world.stocks[i];
             if (!player.stocks[i].amount || stock.suspension_days ||
                 stocks::trend(world, i) == stocks::PriceTrend::limit_down) {
                 continue;
             }
-            const auto score = stock.flags_4 ? company_sell_score(world, actor, i, urgent) :
-                                              market_sell_score(world, actor, i, urgent);
+            const auto score = stock.flags_4 ? company_sell_score(world, actor, i, urgent)
+                                             : market_sell_score(world, actor, i, urgent);
             if (score > highest_score) {
                 highest_score = score;
                 selected = i;

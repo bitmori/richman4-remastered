@@ -13,34 +13,33 @@ namespace {
 using Bytes = std::vector<std::uint8_t>;
 using namespace rich4::assets;
 
-void check(bool condition, const char* message) {
+void check(bool condition, const char *message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
 }
 
-template <class Operation>
-void rejects(Operation operation, const char* message) {
+template <class Operation> void rejects(Operation operation, const char *message) {
     try {
         operation();
-    } catch (const AssetError&) {
+    } catch (const AssetError &) {
         return;
     }
     throw std::runtime_error(message);
 }
 
-void set_u16(Bytes& bytes, std::size_t offset, std::uint16_t value) {
+void set_u16(Bytes &bytes, std::size_t offset, std::uint16_t value) {
     bytes.at(offset) = static_cast<std::uint8_t>(value);
     bytes.at(offset + 1) = static_cast<std::uint8_t>(value >> 8U);
 }
 
-void set_u32(Bytes& bytes, std::size_t offset, std::uint32_t value) {
+void set_u32(Bytes &bytes, std::size_t offset, std::uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) {
         bytes.at(offset + i) = static_cast<std::uint8_t>(value >> (8U * i));
     }
 }
 
-Bytes one_entry(const Bytes& payload, std::uint32_t decoded_size) {
+Bytes one_entry(const Bytes &payload, std::uint32_t decoded_size) {
     Bytes bytes(4 + 16 + payload.size() + 4, 0);
     set_u32(bytes, 0, static_cast<std::uint32_t>(bytes.size() - 4));
     set_u32(bytes, 4, decoded_size);
@@ -53,13 +52,13 @@ Bytes one_entry(const Bytes& payload, std::uint32_t decoded_size) {
 // Synthetic fixtures encode explicit symbols through the upstream initial
 // offset-based tree, independently of the native decoder. No game data is used.
 const Bytes abc{0xfb, 0x0f, 0x1c, 0x04};
-const Bytes overlap{0xfb, 0x83, 0x0f, 0x00}; // Literal A, length 8, distance 1.
+const Bytes overlap{0xfb, 0x83, 0x0f, 0x00};                // Literal A, length 8, distance 1.
 const Bytes abc_repeat{0xfb, 0x0f, 0x1c, 0x0c, 0xbc, 0x00}; // ABC + length 6, distance 3.
 
 void compression_tests() {
     check(decompress(abc, 3) == Bytes({'A', 'B', 'C'}), "literal decoding");
     check(decompress(overlap, 9) == Bytes(9, 'A'), "overlapping match decoding");
-    check(decompress(abc_repeat, 9) == Bytes({'A','B','C','A','B','C','A','B','C'}),
+    check(decompress(abc_repeat, 9) == Bytes({'A', 'B', 'C', 'A', 'B', 'C', 'A', 'B', 'C'}),
           "nontrivial match distance");
     check(decompress(overlap, 4) == Bytes(4, 'A'), "bounded final-match clipping");
     check(decompress({}, 0).empty(), "empty output must not read input");
@@ -68,21 +67,18 @@ void compression_tests() {
         rejects([length] { (void)decompress(std::span(abc).first(length), 3); },
                 "truncated literal stream accepted");
     }
-    rejects([] { (void)decompress(Bytes{0x7e, 0x07, 0x00}, 3); },
-            "back-reference before output accepted");
-    rejects([] { (void)decompress(Bytes{0x7e, 0x00, 0x3f}, 3); },
-            "early terminator accepted");
+    rejects([] { (void)decompress(Bytes{0x7e, 0x07, 0x00}, 3); }, "back-reference before output accepted");
+    rejects([] { (void)decompress(Bytes{0x7e, 0x00, 0x3f}, 3); }, "early terminator accepted");
     rejects([] { (void)decompress(abc, 3, 2); }, "decompression allocation limit ignored");
 
     // Independently encoded 65,000 literal As. After this prefix the adaptive
     // code is one bit; the run crosses the 0x8000 rescaling boundary repeatedly.
     const Bytes rescale_prefix{
-        0xfb,0xfb,0x7a,0xbd,0xae,0xeb,0xba,0xd6,0x5a,0x6b,0xad,0xb5,0xaa,0xaa,0xaa,0xaa,
-        0xaa,0xaa,0xaa,0xaa,0x24,0x49,0x92,0x24,0x49,0x92,0x24,0x49,0x92,0x24,0x49,0x12,
-        0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0xd5,
-        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80
-    };
+        0xfb, 0xfb, 0x7a, 0xbd, 0xae, 0xeb, 0xba, 0xd6, 0x5a, 0x6b, 0xad, 0xb5, 0xaa, 0xaa, 0xaa, 0xaa,
+        0xaa, 0xaa, 0xaa, 0xaa, 0x24, 0x49, 0x92, 0x24, 0x49, 0x92, 0x24, 0x49, 0x92, 0x24, 0x49, 0x12,
+        0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xd5,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80};
     Bytes rescale_stream(8165, 0xff);
     std::copy(rescale_prefix.begin(), rescale_prefix.end(), rescale_stream.begin());
     rescale_stream.back() = 0x7f;
@@ -91,7 +87,7 @@ void compression_tests() {
     // Each call must own its adaptive state; this catches the old global tables.
     auto task = [] {
         for (int i = 0; i < 100; ++i) {
-            check(decompress(abc_repeat, 9) == Bytes({'A','B','C','A','B','C','A','B','C'}),
+            check(decompress(abc_repeat, 9) == Bytes({'A', 'B', 'C', 'A', 'B', 'C', 'A', 'B', 'C'}),
                   "concurrent decoder state interference");
         }
     };
@@ -113,13 +109,13 @@ void archive_tests() {
 
     Archive packed(one_entry(abc_repeat, 9));
     check(packed.metadata(0).compressed(), "compressed metadata");
-    check(packed.decode(0) == Bytes({'A','B','C','A','B','C','A','B','C'}), "archive decompression");
-    check(Archive(Bytes{4,0,0,0}).size() == 0, "empty archive");
+    check(packed.decode(0) == Bytes({'A', 'B', 'C', 'A', 'B', 'C', 'A', 'B', 'C'}), "archive decompression");
+    check(Archive(Bytes{4, 0, 0, 0}).size() == 0, "empty archive");
     check(Archive(one_entry({}, 0)).decode(0).empty(), "empty archive entry");
     rejects([] { (void)Archive(Bytes{}); }, "missing archive header accepted");
-    rejects([] { (void)Archive(Bytes{3,0,0,0}); }, "index overlapping header accepted");
-    rejects([] { (void)Archive(Bytes{8,0,0,0}); }, "out-of-range index accepted");
-    rejects([] { (void)Archive(Bytes{4,0,0,0,0}); }, "partial index entry accepted");
+    rejects([] { (void)Archive(Bytes{3, 0, 0, 0}); }, "index overlapping header accepted");
+    rejects([] { (void)Archive(Bytes{8, 0, 0, 0}); }, "out-of-range index accepted");
+    rejects([] { (void)Archive(Bytes{4, 0, 0, 0, 0}); }, "partial index entry accepted");
 
     auto invalid = one_entry(payload, 5);
     set_u32(invalid, invalid.size() - 4, 0xffffffffU);
@@ -164,7 +160,7 @@ void graphics_tests() {
         check(bytes == original, "graphics parser modified source bytes");
         check(graphics.kind == (palette ? GraphicsKind::spr : GraphicsKind::smp), "graphics kind");
         check(graphics.entries.size() == 2, "graphics count");
-        const auto& entry = graphics.entries.front();
+        const auto &entry = graphics.entries.front();
         check(entry.width == 2 && entry.height == 1 && entry.x == -1 && entry.y == -32768,
               "fixed-width signed fields");
         check(entry.offset == (palette ? 548U : 36U) && entry.size == 4, "graphics offset/size");
@@ -203,12 +199,21 @@ void malformed_corpus() {
     };
     for (unsigned trial = 0; trial < 2000; ++trial) {
         Bytes bytes(next() % 64);
-        for (auto& byte : bytes) {
+        for (auto &byte : bytes) {
             byte = static_cast<std::uint8_t>(next());
         }
-        try { (void)Archive(bytes); } catch (const AssetError&) {}
-        try { (void)parse_graphics(bytes); } catch (const AssetError&) {}
-        try { (void)decompress(bytes, next() % 512, 512); } catch (const AssetError&) {}
+        try {
+            (void)Archive(bytes);
+        } catch (const AssetError &) {
+        }
+        try {
+            (void)parse_graphics(bytes);
+        } catch (const AssetError &) {
+        }
+        try {
+            (void)decompress(bytes, next() % 512, 512);
+        } catch (const AssetError &) {
+        }
     }
 }
 } // namespace
@@ -221,7 +226,7 @@ int main() {
         malformed_corpus();
         std::cout << "Asset tests passed\n";
         return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << "Asset test failed: " << error.what() << '\n';
         return 1;
     }

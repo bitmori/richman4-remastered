@@ -25,13 +25,13 @@ class Audio {
     // Optional bank: SF2 or DLS supported by the installed FluidSynth. Otherwise
     // consult RICH4_SOUNDFONT, then the macOS system General MIDI bank. Never
     // copies or redistributes the platform's soundbank.
-    Audio(const std::filesystem::path& asset_directory, bool enabled = true,
-          const std::filesystem::path& soundbank = {});
+    Audio(const std::filesystem::path &asset_directory, bool enabled = true,
+          const std::filesystem::path &soundbank = {});
     ~Audio();
-    Audio(Audio&&) noexcept;
-    Audio& operator=(Audio&&) noexcept;
-    Audio(const Audio&) = delete;
-    Audio& operator=(const Audio&) = delete;
+    Audio(Audio &&) noexcept;
+    Audio &operator=(Audio &&) noexcept;
+    Audio(const Audio &) = delete;
+    Audio &operator=(const Audio &) = delete;
 
     void play_sound(std::size_t effect_mkf_index);
     // Original table: SPEAKING.MKF[1050 + character * 27 + category]. The caller
@@ -50,7 +50,7 @@ class Audio {
     [[nodiscard]] unsigned music_track() const noexcept;
     [[nodiscard]] Statistics statistics() const noexcept;
     [[nodiscard]] int queued_bytes() const;
-    [[nodiscard]] const std::string& music_diagnostic() const noexcept;
+    [[nodiscard]] const std::string &music_diagnostic() const noexcept;
 
   private:
     struct Impl;
