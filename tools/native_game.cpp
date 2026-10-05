@@ -289,7 +289,9 @@ class Application {
         auto last_tick = SDL_GetTicks();
         for (unsigned iteration = 0; running_; ++iteration) {
             draw();
-            if (options_.auto_rounds && !effects_.active() && !intro_.active()) // replay input waits for movies
+            // Replay input waits for movies; they only play on the board, so another screen (e.g. the
+            // stock market opened at a turn start) must still be driven, or a queued movie deadlocks.
+            if (options_.auto_rounds && !(effects_.active() && screen_ == Screen::game) && !intro_.active())
                 drive_test();
             SDL_Event event{};
             while (SDL_PollEvent(&event)) {
