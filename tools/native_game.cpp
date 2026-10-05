@@ -2872,6 +2872,14 @@ class Application {
                << ",\"audio_frames\":" << audio_->statistics().rendered_frames
                << ",\"audio_effects\":" << audio_->statistics().effects_started
                << ",\"audio_voices\":" << audio_->statistics().voices_started
+               // AUDIO glitch diagnostics (native_audio.hpp Statistics)
+               << ",\"audio_underruns\":" << audio_->statistics().underruns
+               << ",\"audio_starved_ms\":" << audio_->statistics().starved_ms
+               << ",\"audio_clipped_samples\":" << audio_->statistics().clipped_samples
+               << ",\"audio_limited_samples\":" << audio_->statistics().limited_samples
+               << ",\"audio_peak\":" << audio_->statistics().peak
+               << ",\"audio_max_update_gap_ms\":" << audio_->statistics().max_update_gap_ms
+               << ",\"audio_max_render_us\":" << audio_->statistics().max_render_us
                << ",\"music_available\":" << (audio_->music_available() ? "true" : "false")
                << ",\"audio_log\":{";
         for (bool first = true; const auto &[what, count] : audio_log_counts_) {
