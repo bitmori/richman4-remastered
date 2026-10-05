@@ -57,9 +57,11 @@ preserve the hand.
 Purchase, auction, and black-card handlers push a binary64 argument to
 `0x40df69`, which reads an **int32**. The migration passes the low 32 bits of the
 binary64 representation to the hostility rule; it does not replace this ABI
-accident with the apparently intended numerical amount. The expression's
-intermediate x87 versus binary64 rounding remains a targeted oracle follow-up;
-the active-card test suite does not claim exhaustive numeric equivalence here.
+accident with the apparently intended numerical amount. The shared
+`numeric::Extended` helper now preserves each original x87 operation and final
+binary64 spill, including the division-before-multiplication order. Its arithmetic
+is independently tested against real x87 instructions (migration 023); the card
+tests do not claim an exhaustive replay of every original handler.
 
 Robbery's inventory helper returns a bare tool ID. Its caller consequently uses
 that ID in the **card** price table for hostility, which is retained. Sleepwalk

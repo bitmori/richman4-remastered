@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "rich4/cards.hpp"
 #include "rich4/calendar.hpp"
+#include "rich4/legacy_float.hpp"
 #include "rich4/services.hpp"
 #include <algorithm>
 #include <bit>
@@ -92,6 +93,11 @@ void hostility(World& w, const CardCallbacks& cb, std::size_t from, std::size_t 
 std::int32_t double_argument_low_word(double value) {
     // Three original handlers push a double, but 0x40df69 reads an int32.
     return std::bit_cast<std::int32_t>(std::uint32_t(std::bit_cast<std::uint64_t>(value)));
+}
+std::int32_t property_hostility(std::int32_t indexed_base, std::uint8_t level) {
+    using E = numeric::Extended;
+    const auto value=E::from(indexed_base)*((E::from(level)+E::from(2))/E::from(5));
+    return double_argument_low_word(value.double_precision());
 }
 void consume(World& w, std::size_t actor, std::uint8_t id) {
     (void)consume_card(w.players[actor].state.cards,w.card_supply,id);
@@ -195,10 +201,14 @@ CardResult apply_card(World& w,Random& random,std::size_t actor,const CardUse& u
     auto selected=use.target;
     if ((id==24 || id==25) && !cb.market_closed)
         return result(CardUseStatus::missing_callback,"Stock market calendar is required");
+    if ((id==24 || id==25) && cb.market_closed())
+        return result(CardUseStatus::cancelled,"Stock market is closed");
     if (needs_target(id)) {
-        const auto options=legal_card_targets(w,actor,id,cb);
+        const auto options=legal_card_targets(w,actor,id,w.players[actor].state.controller_flags==1?cb:CardCallbacks{});
         if (options.empty()) return result(CardUseStatus::cancelled,"No legal target");
         if (!selected) {
+            if(w.players[actor].state.controller_flags!=1)
+                return result(CardUseStatus::cancelled,"Computer card parameter has no target");
             if (!cb.choose_target) return result(CardUseStatus::missing_callback,"Target selection is required");
             selected=cb.choose_target(id,options);
             if (!selected) return result(CardUseStatus::cancelled,"Target selection cancelled");
@@ -234,7 +244,7 @@ CardResult apply_card(World& w,Random& random,std::size_t actor,const CardUse& u
             return result(CardUseStatus::cancelled,"Standing property cannot be purchased");
         if (!cb.pay) return missing();
         auto p=property(w,standing);const auto seller=p.owner-1;const auto price=cost(w,standing);
-        hostility(w,cb,seller,actor,double_argument_low_word(double(mul32(p.base,index))*(p.level+2)/5));
+        hostility(w,cb,std::size_t(seller),actor,property_hostility(mul32(p.base,index),p.level));
         p.owner=std::uint8_t(actor+1);
         if (w.lease_mode) {
             constexpr std::array<std::uint32_t,6> intervals{0,0x20000,0x10000,0x600,0x300,0x100};
@@ -270,7 +280,7 @@ CardResult apply_card(World& w,Random& random,std::size_t actor,const CardUse& u
         if(!property_code(w,standing))return result(CardUseStatus::cancelled,"No standing property");
         if(!cb.auction_property)return missing();
         auto p=property(w,standing);
-        if(p.owner)hostility(w,cb,p.owner-1,actor,double_argument_low_word(double(mul32(p.base,index))*(p.level+2)/5));
+        if(p.owner)hostility(w,cb,p.owner-1,actor,property_hostility(mul32(p.base,index),p.level));
         if(!cb.auction_property(standing,std::int32_t(actor))){p.owner=0;p.expiry=0;}
         consume(w,actor,id);return used();
     }
@@ -349,8 +359,8 @@ CardResult apply_card(World& w,Random& random,std::size_t actor,const CardUse& u
         const auto redirected=cb.try_mianzui_jiahuo?cb.try_mianzui_jiahuo(target):std::int32_t(target);
         if(redirected<0)return used();
         if(std::size_t(redirected)>=w.players.size())return result(CardUseStatus::invalid,"Defense returned invalid player");
-        if(id==16)sleepwalk(w,redirected,redirected==std::int32_t(actor)?4:5,true);
-        else cb.add_prison(redirected,redirected==std::int32_t(actor)?4:5);
+        if(id==16)sleepwalk(w,std::size_t(redirected),redirected==std::int32_t(actor)?4:5,true);
+        else cb.add_prison(std::size_t(redirected),redirected==std::int32_t(actor)?4:5);
         if(redirected==target && has_card(w.players[target].state.cards,18)) {
             consume(w,target,18);
             if(id==16)sleepwalk(w,actor,5,false);else cb.add_prison(actor,5);
@@ -378,7 +388,9 @@ CardResult apply_card(World& w,Random& random,std::size_t actor,const CardUse& u
         if(id==25) {
             const float difference=old_price-std::bit_cast<float>(w.stocks[target].float_bits[2]);
             for(std::size_t i=0;i<w.players.size();++i) if(w.players[i].stocks[target].amount)
-                hostility(w,cb,i,actor,double_argument_low_word(double(w.players[i].stocks[target].amount)*difference/200));
+                hostility(w,cb,i,actor,double_argument_low_word(
+                    ((numeric::Extended::from(w.players[i].stocks[target].amount)*
+                      numeric::Extended::from(difference))/numeric::Extended::from(200)).double_precision()));
         }
         consume(w,actor,id);return used();
     }
@@ -393,7 +405,7 @@ CardResult apply_card(World& w,Random& random,std::size_t actor,const CardUse& u
         if(has_card(w.players[target].state.cards,19) && tax>2000) {
             const auto redirect=cb.try_frame(target,2);if(redirect!=-1)payer=redirect;
         }
-        if(payer!=std::int32_t(actor))cb.pay(payer,std::int32_t(actor),w.players.at(payer).state.cash/5,0);
+        if(payer!=std::int32_t(actor))cb.pay(payer,std::int32_t(actor),w.players.at(std::size_t(payer)).state.cash/5,0);
         return used();
     }
     case 27: case 28:

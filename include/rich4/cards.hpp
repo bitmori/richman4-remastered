@@ -27,6 +27,13 @@ struct CardResult {
     std::string message;
     [[nodiscard]] bool used() const noexcept { return status == CardUseStatus::used; }
 };
+struct CardLookahead {
+    std::vector<std::uint16_t> nodes;
+    bool crossed_junction = false; // 0x40b221 return value, used by tortoise AI.
+};
+struct CardAiMemory {
+    std::uint32_t parameter0 = 0, parameter1 = 0, parameter2 = 0;
+};
 
 struct CardCallbacks : EventCallbacks {
     std::function<void(std::size_t, std::size_t, std::int32_t)> hostility;
@@ -43,6 +50,7 @@ struct CardCallbacks : EventCallbacks {
     std::function<void(std::size_t)> detach_god;
     std::function<void(std::size_t, std::uint16_t)> attach_god;
     std::function<bool()> market_closed; // 0x428d01: news closure or calendar holiday.
+    std::function<CardLookahead(std::size_t, std::size_t)> lookahead_nodes;
     // Original 0x40a45c scan order and packed instance codes. Used by nearest-god
     // selection and computer predicates; presentation must not draw gameplay RNG.
     std::function<std::vector<std::uint16_t>(std::size_t)> nearby_instances;
@@ -59,5 +67,5 @@ struct CardCallbacks : EventCallbacks {
 // Original UI visit: scans at most eight cards; at most one is played. This is
 // separate from apply_card so manual actions never draw AI-only random values.
 [[nodiscard]] std::optional<CardUse> choose_ai_card(const World&, Random&, std::size_t actor,
-                                                    const CardCallbacks& = {});
+                                                    const CardCallbacks& = {}, CardAiMemory* = nullptr);
 } // namespace rich4
