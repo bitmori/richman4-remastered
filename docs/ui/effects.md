@@ -75,6 +75,11 @@ Many callers then call `fcn_0045285e(ms)`, a plain sleep that still pumps messag
 6. After the last step it sleeps `hold_ms`.
 7. Only when `obj == 0` does it erase the sprite afterwards. A tool object stays
    because it is now on the map.
+8. It never redraws the board (it saves/restores its own background), so the object placed by
+   `_rich4_place_object` before the throw only appears on the board after the landing sound and
+   `_rich4_refresh_screen` (rich4_tool_luzhang.asm:58-82). Native: the board hides an object at a
+   pending throw's target (`EffectPlayer::throw_pending`), and the commit-frame snapshot is only
+   taken while nothing emitted is waiting to be shown.
 
 ### Plot highlight pulse `fcn_00451985` (rich4.asm:25689)
 
@@ -146,6 +151,14 @@ the board; see main-screen.md §6.2.
   - Upgrade (core_actions:439 and 1161): increments the level, redraws, and plays
     preset `ref_004823da` = Effect **50**.
   - The new building simply appears on the next board redraw.
+- **Pauses (movement state machine `fcn_0040d7c4`, rich4_player_utils.asm:587-625).** Byte
+  `0x498ea5` counts down once per game tick (120/80/40 ms by speed). The walk end sets it to 5
+  (`loc_0040d916`), so the landing handler runs **5 ticks after the last step** (a stopped player:
+  2, line 1020). The handler returns 0x88 for every property node (core_actions:2347,
+  `loc_0041b111`), so after a purchase/upgrade/rent/decline the board (new owner flag or building)
+  stays **8 more ticks** before the next player; other squares return 0x80 (next tick).
+  Native: `EffectKind::pause` (object_kind = ticks), held by the app's presentation queue at 80 game
+  ms per tick (skipped by fast replays); a purchase/upgrade not yet presented is drawn as before.
 - **Reaching level 5 (top floor):** `fcn_0040b0cd` (rich4.asm:4534). It redraws the
   board, then plays `Data.mkf[523]` (`0x20b`): 440×440 at (0,40), flags `1`
   (overlay), sound **90** (`0x5a`), 66 frames × 42 ms ≈ **2.8 s**. The animation is
@@ -251,6 +264,20 @@ the player, then dispatches on the object kind through the jump table
 The Chinese names follow the art and doc 026 effects (**UNVERIFIED** naming).
 Kinds 11, 13 and 14 (dog, tool gift, points gift) have no appearance FLC.
 
+Sequence (stopping on the god, core_actions:2898 only when no steps remain): `fcn_0041d476(0,0,1)`
+redraw with the camera on the player, FLC at the **header delay** (flags 1: no speed override, no
+commit; sound at the first frame), then `fcn_0040e2a2` draws the 28 px caption at (220,460) straight
+on the screen **over the last movie frame** and waits 2400 ms (skippable, `fcn_004528b9`), then the
+slot machine (kinds 1/2/5/6) or the gift, then the 5-tick walk-end pause and the landing handler.
+Native: `EffectSpec::linger` keeps the last frame under the caption.
+
+**Attached objects on the board** (`fcn_0040829d` object loop, rich4.asm:1928-2026, 1706-1724). A
+carried object (god, picked-up time bomb) is drawn at its carrier's interpolated point plus a screen
+offset by `d = (8 − rotation + player.heading) & 7`: `ref_00474951` (−10,−22) (−22,−10) (−22,10)
+(−10,22) (10,22) (22,10) (22,−10) (10,−22), i.e. about 24 px behind the walker; a time bomb carried
+together with a god uses `ref_00474991` (twice as far). Frame `(d + 4) & 7`, depth = the offset
+point's y with priority 0. During a step the heading is the step's direction (rich4.asm:6168).
+
 Post-landing property hooks (`fcn_0040f381`, rich4_gods.asm:1196):
 
 - **Angel:** upgrade plus Effect sound, and the 523 sparkle at level 5.
@@ -265,7 +292,7 @@ Other actor and event FLCs (all at (0,40), 440 wide):
 
 | Event | Entry | Flags (commit) | Sound | asm | Notes |
 |---|---|---|---|---|---|
-| Sent to hospital | 524 ambulance, **440×74 at (0,210)** | `0x1E0001` (30) | 92 | rich4_hospital_utils.asm:92–107 | cfg-gated, 62 × 100 ms |
+| Sent to hospital (order: camera on the player, bubble `fcn_0044f2c2` at the old spot, move, movie, camera on the hospital, slot-20 bubble, fee; native draws the player at `from` during every earlier step, `PendingActor`) | 524 ambulance, **440×74 at (0,210)** | `0x1E0001` (30) | 92 | rich4_hospital_utils.asm:92–107 | cfg-gated, 62 × 100 ms |
 | Sent to prison | 538 police car | `0x120001` (18) | 94 | rich4_prison_utils.asm:92–107 | cfg-gated |
 | UFO abduction | 533 | `0x1C0001` (28) | 84 | rich4_player_utils.asm:290 (`fcn_0040d375`; from fortune and landing) | |
 | Airplane trip | 558 | `0x140001` (20) | 96 | rich4_player_utils.asm:377 (`fcn_0040d4e5`) | **UNVERIFIED** trigger |

@@ -468,6 +468,19 @@ RenderStats Renderer::render(graphics::Image &destination, const Scene &scene, c
             throw assets::AssetError("object sprite has no frames");
         }
         const auto direction = std::size_t((object.direction + 8 - camera.rotation) & 7);
+        if (object.follow) {
+            // rich4.asm:2003-2024 / 1706-1720: offset behind the carrier, frame (d + 4) & 7, priority 0.
+            static constexpr std::array<Point, 8> near{{{-10, -22}, {-22, -10}, {-22, 10}, {-10, 22},
+                                                        {10, 22}, {22, 10}, {22, -10}, {10, -22}}};
+            static constexpr std::array<Point, 8> far{{{-18, -44}, {-44, -18}, {-44, 18}, {-18, 44},
+                                                       {18, 44}, {44, 18}, {44, -18}, {18, -44}}};
+            if (const auto position = project(object.position, camera)) {
+                const auto offset = (object.follow == 2 ? far : near)[direction];
+                commands.push_back({{position->x + offset.x, position->y + offset.y}, 0,
+                                    &impl_->frame(true, index, ((direction + 4) & 7) % count)});
+            }
+            continue;
+        }
         const auto frame = count >= 8 ? direction : object.animation_frame % count;
         enqueue(object.position, true, index, frame);
     }

@@ -40,8 +40,16 @@ struct SceneData {
 // Original board draw rule (fcn_0040829d): a player is drawn when placed and not away or confined
 // (hotel/UFO/prison/hospital), unless walking into the hotel (controller 0x20).
 [[nodiscard]] bool on_board(const World &world, std::size_t slot);
+// Board object sprites (fcn_0040829d object loop, rich4.asm:1928-2026). An object carried by a player
+// (god, picked-up time bomb) follows that player's drawn sprite `players` (interpolated point and
+// heading) and is skipped when the carrier is not drawn; the rest stand on their node.
+std::vector<board::ObjectSprite> object_sprites(const World &world, const std::vector<board::PlayerSprite> &players,
+                                                std::uint8_t frame);
 // Same sprite construction as the main board (no walking interpolation). costumes: per-slot
 // GameSession::player_costume (gown/stripes pose), 0 = none.
+// Removes unattached object sprites that `hidden(position, kind)` says are not on the board yet.
+void hide_objects(std::vector<board::ObjectSprite> &objects,
+                  const std::function<bool(board::Point, std::uint8_t)> &hidden);
 SceneData make_scene(const World &world, std::uint64_t ticks, const std::array<std::uint8_t, 4> &costumes = {});
 
 // Per-kind playback table (values from docs/ui/effects.md §1-§6).
@@ -59,8 +67,29 @@ struct EffectSpec {
     // throughout; arrive = hidden until the commit frame; hide = hidden throughout.
     enum class Actor : std::uint8_t { world, leave, stay, arrive, hide } actor = Actor::world;
     bool injured = false; // the overridden actor uses the grey injured pose
+    // The last frame stays on screen after playback (no board redraw follows), e.g. under the god
+    // arrival caption (fcn_0040e2a2 draws on the primary surface over it). See EffectPlayer::linger.
+    bool linger = false;
 };
 EffectSpec effect_spec(const EffectEvent &effect);
+
+// A movie that takes a player away (ambulance, police car, UFO, airplane: Actor::leave; dog fight:
+// stay) shows them at its `from` point until its commit frame, and one that brings them back
+// (arrive) hides them until then. The world already holds the result, so while such a movie is still
+// pending, every earlier step (bubbles, boxes, other movies) must draw the player the same way: the
+// original only moves them right before that movie (rich4_hospital_utils.asm:40-90 bubble, move,
+// Data 524; rich4_prison_utils.asm likewise).
+struct PendingActor {
+    std::size_t slot = 0;
+    std::optional<board::Point> position; // nullopt = hidden
+    bool injured = false;
+};
+// Adds the override of `effect` unless an earlier pending effect already decides that player.
+void add_pending_actor(std::vector<PendingActor> &pending, const EffectEvent &effect);
+// Applies the overrides to a sprite list (players not on the board are added at their old point).
+void apply_pending_actors(std::vector<board::PlayerSprite> &players, const World &world,
+                          const std::vector<PendingActor> &pending, std::uint8_t frame,
+                          const std::array<std::uint8_t, 4> &costumes);
 
 class EffectPlayer {
   public:
@@ -75,8 +104,19 @@ class EffectPlayer {
     // Per-slot gown/stripes poses for the boards this player draws (GameSession::player_costume).
     void set_costumes(const std::array<std::uint8_t, 4> &costumes) noexcept { costumes_ = costumes; }
     void enqueue(std::vector<EffectEvent> effects, const void *owner);
+    // Overrides from effects the app has not handed over yet (its presentation queue), per frame.
+    void set_pending_actors(std::vector<PendingActor> pending) { pending_actors_ = std::move(pending); }
     [[nodiscard]] bool active() const noexcept { return current_.has_value() || !queue_.empty(); }
+    // The world already holds a thrown roadblock/mine/time bomb on its node while the throw is still
+    // queued or flying; the original only shows it after the throw lands (_rich4_animate_object
+    // restores its own background, then _rich4_refresh_screen). True for such an object.
+    [[nodiscard]] bool throw_pending(board::Point node, std::uint8_t kind) const;
     void clear();
+    // The finished movie of a `linger` spec, still on screen until the app drops it.
+    [[nodiscard]] bool lingering() const noexcept { return lingering_.has_value(); }
+    void draw_linger(graphics::Image &canvas, board::Renderer &board, const World &world, std::uint8_t rotation,
+                     std::uint64_t ticks);
+    void drop_linger() noexcept { lingering_.reset(); }
 
     using SoundFunction = std::function<void(std::size_t)>;
     // Advances by elapsed_ms (clamped) and paints the board viewport [0,40,440,480) of canvas:
@@ -102,10 +142,12 @@ class EffectPlayer {
     bool skip_ = false;
     std::deque<EffectEvent> queue_;
     std::optional<Playing> current_;
+    std::optional<Playing> lingering_;
     std::optional<SceneData> snapshot_;
     const void *snapshot_owner_ = nullptr;
     std::map<std::pair<char, int>, std::vector<std::uint8_t>> movies_;
     std::array<std::uint8_t, 4> costumes_{};
+    std::vector<PendingActor> pending_actors_;
 };
 
 } // namespace rich4::native

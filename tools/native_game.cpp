@@ -14,6 +14,7 @@
 #include "screens/messages.hpp"
 #include "rich4/board_renderer.hpp"
 #include "rich4/calendar.hpp"
+#include "rich4/direction.hpp"
 #include "rich4/game.hpp"
 #include "rich4/services.hpp"
 #include "rich4/stocks.hpp"
@@ -523,13 +524,17 @@ class Application {
             if (session_ && screen_ == Screen::game && !items_.popup_active() &&
                 !help_.active()) { // the card popup and the Help window are modal
                 observe(); // a GO press emits the roll before the clock advances
+                hold_ms_ -= std::min(hold_ms_, elapsed); // game time, so it follows the speed setting
                 if (!effects_.active() && !messages_.active() && !intro_.active()) // only the step shown advances
                     main_screen_.advance(elapsed);
                 pump_presentation();
                 // The original roll animation, board effects (EFFECTS) and every bubble/box/news popup
                 // block the game loop until everything already emitted has been shown, in order.
-                if (presentation_.empty() && !presenting())
+                if (presentation_.empty() && !presenting()) {
+                    // EFFECTS: the board as it is right before this tick's mutations (commit frames).
+                    effects_.remember(session_->world(), session_.get(), SDL_GetTicks());
                     session_->tick(elapsed);
+                }
                 observe();
                 if (session_->can_save() && last_autosaved_day_ != session_->completed_days()) {
                     write_save(options_.save_directory / "Autosave.DAT");
@@ -940,6 +945,7 @@ class Application {
         walk_sound_.stop(*audio_); // AUDIO
         auction_open_ = bankrupt_music_ = false;
         presentation_.clear();
+        hold_ms_ = 0;
         presented_player_.reset();
         items_.reset();
         auction_room_.reset();
@@ -1003,7 +1009,7 @@ class Application {
         std::optional<EffectEvent> effect;
     };
     bool presenting() const {
-        return intro_.active() || main_screen_.dice_busy() || effects_.active() || messages_.active() ||
+        return hold_ms_ > 0 || intro_.active() || main_screen_.dice_busy() || effects_.active() || messages_.active() ||
                spinners_.active() || monthly_.active() || auction_room_.sold_active() ||
                items_.magic_cast_active(); // MONTHLY / AUCTION / MAGIC full-screen sequences
     }
@@ -1011,7 +1017,12 @@ class Application {
         while (session_ && !presentation_.empty() && !presenting()) {
             auto step = std::move(presentation_.front());
             presentation_.pop_front();
-            if (step.effect && spinners::handles(*step.effect))
+            if (step.effect && step.effect->kind == EffectKind::pause) {
+                // The original's movement-state countdown (EffectKind::pause): the board stays as it
+                // is (e.g. the new owner flag / building) for N game ticks of 80 ms. Replays skip it.
+                if (!(options_.auto_rounds && !options_.play_effects))
+                    hold_ms_ = step.effect->object_kind * 80U;
+            } else if (step.effect && spinners::handles(*step.effect))
                 spinners_.enqueue(std::move(*step.effect)); // SPINNERS: computer spin / wheel slow-down
             else if (step.effect && native::monthly::handles(*step.effect))
                 monthly_.enqueue(std::move(*step.effect)); // MONTHLY: dividend / lottery draw / month report
@@ -1138,18 +1149,21 @@ class Application {
         if (!bank_pending())
             bank_screen_.reset();
         auto host = make_host();
-        if (session_)
-            items_.run_deferred();
-        items_.shot.clear();
-        if (options_.auto_rounds)
-            items_.clock = rendered_frames_ * 250;
         if (session_) { // EFFECTS: pre-mutation board for effect commit frames (only while idle)
             std::array<std::uint8_t, 4> costumes{}; // BOARD MOVIES: gown/stripes poses
             for (std::size_t slot = 0; slot < costumes.size(); ++slot)
                 costumes[slot] = session_->player_costume(slot);
             effects_.set_costumes(costumes);
-            effects_.remember(session_->world(), session_.get(), frame_.ticks);
+            // Only while nothing emitted is still waiting to be shown: otherwise the world already
+            // holds mutations whose pictures are pending (e.g. a thrown mine already on its node).
+            if (presentation_.empty() && !presenting())
+                effects_.remember(session_->world(), session_.get(), frame_.ticks);
         }
+        if (session_)
+            items_.run_deferred();
+        items_.shot.clear();
+        if (options_.auto_rounds)
+            items_.clock = rendered_frames_ * 250;
         const bool menu_backdrop = screen_ == Screen::menu || ((screen_ == Screen::settings || screen_ == Screen::load) &&
                                                                previous_screen_ == Screen::menu) ||
                                    !session_;
@@ -1272,6 +1286,8 @@ class Application {
             std::ostringstream name;
             name << "frame-" << std::setw(6) << std::setfill('0') << rendered_frames_ << ".ppm";
             graphics::write_ppm(canvas_, options_.output / name.str());
+            std::ofstream(options_.output / "capture-times.txt", std::ios::app) // dev: real-time strips
+                << name.str() << ' ' << SDL_GetTicks() << '\n';
         }
         if (options_.auto_rounds && !options_.output.empty() && !gallery_) {
             auto key = "screen-" + std::to_string(static_cast<int>(screen_));
@@ -1317,8 +1333,23 @@ class Application {
         const auto now = SDL_GetTicks();
         const auto elapsed = effect_ticks_ ? static_cast<unsigned>(std::min<Uint64>(now - effect_ticks_, 100)) : 0;
         effect_ticks_ = now;
-        if (!effects_.active())
+        if (!effects_.active()) {
+            // The god's last movie frame stays under its arrival caption (fcn_0040e2a2 draws the
+            // caption over it and waits 2400 ms; the next board redraw comes after).
+            if (effects_.lingering()) {
+                const auto caption = [](const GameEvent &event) {
+                    return event.announcement == Announcement::god_arrival;
+                };
+                const bool shown = messages_.active() && messages_.current()->kind == messages::Item::Kind::god_caption;
+                const bool next = !messages_.active() && !presentation_.empty() && presentation_.front().event &&
+                                  caption(*presentation_.front().event);
+                if (shown || next)
+                    effects_.draw_linger(canvas_, *board_, session_->world(), static_cast<std::uint8_t>(rotation_), now);
+                else
+                    effects_.drop_linger();
+            }
             return;
+        }
         effects_.draw(canvas_, *board_, session_->world(), static_cast<std::uint8_t>(rotation_), elapsed, now,
                       [this](std::size_t sound) {
                           if (sound_effects_)
@@ -1376,6 +1407,7 @@ class Application {
                 continue;
             board::Point position{state.x, state.y};
             bool moving = false;
+            auto heading = state.direction;
             if (const auto &animation = session_->animation(); animation && animation->player == state.slot) {
                 const auto &movement = *animation;
                 position.x = movement.from_x + (movement.to_x - movement.from_x) * int(movement.elapsed_ms) /
@@ -1383,9 +1415,14 @@ class Application {
                 position.y = movement.from_y + (movement.to_y - movement.from_y) * int(movement.elapsed_ms) /
                                                    int(movement.duration_ms);
                 moving = true;
+                // rich4.asm:6168-6179: every walk tick the heading (+16) is the direction of the step
+                // being walked (node +14 -> +12), so the walker and anything it carries face it.
+                if (movement.to_x != movement.from_x || movement.to_y != movement.from_y)
+                    heading = rich4::direction::from_delta(movement.to_x - movement.from_x,
+                                                           movement.to_y - movement.from_y);
             }
             players.push_back(
-                {position, state.character, state.direction,
+                {position, state.character, heading,
                  static_cast<std::uint8_t>((SDL_GetTicks() / 120) % 6),
                  static_cast<std::uint8_t>(state.traffic_method & 3U),
                  static_cast<std::uint16_t>(state.color), state.slot, state.slot == active.slot, moving,
@@ -1396,6 +1433,21 @@ class Application {
                 players.back().tossing = true;
                 players.back().animation_frame = *toss;
             }
+        }
+        { // EFFECTS: a player an ambulance/police/UFO/airplane movie still has to take away (or bring
+          // back) stays where the original still draws them during the steps before that movie.
+            std::vector<native::PendingActor> pending;
+            for (const auto &step : presentation_)
+                if (step.effect)
+                    native::add_pending_actor(pending, *step.effect);
+            std::array<std::uint8_t, 4> costumes{};
+            for (std::size_t slot = 0; slot < costumes.size(); ++slot)
+                costumes[slot] = session_->player_costume(slot);
+            native::apply_pending_actors(players, world, pending,
+                                         static_cast<std::uint8_t>((SDL_GetTicks() / 120) % 6), costumes);
+            for (auto &player : players)
+                player.active = player.slot == active.slot;
+            effects_.set_pending_actors(std::move(pending));
         }
         std::vector<board::PropertyState> lands, facilities;
         for (std::size_t index = 1; index < world.lands.size(); ++index) {
@@ -1408,6 +1460,32 @@ class Application {
             facilities.push_back({facility.id, facility.owner_code, facility.level, facility.facility_type,
                                   facility.temporary_state});
         }
+        // A purchase/upgrade not presented yet is not on the board yet: the original redraws the plot
+        // with the new owner flag / building when it buys (core_actions:1051/439), after the 5-tick
+        // walk-end pause, then holds 8 ticks (EffectKind::pause).
+        for (auto step = presentation_.rbegin(); step != presentation_.rend(); ++step) {
+            if (!step->event || step->event->node >= world.nodes.size())
+                continue;
+            const auto &event = *step->event;
+            const bool bought = event.kind == GameEventKind::land_purchased;
+            const bool raised = event.kind == GameEventKind::land_upgraded ||
+                                (event.kind == GameEventKind::notice && // god post-purchase hook (fcn_0040f8be)
+                                 (event.message == "福神帮助房屋升级" || event.message == "神明帮助房屋升级"));
+            if (!bought && !raised)
+                continue;
+            const auto code = world.nodes[event.node].type_and_index;
+            board::PropertyState *state = nullptr;
+            if (code > 2000 && code < 4000 && code - 2000U <= lands.size())
+                state = &lands[code - 2001U];
+            else if (code > 4000 && code < 6000 && code - 4000U <= facilities.size())
+                state = &facilities[code - 4001U];
+            if (!state)
+                continue;
+            if (bought)
+                state->owner = 0;
+            else if (state->level)
+                --state->level;
+        }
         board::Point center{active.x, active.y};
         for (const auto &player : players)
             if (player.active)
@@ -1415,26 +1493,24 @@ class Application {
         center = main_screen_.camera_center(center);
         if (target_center_ && session_->pending_decision())
             center = *target_center_;
-        if (const auto speaker = messages_.focus(); speaker && *speaker < world.players.size())
+        if (const auto speaker = messages_.focus(); speaker && *speaker < world.players.size()) {
             center = {world.players[*speaker].state.x, world.players[*speaker].state.y}; // Bubble speaker.
+            for (const auto &player : players) // where the speaker is drawn (PendingActor)
+                if (player.slot == *speaker)
+                    center = player.position;
+        }
         board::Camera camera{center, static_cast<std::uint8_t>(rotation_)};
         current_camera_ = camera;
-        std::vector<board::ObjectSprite> objects;
-        for (const auto &object : world.objects) {
-            std::optional<board::Point> position;
-            if (object.attached_player) {
-                for (const auto &player : players)
-                    if (player.slot + 1 == object.attached_player)
-                        position = player.position;
-            } else if (object.node_id && object.node_id < world.nodes.size()) {
-                const auto &node = world.nodes[object.node_id];
-                position = board::Point{node.x, node.y};
-            }
-            if (!position)
-                continue;
-            objects.push_back({*position, object.kind, object.direction,
-                               static_cast<std::uint8_t>((SDL_GetTicks() / 120) % 6)});
-        }
+        auto objects = native::object_sprites(world, players, static_cast<std::uint8_t>((SDL_GetTicks() / 120) % 6));
+        native::hide_objects(objects, [this](board::Point node, std::uint8_t kind) { // EFFECTS: throws in flight
+            if (effects_.throw_pending(node, kind))
+                return true;
+            return std::any_of(presentation_.begin(), presentation_.end(), [&](const PresentationStep &step) {
+                return step.effect && step.effect->kind == EffectKind::object_throw &&
+                       step.effect->object_kind == kind && step.effect->target.x == node.x &&
+                       step.effect->target.y == node.y;
+            });
+        });
         std::vector<board::SpecialPlayerSprite> special_players;
         for (std::size_t index = 0; index < world.special_actors.size(); ++index) {
             const auto &actor = world.special_actors[index];
@@ -2971,6 +3047,7 @@ class Application {
     unsigned dev_minigame_rounds_ = 0;  // MINIGAMES (dev)
     unsigned test_spinner_frames_ = 0; // SPINNERS (--play-effects): frames shown before the replay STOP
     std::deque<PresentationStep> presentation_; // see observe()
+    unsigned hold_ms_ = 0;                       // EffectKind::pause still to wait (game ms)
     std::optional<std::size_t> presented_player_;
     Uint64 effect_ticks_ = 0;                // EFFECTS: last draw_effects() time
     Uint64 effect_capture_ = 0;              // EFFECTS (--play-effects): next frame dump time
