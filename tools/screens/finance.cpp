@@ -2,6 +2,7 @@
 #include "finance.hpp"
 
 #include "../native_stock_names.hpp"
+#include "voices.hpp" // AUDIO: clerk voice ids
 
 #include "rich4/calendar.hpp"
 #include "rich4/stocks.hpp"
@@ -303,6 +304,7 @@ bool desk_available(const GameDecision &decision) {
 void BankScreen::say(Host &host, std::vector<std::string> lines) {
     lines_ = std::move(lines);
     line_started_ = host.frame.ticks;
+    ++said_; // AUDIO
 }
 
 std::int32_t BankScreen::atm_maximum(const World &world, std::size_t slot) const {
@@ -336,6 +338,16 @@ void BankScreen::draw(Host &host, const World &world, const GameDecision &decisi
             popup(host, popup_, 196);
         else
             popup_.clear();
+    }
+    // AUDIO: the clerk / director voices each balloon line as it appears (#0075..#0091).
+    if (!lines_.empty() && host.speech) {
+        const auto index = std::min(std::size_t((host.frame.ticks - line_started_) / 2000), lines_.size() - 1);
+        if (said_ != voiced_said_ || index != voiced_index_) {
+            voiced_said_ = said_;
+            voiced_index_ = index;
+            if (const auto voice = voices::clerk_voice(lines_[index]))
+                host.speech(*voice);
+        }
     }
 }
 

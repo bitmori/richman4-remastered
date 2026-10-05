@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <optional>
 #include <string>
@@ -71,6 +72,9 @@ class Screens {
                  const std::function<void(const std::string &)> &save);
 
     std::function<void(std::size_t)> sound; // Effect.mkf entry; may be empty
+    // AUDIO: Speaking.mkf clip (shop clerk 0-10, witch 37-57, nurse 127-130, thanks 123-126);
+    // the flag queues it after the current voice. May be empty.
+    std::function<void(std::size_t, bool)> speech;
     // Replay runs use a synthetic clock so timed balloons and popups advance per frame.
     std::optional<std::uint64_t> clock;
     // Name of the item screen drawn this frame (for headless screenshots); cleared by the caller.
@@ -124,6 +128,10 @@ class Screens {
     void draw_shop(Frame &, GameSession &, const GameDecision &, const Host &);
     void draw_magic(Frame &, GameSession &, const GameDecision &, const Host &);
     void draw_rescue(Frame &, GameSession &, const GameDecision &, const Host &);
+    // AUDIO: speaks `clips` (in turn) once each time `key` changes; an empty key re-arms.
+    void voice_once(const std::string &key, std::initializer_list<std::size_t> clips);
+    void rescue_voice(bool hospital, int slot);
+    std::string voiced_;
 
     std::deque<Popup> popups_;
     std::vector<std::function<void()>> deferred_;

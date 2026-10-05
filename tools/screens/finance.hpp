@@ -143,6 +143,8 @@ class BankScreen {
     std::vector<std::string> lines_;
     std::uint64_t line_started_ = 0, side_started_ = 0, popup_until_ = 0;
     std::string popup_;
+    std::uint64_t said_ = 0, voiced_said_ = 0; // AUDIO: say() serial, and the one being voiced
+    std::size_t voiced_index_ = 0;
 };
 
 // DecisionKind::primary_stock: Panel 73:5 prompt box above the number pad.

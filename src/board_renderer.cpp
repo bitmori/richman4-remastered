@@ -382,6 +382,29 @@ RenderStats Renderer::render_ground(graphics::Image &destination, const Camera &
 RenderStats Renderer::render(graphics::Image &destination, const Scene &scene, const Camera &camera) {
     auto stats = render_ground(destination, camera);
     const auto clip = effective_clip(destination, camera);
+    // 漲價卡 / 查封卡 streets (fcn_0040829d rich4.asm:2170, 2354): straight onto the ground, before
+    // any sprite, every set pixel of map.mkf 26 frame (direction & 1) + (facility ? 2 : 0) is ORed
+    // with the mode colour of 0x488ef0 (RGB555: mode 0 = 0x7c00 for 漲價, mode 1 = 0x003f for 查封).
+    for (std::size_t table = 1; table <= 2; ++table) {
+        for (const auto &state : table == 1 ? scene.lands : scene.facilities) {
+            if (!state.temporary || state.id == 0 || state.id >= impl_->placements[table].size())
+                continue;
+            const auto &placement = impl_->placements[table][state.id];
+            const auto position = project(placement.position, camera);
+            if (!position)
+                continue;
+            const auto direction = std::size_t((8 - ((placement.direction + camera.rotation) & 7)) & 7);
+            const auto &mask = impl_->frame(false, 0x1a, (direction & 1U) + (table == 2 ? 2U : 0U));
+            const std::uint16_t tint = (state.temporary & 1U) ? 0x003f : 0x7c00;
+            const int left = position->x - mask.origin_x, top = position->y - mask.origin_y;
+            for (int y = std::max(top, clip.top); y < std::min(top + mask.height, clip.bottom); ++y)
+                for (int x = std::max(left, clip.left); x < std::min(left + mask.width, clip.right); ++x) {
+                    const auto source = std::size_t((y - top) * mask.width + (x - left));
+                    if (!mask.opaque_pixels.empty() && mask.opaque_pixels[source])
+                        destination.pixels[std::size_t(y * destination.width + x)] |= tint;
+                }
+        }
+    }
     struct DrawCommand {
         Point anchor;
         int priority;

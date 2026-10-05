@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "board_audio.hpp" // AUDIO: walk loops, context music
 #include "native_audio.hpp"
 #include "native_frame.hpp"
+#include "screens/voices.hpp" // AUDIO: auction / lottery announcer clips
 #include "native_stock_names.hpp"
 #include "native_ui.hpp"
 #include "screens/finance.hpp"
@@ -253,6 +255,16 @@ class Application {
             if (sound_effects_)
                 audio_->play_sound(effect);
         };
+        items_.speech = [this](std::size_t clip, bool queued) { speak(clip, queued); }; // AUDIO
+        if (!options_.output.empty()) { // AUDIO: which music/loops/voices start and stop, in order
+            audio_log_.open(options_.output / "audio.jsonl");
+            audio_->set_trace([this](std::string_view what, std::string_view detail) {
+                ++audio_log_counts_[std::string(what)];
+                audio_log_ << "{\"frame\":" << rendered_frames_ << ",\"day\":"
+                           << (session_ ? session_->completed_days() : 0) << ",\"audio\":" << quoted(what)
+                           << ",\"detail\":" << quoted(detail) << "}\n";
+            });
+        }
         if (!audio_->music_available())
             std::cerr << audio_->music_diagnostic() << '\n';
     }
@@ -496,6 +508,7 @@ class Application {
             }
             if (options_.auto_rounds && iteration > 50000)
                 throw std::runtime_error("Native UI replay exceeded its operation limit");
+            update_board_audio(); // AUDIO
             audio_->update();
             if (!options_.auto_rounds)
                 SDL_Delay(8);
@@ -548,7 +561,72 @@ class Application {
                     toast_ = message;
                     toast_until_ = SDL_GetTicks() + 2200;
                 },
-                options_.auto_rounds != 0 || !options_.gallery.empty()};
+                options_.auto_rounds != 0 || !options_.gallery.empty(),
+                [this](std::size_t clip) { speak(clip, false); }}; // AUDIO: clerk voices
+    }
+    // AUDIO: a clerk/announcer clip (Speaking.mkf), queued after the current voice if asked.
+    void speak(std::size_t clip, bool queued) {
+        if (!sound_effects_)
+            return;
+        if (queued)
+            audio_->queue_speech(clip);
+        else
+            audio_->play_speech(clip);
+    }
+    // AUDIO: once per frame. Walk/time-bomb loops follow the step being shown; context music
+    // follows the screen (menu, setup, intro, decision screens, bankruptcy, victory, holidays).
+    void update_board_audio() {
+        const auto now = SDL_GetTicks();
+        std::optional<std::size_t> walk, bomb;
+        if (session_ && screen_ == Screen::game && sound_effects_ && !intro_.active())
+            if (const auto &animation = session_->animation()) {
+                walk = native::walk_loop_clip(session_->world(), animation->player);
+                bomb = native::bomb_loop_clip(session_->world(), animation->player);
+            }
+        walk_sound_.update(*audio_, walk, bomb, now);
+        if (!session_ || !session_->pending_decision())
+            voiced_decision_key_.clear(); // the next visit's identical decision speaks again
+        if (bankrupt_music_ && presentation_.empty() && !presenting())
+            bankrupt_music_ = false;
+        std::vector<audio::Music> wanted;
+        const bool from_menu = (screen_ == Screen::settings || screen_ == Screen::load) && previous_screen_ == Screen::menu;
+        if (screen_ == Screen::menu || from_menu || (!session_ && screen_ != Screen::new_game))
+            wanted = {audio::Music::menu}; // ui_main.asm:483
+        else if (screen_ == Screen::new_game)
+            wanted = {audio::Music::setup}; // new_game.asm:4009 (replaces MIDI01)
+        else if (session_) {
+            if (const auto holiday = native::holiday_music(session_->world()))
+                wanted.push_back(*holiday);
+            if (intro_.active() && screen_ == Screen::game)
+                wanted = {audio::Music::silence}; // rich4.asm:7236: the intro stops the music
+            else if (session_->phase() == GamePhase::finished)
+                wanted.push_back(audio::Music::shop); // victory sequence MIDI07, new_game.asm:4531
+            else if (bankrupt_music_)
+                wanted.push_back(audio::Music::bankrupt); // bankrupt.asm:216
+            else if (const auto &decision = session_->pending_decision();
+                     decision && presentation_.empty() && !effects_.active())
+                if (const auto music = native::decision_music(*decision))
+                    wanted.push_back(*music);
+        }
+        music_director_.update(*audio_, wanted, now);
+    }
+    // AUDIO: announcer lines and sounds of the lottery kiosk and the auction room as their
+    // decision first shows (ui_letou.asm bar entry 11-13 / 15, ui_auction.asm 131-132).
+    void voice_decision_shown(const GameDecision &decision) {
+        if (decision.kind == DecisionKind::lottery) {
+            const bool can_buy = std::any_of(decision.options.begin(), decision.options.end(),
+                                             [](const auto &option) { return option.value > 0; });
+            if (can_buy) {
+                speak(11, false);
+                speak(12, true);
+                speak(13, true);
+            } else
+                speak(15, false);
+        } else if (decision.kind == DecisionKind::auction && !auction_open_) {
+            auction_open_ = true;
+            speak(131, false);
+            speak(132, true);
+        }
     }
     void pad_key(SDL_Keycode key) {
         auto host = make_host();
@@ -769,6 +847,8 @@ class Application {
                               static_cast<std::uint16_t>(local.tm_year + 1900)};
         selected_map_ = choice.map;
         selected_stage_ = choice.stage;
+        audio_->select_music(1); // AUDIO: a new game starts the board playlist at RICH08 (rich4.asm:7259)
+        music_director_.forget();
         configuration.map_id = static_cast<std::uint16_t>(choice.map);
         configuration.stage_id = static_cast<std::uint16_t>(choice.stage);
         configuration.initial_fund = choice.fund;
@@ -814,6 +894,8 @@ class Application {
         monthly_.clear(); // MONTHLY
         minigames_.clear(); // MINIGAMES: the replay harness keeps the original closed mode
         session_->set_interactive_mini_games(interactive_minigames_ && !options_.auto_rounds);
+        walk_sound_.stop(*audio_); // AUDIO
+        auction_open_ = bankrupt_music_ = false;
         presentation_.clear();
         presented_player_.reset();
         items_.reset();
@@ -839,6 +921,8 @@ class Application {
             if (state >> signature >> stored_seed && signature == "RICH4-RNG-1")
                 seed = stored_seed;
             install_session(World::from_save(SaveFile::decode(bytes)), seed);
+            audio_->select_music(0); // AUDIO: loading moves on to the next playlist track (save_load.asm:978)
+            music_director_.forget();
             ++loads_;
             load_failed_ = false;
             toast_ = "讀取完成";
@@ -886,8 +970,11 @@ class Application {
                 spinners_.enqueue(std::move(*step.effect)); // SPINNERS: computer spin / wheel slow-down
             else if (step.effect && native::monthly::handles(*step.effect))
                 monthly_.enqueue(std::move(*step.effect)); // MONTHLY: dividend / lottery draw / month report
-            else if (step.effect)
+            else if (step.effect) {
+                if (step.effect->kind == EffectKind::bankrupt)
+                    bankrupt_music_ = true; // AUDIO: MIDI03 over the bankruptcy movie
                 effects_.enqueue({std::move(*step.effect)}, session_.get()); // EFFECTS
+            }
             else
                 present(*step.event);
         }
@@ -898,8 +985,22 @@ class Application {
         main_screen_.on_event(event, *session_, artwork_);
         if (auto item = messages::from_event(event, session_->world()))
             messages_.push(std::move(*item)); // Voices play when their bubble appears.
+        if (event.message == "拍卖成交" || event.message == "地产拍卖流拍") // AUDIO: auction result
+            auction_open_ = false;
+        if (event.kind == GameEventKind::player_bankrupt)
+            bankrupt_music_ = true; // AUDIO: MIDI03 until the bankruptcy presentation is over
         if (!sound_effects_)
             return;
+        if (event.sound) // AUDIO: core sound cue (god leaves, gift pickup, turn-around, 工程車)
+            audio_->play_sound(*event.sound);
+        if (event.message == "拍卖成交") { // AUDIO: gavel 63, "%d元成交" 135, "恭喜X購得此地！" 136+c
+            audio_->play_sound(63);
+            speak(135, false);
+            if (event.subject >= 0 && std::size_t(event.subject) < session_->world().players.size())
+                speak(native::voices::auction_buyer_voice(session_->world().players[std::size_t(event.subject)].state.character),
+                      true);
+        } else if (event.message == "地产拍卖流拍")
+            speak(148, false); // 無人出價，宣佈流標。
         switch (event.kind) { // the dice sound fires at frame 30 of the dice FLC (MainScreen)
         case GameEventKind::land_purchased:
             audio_->play_sound(49);
@@ -1042,6 +1143,7 @@ class Application {
                            if (!audio_->music_enabled())
                                audio_->set_music(true);
                            audio_->select_music(track);
+                           music_director_.forget(); // AUDIO: the pick drops the context stack
                        },
                        audio_->music_enabled() ? audio_->music_track() : 0,
                        [this] { open_setup(selected_stage_); },
@@ -1227,11 +1329,13 @@ class Application {
         std::vector<board::PropertyState> lands, facilities;
         for (std::size_t index = 1; index < world.lands.size(); ++index) {
             const auto &land = world.lands[index];
-            lands.push_back({land.id, land.economy.owner_code, land.economy.level, land.economy.chain_store});
+            lands.push_back({land.id, land.economy.owner_code, land.economy.level, land.economy.chain_store,
+                             land.temporary_state}); // temporary: 漲價卡/查封卡 tint (map.mkf 26)
         }
         for (std::size_t index = 1; index < world.facilities.size(); ++index) {
             const auto &facility = world.facilities[index];
-            facilities.push_back({facility.id, facility.owner_code, facility.level, facility.facility_type});
+            facilities.push_back({facility.id, facility.owner_code, facility.level, facility.facility_type,
+                                  facility.temporary_state});
         }
         board::Point center{active.x, active.y};
         for (const auto &player : players)
@@ -1572,6 +1676,10 @@ class Application {
     void draw_decision() {
         buttons_.clear(); // A modal must never activate covered board controls.
         const auto &decision = *session_->pending_decision();
+        if (voiced_decision_key_ != decision_key_) { // AUDIO: voices when a decision first shows
+            voiced_decision_key_ = decision_key_;
+            voice_decision_shown(decision);
+        }
         if (decision.kind == DecisionKind::bank) {
             auto host = make_host();
             bank_screen_.draw(host, session_->world(), decision, pad_, bank_actions());
@@ -1668,11 +1776,23 @@ class Application {
             decision->kind == DecisionKind::bank || decision->kind == DecisionKind::primary_stock
                 ? bank_amount_
                 : 0;
+        const auto kind = decision->kind; // AUDIO: answer sounds below
+        const auto value = index < decision->options.size() ? decision->options[index].value : 0;
+        const bool can_buy = std::any_of(decision->options.begin(), decision->options.end(),
+                                         [](const auto &option) { return option.value > 0; });
         if (!session_->respond(index, amount)) {
             toast_ = "金額、點數或持有數量不足";
             toast_until_ = SDL_GetTicks() + 2200;
             return false;
         }
+        if (sound_effects_ && kind == DecisionKind::lottery) { // ui_letou.asm:1227 pick 31, 拜拜！ 14 / 下次再來吧！ 16
+            if (value > 0) {
+                audio_->play_sound(31);
+                speak(14, false);
+            } else if (can_buy)
+                speak(16, false);
+        } else if (sound_effects_ && kind == DecisionKind::auction && value >= 1 && value <= 5)
+            audio_->play_sound(29); // ui_auction.asm:1776 bid
         return true;
     }
     // split: release on a later frame, so press-and-hold feedback is exercised and visible.
@@ -2636,6 +2756,12 @@ class Application {
                << ",\"audio_effects\":" << audio_->statistics().effects_started
                << ",\"audio_voices\":" << audio_->statistics().voices_started
                << ",\"music_available\":" << (audio_->music_available() ? "true" : "false")
+               << ",\"audio_log\":{";
+        for (bool first = true; const auto &[what, count] : audio_log_counts_) {
+            report << (first ? "" : ",") << quoted(what) << ':' << count;
+            first = false;
+        }
+        report << "}"
                << ",\"unsupported_events\":[";
         for (std::size_t index = 0; index < unsupported_.size(); ++index) {
             if (index)
@@ -2764,6 +2890,12 @@ class Application {
     std::size_t decision_page_ = 0;
     std::ofstream events_;
     std::ofstream inputs_;
+    std::ofstream audio_log_;                            // AUDIO: OUTPUT/audio.jsonl
+    std::map<std::string, std::uint64_t> audio_log_counts_; // AUDIO: report "audio_log"
+    native::WalkSound walk_sound_;                       // AUDIO
+    native::MusicDirector music_director_;               // AUDIO
+    std::string voiced_decision_key_;                    // AUDIO: decision whose voices played
+    bool auction_open_ = false, bankrupt_music_ = false; // AUDIO
     std::set<std::string> captured_frames_;
     std::map<std::string, unsigned> item_shots_;
     std::map<GameEventKind, std::uint64_t> event_counts_;

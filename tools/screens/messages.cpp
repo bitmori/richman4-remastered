@@ -280,6 +280,24 @@ std::optional<Item> from_event(const GameEvent &event, const World &world) {
         return box(format(patterns[event.announcement_id],
                           {player_name(world, std::int64_t(event.player)), std::int64_t(event.value)}));
     }
+    case Announcement::toll_waived: { // AUDIO item 4: _rich4_check_pay_toll_to_owner strings 0x463bb8..0x463c54
+        static constexpr std::array<std::string_view, 9> patterns{
+            "房屋查封中\n\n免收%s！", "與%s同盟中\n\n免收%s！", "死神顯靈\n\n免收%s！",
+            "%s住宿中\n\n免收%s！",   "%s消失中\n\n免收%s！",   "%s坐牢中\n\n免收%s！",
+            "%s住院中\n\n免收%s！",   "%s冬眠中\n\n免收%s！",   "%s夢遊中\n\n免收%s！"};
+        if (event.announcement_id >= patterns.size())
+            return std::nullopt;
+        // Fee names 0x47517c[0x47528b[type]]: lands 過路費; facility type 1 住宿費, 2 購物費, 3 加油費.
+        std::string_view fee = "過路費";
+        if (event.property > 4000 && std::size_t(event.property - 4000) < world.facilities.size()) {
+            const auto type = world.facilities[event.property - 4000].facility_type;
+            fee = type == 1 ? "住宿費" : type == 2 ? "購物費" : type == 3 ? "加油費" : "過路費";
+        }
+        const auto pattern = patterns[event.announcement_id];
+        if (event.announcement_id == 0 || event.announcement_id == 2)
+            return box(format(pattern, {fee}));
+        return box(format(pattern, {player_name(world, event.subject), fee}));
+    }
     case Announcement::point_coupon:
         return box(event.amount == 50   ? "得點券５０點"
                    : event.amount == 30 ? "得點券３０點"

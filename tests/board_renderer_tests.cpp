@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "rich4/assets.hpp"
 #include "rich4/board_renderer.hpp"
+#include "rich4/world.hpp"
 
 #include <algorithm>
 #include <array>
@@ -107,6 +108,32 @@ std::size_t compare_projection_golden(const std::filesystem::path &path) {
 void asset_tests(const std::filesystem::path &assets, const std::filesystem::path &output) {
     using namespace rich4;
     std::filesystem::create_directories(output);
+    // 漲價卡/查封卡 tint (map.mkf 26): only ground pixels under the lot mask change, each ORed with
+    // the card's colour, and a cleared tmp_state draws nothing.
+    {
+        board::Renderer renderer(assets, 0);
+        assets::Archive map(assets / "map.mkf");
+        const auto world = World::from_map_resource(map.decode(1));
+        const auto &land = world.lands.at(1);
+        const board::Camera camera{{land.x, land.y}};
+        for (const auto [temporary, tint] : {std::pair{0x50, 0x7c00}, std::pair{0x31, 0x003f}}) {
+            std::array<board::PropertyState, 1> plain{{{1, 0, 0, 0, 0}}};
+            auto tinted_state = plain;
+            tinted_state[0].temporary = std::uint8_t(temporary);
+            auto base = graphics::make_canvas(640, 480, 0x1234);
+            renderer.render(base, {{}, {}, plain, {}}, camera);
+            auto tinted = graphics::make_canvas(640, 480, 0x1234);
+            renderer.render(tinted, {{}, {}, tinted_state, {}}, camera);
+            std::size_t changed = 0;
+            for (std::size_t i = 0; i < base.pixels.size(); ++i)
+                if (tinted.pixels[i] != base.pixels[i]) {
+                    require(tinted.pixels[i] == std::uint16_t(base.pixels[i] | tint), "lot tint is not an OR");
+                    ++changed;
+                }
+            require(changed > 200, "漲價卡/查封卡 lot tint not drawn");
+            graphics::write_ppm(tinted, output / ("lot-tint-" + std::to_string(temporary) + ".ppm"));
+        }
+    }
     // Put two actors on an otherwise empty, off-map camera. Their shared anchor
     // makes depth ties observable: the active actor must cover the inactive one
     // even when the active actor was inserted first. Expected art is decoded
