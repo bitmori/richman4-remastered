@@ -97,6 +97,7 @@ struct Options {
     bool touch = false; // finger-sized number pad (always on Android; --touch on desktop)
     fs::path gallery;   // dev: render every original-style menu/finance screen to DIR and exit
     bool items_gallery = false; // dev: render every card/tool/shop screen into OUTPUT/gallery
+    bool colour_gallery = false; // dev: info panel + owned plots for all 12 characters (OUTPUT/colours)
     bool monthly_gallery = false; // MONTHLY (dev): play sample monthly screens into OUTPUT/gallery
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
@@ -137,6 +138,8 @@ Options arguments(int argc, char **argv) {
             options.play_effects = true;
         else if (argument == "--overlay-gallery") // Dev: dump sample bubbles/boxes/news as gallery-*.ppm
             options.overlay_gallery = true;
+        else if (argument == "--colour-gallery")
+            options.colour_gallery = true;
         else if (argument == "--items-gallery")
             options.items_gallery = true;
         else if (argument == "--monthly-gallery") // MONTHLY (dev)
@@ -332,6 +335,12 @@ class Application {
                 [this](const std::string &name) {
                     graphics::write_ppm(canvas_, options_.output / "gallery" / (name + ".ppm"));
                 });
+            return 0;
+        }
+        if (options_.colour_gallery) {
+            if (options_.output.empty())
+                throw std::invalid_argument("--colour-gallery requires --output DIR");
+            colour_gallery();
             return 0;
         }
         if (options_.monthly_gallery && !options_.output.empty()) { // MONTHLY (dev): sample screens
@@ -1425,7 +1434,7 @@ class Application {
                 {position, state.character, heading,
                  static_cast<std::uint8_t>((SDL_GetTicks() / 120) % 6),
                  static_cast<std::uint8_t>(state.traffic_method & 3U),
-                 static_cast<std::uint16_t>(state.color), state.slot, state.slot == active.slot, moving,
+                 ui::player_color(state.color), state.slot, state.slot == active.slot, moving,
                  state.node_id < world.nodes.size() && (world.nodes[state.node_id].flags & 0x80000000U) != 0,
                  player.status.days_sleep_walking != 0, (state.controller_flags & 0x40U) != 0});
             players.back().special_pose = session_->player_costume(state.slot); // BOARD MOVIES: gown/stripes
@@ -1535,7 +1544,8 @@ class Application {
         for (const auto &company : world.commercials)
             if (company.id)
                 companies.push_back({company.id, company.owner_code, 0, 0});
-        board_->render(canvas_, {players, objects, lands, facilities, special_players, companies}, camera);
+        const auto owners = native::property_owners(world);
+        board_->render(canvas_, {players, objects, lands, facilities, special_players, companies, owners}, camera);
         native::MainScreenActions actions;
         actions.help = [this] { help_.open(20, 60); }; // HELP: toolbar "?" opens at (20, 60)
         actions.options = [this] { screen_ = Screen::settings; };
@@ -2703,6 +2713,50 @@ class Application {
         save_shot("endgame-stage-clear-multi");
         endgame_.close();
     }
+    // Dev: all 12 characters in three games of four. In each shot the info-panel player owns
+    // every land (levels 0..5), so the name bar, plot outlines/flags and minimap dots sit side by side.
+    void colour_gallery() {
+        fs::create_directories(options_.output / "colours");
+        NewGameOptions configuration;
+        configuration.random_seed = options_.seed;
+        for (std::uint8_t group = 0; group < 3; ++group) {
+            configuration.players.clear();
+            for (std::uint8_t i = 0; i < 4; ++i)
+                configuration.players.push_back(
+                    {static_cast<std::uint8_t>(group * 4 + i), i ? std::uint8_t(2) : std::uint8_t(1), 0, 0});
+            const auto world = World::from_map_resource(artwork_.archive('m').decode(1), configuration);
+            for (std::uint8_t slot = 0; slot < 4; ++slot) {
+                auto copy = world;
+                copy.header.current_player = slot;
+                for (std::size_t id = 1; id < copy.lands.size(); ++id) {
+                    copy.lands[id].economy.owner_code = static_cast<std::uint8_t>(slot + 1);
+                    copy.lands[id].economy.level = static_cast<std::uint8_t>(id % 6);
+                }
+                install_session(std::move(copy), options_.seed);
+                screen_ = Screen::game;
+                buttons_.clear();
+                canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
+                draw_board();
+                graphics::write_ppm(canvas_, options_.output / "colours" /
+                                                 ("character-" + std::to_string(group * 4 + slot) + ".ppm"));
+            }
+        }
+        // The same plots owned by 沙隆巴斯 (slot 1) while he is in hospital: not drawn, colour kept.
+        configuration.players = {{0, 1, 0, 0}, {1, 2, 0, 0}, {2, 2, 0, 0}, {3, 2, 0, 0}};
+        auto world = World::from_map_resource(artwork_.archive('m').decode(1), configuration);
+        for (std::size_t id = 1; id < world.lands.size(); ++id) {
+            world.lands[id].economy.owner_code = 2;
+            world.lands[id].economy.level = static_cast<std::uint8_t>(id % 6);
+        }
+        world.players[1].status.days_in_hospital = 3;
+        install_session(std::move(world), options_.seed);
+        screen_ = Screen::game;
+        buttons_.clear();
+        canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
+        draw_board();
+        graphics::write_ppm(canvas_, options_.output / "colours" / "owner-in-hospital.ppm");
+        write_save(options_.output / "colours" / "owner-in-hospital.DAT");
+    }
     // Renders sample overlays over the current board for visual review (headless --output only).
     void dump_overlay_gallery() {
         const auto &world = session_->world();
@@ -2746,6 +2800,9 @@ class Application {
         auto coupon = event(Announcement::point_coupon);
         coupon.amount = 50;
         shoot("box-coupon", messages::from_event(coupon, world));
+        auto mini_game = event(Announcement::mini_game_points);
+        mini_game.amount = 63;
+        shoot("box-mini-game", messages::from_event(mini_game, world));
         auto absent = event(Announcement::absent_status, 2);
         absent.value = 3;
         shoot("box-prison", messages::from_event(absent, world));

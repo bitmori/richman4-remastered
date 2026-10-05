@@ -197,6 +197,30 @@ The header is drawn by `fcn_004166f8` (8422).
 
 ## 4. Minimap
 
+### Player colour (one source for every colour-coded element)
+
+A player's colour is the dword at player +4, copied from the character table
+(`rich4_characters.c`, native `profiles` in `src/world.cpp`) and formatted `0x00RRGGBB`
+(e.g. 沙隆巴斯 0xbdc3c6 grey, 錢夫人 0xc626c3 magenta). It is never a slot or seat colour.
+Every use goes through `_rich4_convert_color` (`rich4_pixel_convert_utils.asm`; RGB555 =
+`fcn_0045523e`, the top 5 bits of each byte):
+
+- the info-panel bars (`fcn_004561be`: rich4.asm:8020 mode 0, 8508 the other panel modes);
+- the minimap and full-map ownership dots (`fcn_00456384`, which converts too: rich4.asm:3752);
+- the board's building outline, SPR palette slot 255, set per placed sprite from the
+  owner byte (rich4.asm:2585-2607). An owned empty lot draws the flag sprite (`0x48aea8`)
+  with frame = the owner's character (player +19, rich4.asm:2122).
+
+The board reads both for every owner from the player record, whether the owner is drawn or
+not, so a hospitalised, jailed, hotel or away owner's plots never change. The disassembly has no
+other read of player +4 (none in the auction, monthly report or trading screens).
+
+Native: `ui::player_color` (`tools/native_ui.hpp`) is the only conversion. The board gets a
+per-slot `board::PropertyOwner` table (`Scene::owners`, built by `native::property_owners`),
+independent of the drawn player sprites. Before 2026-10, the board truncated the dword to 16 bits
+(0xbdc3c6 -> 0xc3c6, drawn green) and fell back to fixed red/green/blue/yellow and character 0's
+flag for an owner who was not drawn.
+
 ### 4.1 Panel minimap (modes 1 and 2: 200x200 at (440,T))
 
 The panel minimap is drawn by `fcn_00416e6d` (9036). The scale is `s(v) = (v*5696) >> 16` (≈ v/11.5).

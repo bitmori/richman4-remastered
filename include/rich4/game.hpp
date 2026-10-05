@@ -146,6 +146,7 @@ enum class Announcement : std::uint8_t {
                        // 7 hibernating, 8 sleepwalking; subject = owner, property = 2000+land / 4000+facility.
     tool_use,          // "使用%s" box (1500 ms) before a computer/託管 player's tool runs
                        // (rich4_ui_use_tool.asm:1721, the automatic tool loop); id = tool 1..13.
+    mini_game_points,  // Closed-mode mini-game "得點券%d點" box (2000 ms, SG:4392): amount 50..69.
 };
 
 // Which original per-character speech table a bubble line comes from (docs/ui/messages.md §1.4).

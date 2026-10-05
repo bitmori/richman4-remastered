@@ -138,6 +138,9 @@ std::uint16_t owner_color(std::uint8_t owner, const Scene &scene) {
     if (owner == 0) {
         return 0;
     }
+    if (std::size_t(owner - 1) < scene.owners.size()) {
+        return scene.owners[owner - 1].color;
+    }
     for (const auto &player : scene.players) {
         if (player.slot == std::size_t(owner - 1)) {
             return player.color;
@@ -148,6 +151,9 @@ std::uint16_t owner_color(std::uint8_t owner, const Scene &scene) {
 }
 
 std::uint8_t owner_character(std::uint8_t owner, const Scene &scene) {
+    if (owner != 0 && std::size_t(owner - 1) < scene.owners.size()) {
+        return scene.owners[owner - 1].character;
+    }
     for (const auto &player : scene.players) {
         if (owner != 0 && player.slot == std::size_t(owner - 1)) {
             return player.character;

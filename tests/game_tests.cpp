@@ -1111,6 +1111,16 @@ void interactive_mini_games() {
     const auto closed_points = closed.world().players[0].state.points;
     require(!closed.pending_decision() && closed_points >= 50 && closed_points < 70,
             "closed mode awards rand()%20+50 points");
+    { // SG:4385-4425: the "得點券%d點" box (2000 ms) comes before the speech line.
+        const auto events = closed.drain_events();
+        const auto box = std::find_if(events.begin(), events.end(), [](const auto &event) {
+            return event.announcement == rich4::Announcement::mini_game_points;
+        });
+        require(box != events.end() && box->amount == closed_points && box->player == 0,
+                "closed mode shows the 得點券 box with the reward");
+        require(std::any_of(box, events.end(), [](const auto &event) { return event.voice_category.has_value(); }),
+                "closed mode speech follows the box");
+    }
 
     rich4::GameSession game(value, 4);
     game.set_interactive_mini_games(true);
@@ -1144,6 +1154,12 @@ void interactive_mini_games() {
                                    !event.voice_category;
                         }),
             "points event without speech");
+    require(std::none_of(events.begin(), events.end(),
+                         [](const auto &event) {
+                             return event.announcement == rich4::Announcement::mini_game_points ||
+                                    event.voice_category.has_value();
+                         }),
+            "the interactive path shows no 得點券 box and no speech (SG:4339-4355)");
     // 16-bit word add, as `add word [player+48], ax`.
     rich4::GameSession wrap(value, 4);
     wrap.set_interactive_mini_games(true);

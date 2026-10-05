@@ -105,6 +105,27 @@ std::size_t compare_projection_golden(const std::filesystem::path &path) {
     return count;
 }
 
+// A confined/away owner is not drawn, but their plots keep their colour (fcn_0040829d reads
+// player+4 for every owner): the owners table wins over the drawn players.
+void owner_colour_tests(const std::filesystem::path &assets) {
+    using namespace rich4;
+    board::Renderer renderer(assets, 0);
+    const auto center = renderer.node_position(51).value();
+    std::vector<board::PropertyState> owned;
+    for (std::uint32_t id = 1; id < 200; ++id)
+        owned.push_back({id, 2, 3, 0});
+    const std::array<board::PropertyOwner, 2> owners{{{0x03e0, 10}, {0x7c1f, 0}}};
+    const auto magenta = [&](const board::Scene &view) {
+        auto canvas = graphics::make_canvas(640, 480, 0x1234);
+        renderer.render(canvas, view, board::Camera{center});
+        return std::count(canvas.pixels.begin(), canvas.pixels.end(), 0x7c1f);
+    };
+    const std::span<const board::PlayerSprite> nobody;
+    require(magenta(board::Scene{nobody, {}, owned, {}, {}, {}, owners}) > 0,
+            "an undrawn owner's plots lost their colour");
+    require(magenta(board::Scene{nobody, {}, owned, {}, {}, {}, {}}) == 0, "fallback owner colour unexpectedly matched");
+}
+
 void asset_tests(const std::filesystem::path &assets, const std::filesystem::path &output) {
     using namespace rich4;
     std::filesystem::create_directories(output);
@@ -303,6 +324,7 @@ int main(int argc, char **argv) {
     try {
         projection_tests();
         if (argc >= 3) {
+            owner_colour_tests(argv[1]);
             asset_tests(argv[1], argv[2]);
         }
         if (argc >= 4) {

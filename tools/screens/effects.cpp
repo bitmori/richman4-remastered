@@ -25,7 +25,7 @@ board::PlayerSprite player_sprite(const World &world, std::size_t slot, std::uin
     const auto &state = player.state;
     board::PlayerSprite sprite{{state.x, state.y}, state.character, state.direction, frame,
                                static_cast<std::uint8_t>(state.traffic_method & 3U),
-                               static_cast<std::uint16_t>(state.color), state.slot,
+                               ui::player_color(state.color), state.slot,
                                state.slot == world.header.current_player, false,
                                state.node_id < world.nodes.size() &&
                                    (world.nodes[state.node_id].flags & 0x80000000U) != 0,
@@ -63,8 +63,16 @@ void hide_objects(std::vector<board::ObjectSprite> &objects,
     });
 }
 
+std::vector<board::PropertyOwner> property_owners(const World &world) {
+    std::vector<board::PropertyOwner> owners;
+    for (const auto &player : world.players)
+        owners.push_back({ui::player_color(player.state.color), player.state.character});
+    return owners;
+}
+
 SceneData make_scene(const World &world, std::uint64_t ticks, const std::array<std::uint8_t, 4> &costumes) {
     SceneData scene;
+    scene.owners = property_owners(world);
     const auto frame = static_cast<std::uint8_t>((ticks / 120) % 6);
     for (std::size_t slot = 0; slot < world.players.size(); ++slot)
         if (on_board(world, slot))
@@ -417,7 +425,7 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
                     const auto &state = world.players[event.player].state;
                     sprite = board::PlayerSprite{{}, state.character, state.direction, 0,
                                                  static_cast<std::uint8_t>(state.traffic_method & 3U),
-                                                 static_cast<std::uint16_t>(state.color), slot, true};
+                                                 ui::player_color(state.color), slot, true};
                     sprite->special_pose = event.player < 4 ? costumes_[event.player] : 0;
                 }
                 sprite->position = {event.from->x, event.from->y};

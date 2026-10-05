@@ -33,10 +33,13 @@ struct SceneData {
     std::vector<board::ObjectSprite> objects;
     std::vector<board::PropertyState> lands, facilities, commercials;
     std::vector<board::SpecialPlayerSprite> special_players;
+    std::vector<board::PropertyOwner> owners;
     [[nodiscard]] board::Scene view() const {
-        return {players, objects, lands, facilities, special_players, commercials};
+        return {players, objects, lands, facilities, special_players, commercials, owners};
     }
 };
+// Every player's property colour and flag character by slot, drawn or not (board::PropertyOwner).
+[[nodiscard]] std::vector<board::PropertyOwner> property_owners(const World &world);
 // Original board draw rule (fcn_0040829d): a player is drawn when placed and not away or confined
 // (hotel/UFO/prison/hospital), unless walking into the hotel (controller 0x20).
 [[nodiscard]] bool on_board(const World &world, std::size_t slot);
