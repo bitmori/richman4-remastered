@@ -86,7 +86,7 @@ def main():
         run(["cmake", "-S", REPO, "-B", build,
              "-DCMAKE_TOOLCHAIN_FILE=" + str(ndk / "build/cmake/android.toolchain.cmake"),
              "-DANDROID_ABI=arm64-v8a", "-DANDROID_PLATFORM=android-28", "-DANDROID_STL=c++_static",
-             "-DRICH4_BUILD_VIEWER=OFF", "-DRICH4_SANITIZERS=OFF", "-DCMAKE_BUILD_TYPE=Release",
+             "-DRICH4_BUILD_VIEWER=OFF", "-DRICH4_BUILD_GAME=OFF", "-DRICH4_SANITIZERS=OFF", "-DCMAKE_BUILD_TYPE=Release",
              "-DBUILD_TESTING=ON"])
         run(["cmake", "--build", build, "--parallel", "6"])
         device("mkdir", "-p", remote)

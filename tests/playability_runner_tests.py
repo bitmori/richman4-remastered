@@ -243,11 +243,11 @@ class NativeAvailabilityGateTests(unittest.TestCase):
             missing = Path(temporary) / "does-not-exist"
             result = subprocess.run(
                 [sys.executable, str(SCRIPTS / "run_playability.py"), "--target", "native",
-                 "--game", str(missing), "--prefix", str(missing), "--native-tool", str(missing)],
+                 "--game", str(missing), "--prefix", str(missing), "--native-game", str(missing)],
                 capture_output=True, text=True, timeout=15,
             )
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
-        prefix = "Playability report: "
+        prefix = "Report: "
         reports = [line[len(prefix):] for line in result.stdout.splitlines() if line.startswith(prefix)]
         self.assertEqual(len(reports), 1, result.stdout)
         report = json.loads(Path(reports[0]).read_text())

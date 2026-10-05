@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Verify gameplay using isolated, windowless Wine and in-process test hooks.
-
-The current native core has no game loop. --target native reports that gap and
-fails explicitly; the Wine baseline is exercised only with --target wine.
-"""
+"""Verify native SDL gameplay or the isolated, windowless original Wine baseline."""
 import argparse
 import hashlib
 import json
@@ -113,9 +109,14 @@ def main():
     parser.add_argument("--turns", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--native-tool", type=Path, default=REPO / "build/native/rich4-state-check")
+    parser.add_argument("--native-game", type=Path, default=REPO / "build/native/rich4-native.app/Contents/MacOS/rich4-native")
     args = parser.parse_args()
     if not 0 <= args.slot <= 5 or not 1 <= args.turns <= 20 or not 30 <= args.timeout <= 600:
         parser.error("slot must be 0..5, turns 1..20, timeout 30..600 seconds; slots 8/9 are reserved for capture")
+    if args.target == "native":
+        import run_native_playability
+        return run_native_playability.run(binary=args.native_game, game=args.game,
+                                          turns=args.turns, timeout=args.timeout)
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
     artifacts = REPO / "artifacts/playability" / run_id
     artifacts.mkdir(parents=True)
@@ -128,10 +129,6 @@ def main():
     work = None
     exit_code = 1
     try:
-        if args.target == "native":
-            report["status"] = "unavailable"
-            print("Native playability is unavailable: there is no game loop. Module tests do not satisfy this gate.")
-            return 3
         prefix = args.prefix.expanduser().resolve()
         engine = REPO / ".local/boxedwine/Boxedwine.app/Contents/MacOS/Boxedwine"
         wine = RUNTIME / "FileSystems2/TinyCore15Wine11.0.zip"
