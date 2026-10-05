@@ -2,7 +2,11 @@
 #include "rich4/game.hpp"
 #include "rich4/world.hpp"
 #include "rich4/random.hpp"
+#include "rich4/gods.hpp"
+#include "rich4/holidays.hpp"
+#include "rich4/calendar.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -29,6 +33,7 @@ rich4::World world(unsigned count = 4) {
     }
     rich4::NewGameOptions options; options.players.resize(count);
     auto value = rich4::World::from_map_resource(map, options);
+    for (auto& stock : value.stocks) stock.flags_4 = 0; // Synthetic map has no commercial links.
     value.header = {0x26, {5, 10, 2026}, 0, 0, count, 1, 0, 200000, 1};
     value.nodes.resize(9); value.lands.resize(2);
     for (unsigned i = 1; i < value.nodes.size(); ++i) {
@@ -131,7 +136,7 @@ void bank_and_failure() {
     require(bank.world().players[0].state.cash == 98766 && bank.world().players[0].state.bank_balance == 11234,
             "deposit changed total funds");
     require(bank.respond(1, 234) && bank.world().players[0].state.cash == 99000, "withdrawal failed");
-    require(bank.respond(2), "bank exit failed");
+    require(bank.respond(bank.pending_decision()->options.size() - 1), "bank exit failed");
     value = world(); property_nodes(value); value.lands[1].economy.owner_code = 2;
     value.players[0].state.cash = 40; value.players[0].state.bank_balance = 20;
     rich4::GameSession bankrupt(std::move(value), 0); first_landing(bankrupt);
@@ -230,6 +235,91 @@ void facilities_events_and_rescue() {
     require(rescue.world().players[0].state.points == 20 && rescue.world().players[1].status.days_in_prison == 0x80 &&
             rescue.world().prison_roster[1] == 0, "prison rescue must spend points and defer original release");
 }
+void service_and_auction_choices() {
+    auto value = world();
+    for (auto& node : value.nodes) node.flags = (node.flags & ~0xffU) | 15;
+    value.players[0].state.points = 1000;
+    rich4::GameSession shop(value,7); first_landing(shop);
+    require(shop.pending_decision()->kind == rich4::DecisionKind::shop, "shop did not expose a finite shelf");
+    require(shop.respond(0) && shop.world().players[0].state.points < 1000 && shop.pending_decision()->kind == rich4::DecisionKind::shop,
+            "shop purchase did not preserve its visit");
+    const auto leave = shop.pending_decision()->options.size() - 1;
+    require(shop.respond(leave) && shop.phase() == rich4::GamePhase::advancing_turn, "leaving shop lost turn progression");
+    value = world(); for (auto& node : value.nodes) node.flags = (node.flags & ~0xffU) | 16;
+    rich4::GameSession magic(value,7); first_landing(magic);
+    require(magic.pending_decision()->kind == rich4::DecisionKind::magic_category && magic.respond(0), "magic target category missing");
+    require(magic.pending_decision()->kind == rich4::DecisionKind::magic_effect && magic.respond(4), "magic deposit action missing");
+    require(magic.world().players[0].state.cash == 0 && magic.world().players[0].state.bank_balance == 110000,
+            "magic action was not applied to the selected category");
+    value = world(); for (auto& node : value.nodes) node.flags = (node.flags & ~0xffU) | 2;
+    value.news_deck.fill(7); value.news_cursor = 0;
+    rich4::GameSession auction(value,7); first_landing(auction);
+    for (unsigned n = 0; n < 100 && auction.pending_decision(); ++n) {
+        require(auction.pending_decision()->kind == rich4::DecisionKind::auction, "news auction lost nested decision type");
+        const auto& options = auction.pending_decision()->options;
+        const auto withdraw = std::find_if(options.begin(),options.end(),[](const auto& option){return option.value == 6;});
+        require(withdraw != options.end(), "auction permanent withdrawal missing");
+        require(auction.respond(static_cast<std::size_t>(withdraw - options.begin())), "auction withdrawal rejected");
+    }
+    require(!auction.pending_decision() && auction.world().news_cursor == 1 && auction.world().players[0].state.cash == 100000,
+            "nested auction replay duplicated economic state or failed to complete");
+}
+void native_actions_and_money_spinner() {
+    auto value=world();
+    value.players[0].state.tool_amounts[0]=1;
+    value.objects[16].kind=16;value.objects[16].node_id=2;value.nodes[2].flags|=17U<<16;
+    rich4::GameSession robot(value,13);rich4::Random expected(13);
+    for(unsigned i=0;i<9;++i)(void)expected.next();
+    require(robot.use_tool(1),"robot tool rejected");
+    require(robot.phase()==rich4::GamePhase::human_ready && robot.world().players[0].state.node_id==1,
+            "robot must return control without moving its owner");
+    require(robot.random_state()==expected.state() && robot.world().special_actors[4].node_id==2 &&
+            robot.world().special_actors[4].inactive_state==3 && robot.world().objects[16].node_id==0,
+            "robot must walk nine original routes and sweep encountered objects");
+    value=world();value.players[0].state.tool_amounts[7]=1;
+    rich4::GameSession remote(value,99);
+    require(remote.use_tool(8),"remote dice selection failed");
+    require(remote.pending_decision() && remote.respond(3),"remote dice choice failed");
+    until(remote,[&]{return remote.phase()==rich4::GamePhase::advancing_turn;});
+    expected.seed(99);for(unsigned i=0;i<4;++i)(void)expected.next();
+    require(remote.world().players[0].state.node_id==5 && remote.random_state()==expected.state(),
+            "forced die must move requested distance without drawing a face");
+    value=world();value.players[0].state.tool_amounts[9]=1;
+    rich4::GameSession machine(value,17);require(!machine.use_tool(10),"empty time history accepted");
+    require(machine.roll_dice(),"history roll failed");
+    until(machine,[&]{return machine.completed_days()==1 && machine.phase()==rich4::GamePhase::human_ready;});
+    const auto before_random=machine.random_state();machine.set_camera_rotation(3);
+    require(machine.use_tool(10),"recorded time history unavailable");
+    require(machine.world().players[0].state.node_id==1 && machine.world().header.date.day==5 &&
+            machine.world().players[0].state.tool_amounts[9]==0 && machine.random_state()==before_random &&
+            machine.world().camera_rotation==3,"time machine restored excluded RNG/camera or failed to consume tool after restore");
+    value=world();value.objects[0].kind=1;value.objects[0].node_id=2;value.nodes[2].flags|=1U<<16;
+    rich4::GameSession god(value,0);first_landing(god);
+    require(god.pending_decision()->kind==rich4::DecisionKind::money_spinner,"god must present original decimal spinner");
+    god.tick(330);require(god.respond(0),"god spinner Stop failed");
+    for(unsigned i=0;i<1000 && god.pending_decision();++i)god.tick(30);
+    require(!god.pending_decision() && god.world().players[0].status.god_info==1 &&
+            god.world().objects[0].attached_player==1 && !(god.world().nodes[2].flags&0xff0000U),
+            "god choice rollback lost attachment or did not finish");
+    for(const auto& event:god.drain_events())require(event.kind!=rich4::GameEventKind::unsupported_event,"god emitted unsupported rule");
+}
+void loan_and_free_toll() {
+    auto value=world();for(auto& node:value.nodes)node.flags=(node.flags&~255U)|14;
+    rich4::GameSession bank(value,0);first_landing(bank);
+    auto option=[&](int action){const auto& list=bank.pending_decision()->options;const auto it=std::find_if(list.begin(),list.end(),[&](const auto& item){return item.value==action;});require(it!=list.end(),"bank action absent");return static_cast<std::size_t>(it-list.begin());};
+    require(bank.respond(option(3),1234),"loan integer amount rejected");
+    const auto due=rich4::calendar::pack(rich4::holidays::loan_due_date({2026,10,5},0,0));
+    require(bank.world().players[0].state.loan==1234 && bank.world().players[0].status.loan_due_date==due,
+            "loan did not preserve original holiday-adjusted due date");
+    require(bank.respond(option(4),1234) && !bank.world().players[0].status.loan_due_date &&
+            bank.world().players[0].state.bank_balance==10000,"repay must use bank first and clear due when fully repaid");
+    value=world();property_nodes(value);value.lands[1].economy.owner_code=2;
+    value.lands[1].economy.toll_by_level.fill(3000);value.players[0].state.cards.fill(0);value.players[0].state.cards[0]=20;
+    rich4::GameSession free(value,0);first_landing(free);
+    require(free.pending_decision() && free.respond(0),"free toll choice absent");
+    require(free.world().players[0].state.cash==100000 && free.world().players[0].state.cards[0]==0 &&
+            free.world().lands[1].removed_building==0,"free card replay charged money or failed to consume exactly once");
+}
 void explicit_unsupported_and_save_guard() {
     auto value = world(); for (auto& node : value.nodes) node.flags = (node.flags & ~0xffU) | 255;
     rich4::GameSession game(std::move(value), 0);
@@ -246,7 +336,7 @@ void explicit_unsupported_and_save_guard() {
 int main() {
     try {
         dice_and_paths(); property_and_rent(); bank_and_failure();
-        thirty_days_and_timing(); save_reload_and_deferred_spawn(); facilities_events_and_rescue(); explicit_unsupported_and_save_guard();
+        thirty_days_and_timing(); save_reload_and_deferred_spawn(); facilities_events_and_rescue(); service_and_auction_choices(); native_actions_and_money_spinner(); loan_and_free_toll(); explicit_unsupported_and_save_guard();
         std::cout << "native game rule tests passed\n";
         return 0;
     } catch (const std::exception& error) {

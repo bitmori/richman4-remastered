@@ -10,6 +10,12 @@
 #include "rich4/stocks.hpp"
 #include "rich4/services.hpp"
 #include "rich4/auction.hpp"
+#include "rich4/lottery.hpp"
+#include "rich4/holidays.hpp"
+#include "rich4/cards.hpp"
+#include "rich4/tools.hpp"
+#include "rich4/gods.hpp"
+#include "rich4/board_renderer.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -53,13 +59,24 @@ struct GameSession::Impl {
     std::map<std::size_t, int> event_choices;
     std::function<void()> pending_continuation;
     std::size_t pending_choice_key = 0;
-    unsigned roulette_cursor = 0, roulette_elapsed = 0;
+    unsigned roulette_cursor = 0, roulette_elapsed = 0, roulette_kind = 0;
     std::size_t roulette_facility = 0;
     bool rescue_hospital = false;
     std::size_t choice_sequence = 0;
     std::optional<services::Shop> shop;
     std::uint16_t shop_property = 0;
     unsigned magic_category = 0;
+    bool last_action_accepted = false;
+    GamePhase unsupported_resume = GamePhase::advancing_turn;
+    std::optional<unsigned> forced_roll;
+    std::array<std::optional<World>,4> previous_turn;
+    std::map<std::size_t,std::uint32_t> choice_random_states;
+    std::optional<gods::MoneySpinner> money_spinner;
+    Random spinner_random{0};
+    unsigned spinner_elapsed = 0;
+    CardAiMemory card_ai_memory{};
+    bool property_pending = false, purchased_property = false;
+
 
     explicit Impl(World value, std::uint32_t seed) : world(std::move(value)),
         random(world.has_initial_random_state() ? world.initial_random_state() : seed) {
@@ -71,6 +88,11 @@ struct GameSession::Impl {
         for (const auto& player : world.players)
             if (player.state.node_id >= world.nodes.size() || player.state.last_node_id >= world.nodes.size())
                 throw std::invalid_argument("player node outside native world");
+        if (world.has_initial_random_state()) {
+            for (const auto kind : {1U,3U,5U,7U,9U,11U,13U,14U})
+                place_existing_object(kind-1,random_free_node());
+            stocks::refresh_trade_limits(world,random);
+        }
         start_turn(false);
     }
 
@@ -100,8 +122,20 @@ struct GameSession::Impl {
         else if (days_left > 0) voice(slot, 5);
     }
     void set_phase(GamePhase next) { phase = next; phase_elapsed = 0; }
-    void finish_turn() { decision.reset(); animation.reset(); set_phase(GamePhase::advancing_turn); }
-    void unsupported(std::string description) {
+    void finish_turn() {
+        if (property_pending && phase != GamePhase::finished) {
+            property_pending=false;
+            const bool purchased=purchased_property;purchased_property=false;
+            run_rule([this,purchased]{
+                if(purchased)check_god(gods::after_successful_purchase(world,random,actor(),player().node_id,god_callbacks()));
+                check_god(gods::after_property(world,actor(),player().node_id,god_callbacks()));
+            });
+            return;
+        }
+        decision.reset(); animation.reset(); set_phase(GamePhase::advancing_turn);
+    }
+    void unsupported(std::string description,GamePhase resume = GamePhase::advancing_turn) {
+        unsupported_resume = resume;
         emit(GameEventKind::unsupported_event, description);
         if (human()) {
             decision = GameDecision{DecisionKind::notice, actor(), 0, 0,
@@ -173,7 +207,7 @@ struct GameSession::Impl {
     void start_turn(bool update = true) {
         spawn_if_needed();
         decision.reset(); animation.reset(); remaining = 0;
-        if (update) update_status();
+        if (update) { stocks::refresh_trade_limits(world,random); update_status(); }
         emit(GameEventKind::turn_started, player_name(actor()) + "的回合");
         const auto& value = status();
         if (value.days_in_hotel || value.days_disappearing || value.days_in_prison ||
@@ -185,8 +219,12 @@ struct GameSession::Impl {
         else begin_roll();
     }
     void begin_roll() {
+        if (player().controller_flags & 1U) previous_turn[actor()] = world;
         faces.clear(); remaining = 0;
-        if (status().days_tortoise_walking) remaining = 1;
+        if (status().days_stopping) { land(); return; }
+        if (forced_roll) {
+            remaining = static_cast<int>(*forced_roll); faces.push_back(static_cast<std::uint8_t>(*forced_roll)); forced_roll.reset();
+        } else if (status().days_tortoise_walking) remaining = 1;
         else {
             // Original fcn_00419572: exactly one rand per die, modulo 6 plus one.
             for (unsigned i = 0; i < player().dice_count; ++i) {
@@ -227,12 +265,19 @@ struct GameSession::Impl {
                                                 static_cast<std::int32_t>(next.y) - state.y);
         state.x = static_cast<std::uint16_t>(next.x);
         state.y = static_cast<std::uint16_t>(next.y);
+        for(auto id : {status().god_info,status().attached_bomb})
+            if(id)world.objects.at(id-1).node_id=state.node_id;
         --remaining; animation.reset();
         emit(GameEventKind::moved, player_name(actor()) + "到达道路" + std::to_string(next_node));
-        if (remaining > 0) {
-            if ((next.flags & 0xffU) == 14 && !status().days_sleep_walking) open_bank(true);
-            else start_step();
-        } else land();
+        const auto object=static_cast<std::uint16_t>((next.flags>>16U)&255U);
+        run_rule([this,object]{
+            if(object){const auto result=gods::touch(world,random,actor(),object,remaining==0,god_callbacks());check_god(result);if(result.stop_movement)remaining=0;}
+        },true,false,[this]{
+            if(phase==GamePhase::finished)return;
+            if(status().days_in_hospital || status().days_in_prison || status().days_disappearing){finish_turn();return;}
+            if(remaining>0){if((world.nodes.at(player().node_id).flags&255U)==14 && !status().days_sleep_walking)open_bank(true);else start_step();}
+            else land();
+        });
     }
     std::int32_t purchase_price(std::size_t land_id) const {
         const auto& land = world.lands.at(land_id);
@@ -249,8 +294,9 @@ struct GameSession::Impl {
         const auto cost = upgrade ? upgrade_price(land_id) : purchase_price(land_id);
         if (cost < 0 || player().cash < cost) { finish_turn(); return; }
         player().cash = subtract32(player().cash, cost);
+        purchased_property=true;
         if (upgrade) ++land.economy.level;
-        else land.economy.owner_code = static_cast<std::uint8_t>(actor() + 1);
+        else { land.economy.owner_code = static_cast<std::uint8_t>(actor() + 1); land.expired_date = lease_expiry(); }
         emit(upgrade ? GameEventKind::land_upgraded : GameEventKind::land_purchased,
              player_name(actor()) + (upgrade ? "升级房产" : "买下房产"), cost);
         if (upgrade && land.economy.level == 5) voice(actor(), 15);
@@ -306,9 +352,13 @@ struct GameSession::Impl {
         else if (status().god_info == 2) toll = 0;
         else if (status().god_info == 5) toll = add32(toll, toll >> 1);
         else if (status().god_info == 6) toll = multiply32(toll, 2);
-        land.removed_building = static_cast<std::uint32_t>(toll);
-        pay_toll(owner, toll);
-        if (phase != GamePhase::finished && phase != GamePhase::awaiting_decision) finish_turn();
+        run_rule([this,land_id,owner,toll]{
+            auto requested=toll;
+            const auto payer=select_toll_payer(requested,static_cast<int>(owner));
+            if(payer==owner)return;
+            world.lands.at(land_id).removed_building=static_cast<std::uint32_t>(requested);
+            pay_toll(owner,requested,payer);
+        });
     }
     bool transaction_blocked() const {
         return status().god_info == 7 || status().god_info == 8 || status().god_info == 15;
@@ -327,8 +377,9 @@ struct GameSession::Impl {
         if (operation == 1) facility.facility_type = static_cast<std::uint8_t>(type);
         if (cost < 0 || player().cash < cost || transaction_blocked()) { finish_turn(); return; }
         player().cash = subtract32(player().cash, cost);
-        if (operation == 0) facility.owner_code = static_cast<std::uint8_t>(actor() + 1);
+        if (operation == 0) { facility.owner_code = static_cast<std::uint8_t>(actor() + 1); facility.expired_date = lease_expiry(); }
         else ++facility.level;
+        purchased_property=true;
         emit(operation ? GameEventKind::land_upgraded : GameEventKind::land_purchased,
              operation == 0 ? "购买设施用地" : operation == 1 ? "建设设施" : "升级设施", cost);
         if (facility.level == 5) voice(actor(), 15);
@@ -343,13 +394,16 @@ struct GameSession::Impl {
         while (rows[kind][cursor % 12] < 0) ++cursor;
         return rows[kind][cursor % 12];
     }
-    void charge_facility(std::size_t id, int multiplier) {
+    void charge_facility(std::size_t id,int multiplier) {
+        run_rule([this,id,multiplier]{charge_facility_action(id,multiplier);});
+    }
+    void charge_facility_action(std::size_t id, int multiplier) {
         auto& facility = world.facilities.at(id);
         const auto owner = static_cast<std::size_t>(facility.owner_code - 1);
         std::int32_t toll = 0;
         if (facility.facility_type == 3) {
             const auto traffic = player().traffic_method & 3U;
-            if (traffic == 0) { finish_turn(); return; }
+            if (traffic == 0) return;
             unsigned dice_total = 0;
             for (auto face : faces) dice_total += face;
             if (faces.empty() && status().days_tortoise_walking) dice_total = 1;
@@ -362,22 +416,27 @@ struct GameSession::Impl {
         else if (status().god_info == 2) toll = 0;
         else if (status().god_info == 5) toll = add32(toll, toll >> 1);
         else if (status().god_info == 6) toll = multiply32(toll, 2);
+        const auto payer=select_toll_payer(toll,static_cast<int>(owner),facility.facility_type==1);
+        if(payer==owner)return;
         facility.removed_building = static_cast<std::uint32_t>(toll);
-        pay_toll(owner, toll);
+        pay_toll(owner,toll,payer);
         if (phase == GamePhase::finished) return;
-        if (facility.facility_type == 1 && player().controller_flags) {
-            clear_absences(actor());
-            status().days_in_hotel = static_cast<std::uint8_t>(multiplier - 1);
-            if (!status().days_in_hotel) status().days_in_hotel = 0x80;
-            status().total_winter_sleep_days = static_cast<std::uint8_t>(status().total_winter_sleep_days + multiplier);
-            status().facility_id = static_cast<std::uint16_t>(id);
-            status().saved_direction = player().direction;
-            world.nodes.at(player().node_id).flags &= ~(0x100U << actor());
-            player().x = facility.x; player().y = facility.y;
-            absence_voice(actor(), multiplier);
+        auto& paying_player=world.players[payer].state;
+        auto& paying_status=world.players[payer].status;
+        if (facility.facility_type == 1 && paying_player.controller_flags) {
+            clear_absences(payer);
+            paying_status.days_in_hotel = static_cast<std::uint8_t>(multiplier - 1);
+            if (!paying_status.days_in_hotel) paying_status.days_in_hotel = 0x80;
+            paying_status.total_winter_sleep_days = static_cast<std::uint8_t>(paying_status.total_winter_sleep_days + multiplier);
+            paying_status.facility_id = static_cast<std::uint16_t>(id);
+            paying_status.saved_direction = paying_player.direction;
+            world.nodes.at(paying_player.node_id).flags &= ~(0x100U << payer);
+            paying_player.x = facility.x; paying_player.y = facility.y;
+            update_hostility(payer,owner,multiply32(multiply32(multiplier,20),world.header.price_index));
+            insure(payer,multiply32(multiply32(multiplier,2000),world.header.price_index));
+            absence_voice(payer, multiplier);
             emit(GameEventKind::notice, "在旅馆住宿" + std::to_string(multiplier) + "天", multiplier);
         }
-        finish_turn();
     }
     void facility(std::size_t id) {
         if (!id || id >= world.facilities.size()) { unsupported("设施记录无效"); return; }
@@ -408,7 +467,7 @@ struct GameSession::Impl {
             owner.days_in_prison || owner.days_in_hospital || owner.days_sleeping || owner.days_sleep_walking ||
             ((entry.temporary_state & 0xf0U) && (entry.temporary_state & 0x0fU))) { finish_turn(); return; }
         if (entry.facility_type == 3) { charge_facility(id, 1); return; }
-        roulette_facility = id; roulette_cursor = random.next() % 12; roulette_elapsed = 0;
+        roulette_kind = entry.facility_type; roulette_facility = id; roulette_cursor = random.next() % 12; roulette_elapsed = 0;
         if (!human() || status().days_sleep_walking) {
             charge_facility(id, roulette_value(entry.facility_type, roulette_cursor + 51)); return;
         }
@@ -459,6 +518,120 @@ struct GameSession::Impl {
             if ((target < 4 && player().points > 30) || (target >= 4 && player().points >= 700)) rescue(target,hospital,false);
         }
         finish_turn();
+    }
+    int choose_roulette(unsigned kind) {
+        const auto initial = random.next() % 12;
+        if (!human() || status().days_sleep_walking) return roulette_value(kind,static_cast<unsigned>(initial) + 51);
+        const auto key = choice_sequence++;
+        const auto answer = event_choices.find(key);
+        if (answer != event_choices.end()) return answer->second;
+        roulette_kind = kind; roulette_cursor = static_cast<unsigned>(initial); roulette_elapsed = 0;
+        throw NeedChoice{GameDecision{DecisionKind::roulette,actor(),0,0,"按停止选定转盘结果",{{"停止转盘",0}}},key};
+    }
+    std::uint16_t company_construction_target() {
+        if (human()) {
+            const auto key = choice_sequence++;
+            if (const auto answer = event_choices.find(key); answer != event_choices.end()) return static_cast<std::uint16_t>(answer->second);
+            GameDecision prompt{DecisionKind::property_target,actor(),0,0,"选择工程公司建设的地产",{}};
+            for (std::size_t i = 1; i < world.lands.size(); ++i) prompt.options.push_back({"房产" + std::to_string(i),static_cast<std::int32_t>(2000+i)});
+            for (std::size_t i = 1; i < world.facilities.size(); ++i) prompt.options.push_back({"设施" + std::to_string(i),static_cast<std::int32_t>(4000+i)});
+            prompt.options.push_back({"放弃选择",0}); throw NeedChoice{std::move(prompt),key};
+        }
+        std::uint16_t selected = 0; unsigned score = 0;
+        for (std::size_t i = 1; i < world.lands.size(); ++i) {
+            const auto& land = world.lands[i].economy;
+            if (land.owner_code == actor()+1 && !land.chain_store && land.level < 5 && land.toll_by_level[land.level] > score) {
+                score = land.toll_by_level[land.level]; selected = static_cast<std::uint16_t>(2000+i);
+            }
+        }
+        static constexpr unsigned limits[]{1,5,5,1,5};
+        for (std::size_t i = 1; i < world.facilities.size(); ++i) {
+            const auto& facility = world.facilities[i];
+            if (facility.owner_code == actor()+1 && facility.facility_type < 5 && facility.level < limits[facility.facility_type] && facility.land_price > score) {
+                score = facility.land_price; selected = static_cast<std::uint16_t>(4000+i);
+            }
+        }
+        return selected;
+    }
+    void offer_primary_stock(std::size_t id) {
+        const auto& company = world.commercials.at(id);
+        if (!player().controller_flags || status().days_sleep_walking || company.shares_remaining <= 0) return;
+        const auto price = company.valuation / 10000;
+        if (price <= 0) return; // Original divides by zero for malformed company valuations.
+        const auto maximum = std::min({player().cash / price,1000,company.shares_remaining});
+        if (maximum <= 0) return;
+        std::int32_t quantity = 0;
+        if (human()) {
+            const auto key = choice_sequence++;
+            if (const auto answer = event_choices.find(key); answer != event_choices.end()) quantity = answer->second;
+            else throw NeedChoice{GameDecision{DecisionKind::primary_stock,actor(),static_cast<std::uint16_t>(id),price,
+                "认购原始股：每股" + std::to_string(price) + "元，最多" + std::to_string(maximum) + "股",{{"认购",1},{"放弃",0}},maximum},key};
+        } else {
+            const auto reserve = multiply32(static_cast<std::int32_t>(world.header.initial_fund * 0.3),world.header.price_index);
+            const auto spendable = subtract32(player().cash,reserve);
+            if (spendable > 0) quantity = std::min(maximum,spendable / price);
+        }
+        if (quantity > 0) {
+            const auto result = stocks::buy_stock(world,actor(),company.stock_index,quantity,false);
+            emit(GameEventKind::bank_transfer,"认购原始股" + std::to_string(quantity) + "股",result.cost);
+        }
+    }
+    void commercial(std::size_t id) {
+        if (!id || id >= world.commercials.size()) { unsupported("商业公司记录无效"); return; }
+        run_rule([this,id] {
+            auto& company = world.commercials.at(id);
+            const bool own = company.owner_code == actor()+1;
+            std::int32_t toll = 0; int absence = 0;
+            if (company.owner_code) {
+                const auto type = company.commerce_type;
+                if (type == 4) {
+                    const auto duration = choose_roulette(3);
+                    status().days_assurance = static_cast<std::uint8_t>((status().days_assurance + duration) & 0x7f);
+                    if (!own) toll = multiply32(multiply32(company.toll_fee,duration),world.header.price_index);
+                } else if (type == 11) {
+                    const auto target = company_construction_target();
+                    if (target) {
+                        change_building(target,true);
+                        if (own) change_building(target,true);
+                        else toll = multiply32(target < 4000 ? world.lands.at(target-2000).land_price : world.facilities.at(target-4000).land_price,world.header.price_index);
+                    } else if (!own) toll = multiply32(1000,world.header.price_index);
+                } else if (!own) {
+                    if (type == 1) {
+                        absence = choose_roulette(0);
+                        toll = multiply32(multiply32(company.toll_fee,absence),world.header.price_index);
+                        if (!absence) voice(actor(),2);
+                    } else if (type == 3) toll = multiply32(company.toll_fee,std::bit_cast<std::int32_t>(world.round_counter));
+                    else if (type == 5 || type == 6 || type == 12) {
+                        unsigned total = 0; for (auto face : faces) total += face;
+                        if (faces.empty() && status().days_tortoise_walking) total = 1;
+                        if (type == 12 || player().traffic_method) {
+                            const unsigned factor = type == 12 ? 1U : 1U << (((player().traffic_method & 3U)-1U) & 31U);
+                            toll = multiply32(multiply32(company.toll_fee,std::bit_cast<std::int32_t>(total*factor)),world.header.price_index);
+                        }
+                    }
+                }
+            }
+            if (status().god_info == 1) toll >>= 1;
+            else if (status().god_info == 2) toll = 0;
+            else if (status().god_info == 5) toll = add32(toll,toll >> 1);
+            else if (status().god_info == 6) toll = multiply32(toll,2);
+            amount_voice(actor(),toll,9);
+            const auto paid = pay(static_cast<int>(actor()),static_cast<int>(id+100),toll,0);
+            if (paid) emit(GameEventKind::rent_paid,"向公司支付费用",paid);
+            if (phase == GamePhase::finished) return;
+            if (absence && player().controller_flags) disappear(actor(),absence,0);
+            offer_primary_stock(id);
+        });
+    }
+    void open_lottery() {
+        if (!human()) {
+            if (const auto number = lottery::buy_random_ticket(world,random,actor())) emit(GameEventKind::notice,"购买彩票" + std::to_string(*number),lottery::ticket_price);
+            finish_turn(); return;
+        }
+        GameDecision prompt{DecisionKind::lottery,actor(),0,lottery::ticket_price,"选择彩票号码（每张1000元）",{}};
+        if (player().cash >= lottery::ticket_price)
+            for (auto number : lottery::available_numbers(world)) prompt.options.push_back({std::to_string(number),number});
+        prompt.options.push_back({"离开",0}); decision = std::move(prompt); set_phase(GamePhase::awaiting_decision);
     }
     void receive_random_card() {
         unsigned count = 0;
@@ -517,24 +690,33 @@ struct GameSession::Impl {
         value.hostility[target] = static_cast<std::uint32_t>(std::max(add32(old, delta), 0));
         if (delta > 0 && value.allied_player == target + 1) { value.allied_player = 0; value.allied_days = 0; }
     }
-    void pay_toll(std::size_t owner, std::int32_t requested) {
-        update_hostility(actor(), owner, requested / 100);
+    std::size_t select_toll_payer(std::int32_t& requested,int owner,bool compulsory_absence=false) {
+        const auto offered=[&]{return requested>=multiply32(2000,world.header.price_index) || requested>add32(player().cash,player().bank_balance);};
+        if(offered() && try_free_card(actor(),static_cast<std::size_t>(owner),requested))requested=0;
+        auto payer=actor();
+        if(offered()){const auto target=try_frame_card(actor(),1,requested);if(target>=0)payer=static_cast<std::size_t>(target);}
+        if(requested || compulsory_absence)for(std::size_t i=0;i<world.players.size();++i)
+            if(i!=payer && world.players[i].state.controller_flags && (world.players[i].status.god_info==14 || world.players[i].status.god_info==15)){payer=i;break;}
+        return payer;
+    }
+    void pay_toll(std::size_t owner, std::int32_t requested,std::size_t payer) {
+        update_hostility(payer, owner, requested / 100);
         int most_hostile = -1;
         std::int32_t largest_hostility = 0;
         for (std::size_t i = 0; i < world.players.size(); ++i) {
-            if (i == actor() || !world.players[i].state.controller_flags) continue;
-            const auto hostility = std::bit_cast<std::int32_t>(status().hostility[i]);
+            if (i == payer || !world.players[i].state.controller_flags) continue;
+            const auto hostility = std::bit_cast<std::int32_t>(world.players[payer].status.hostility[i]);
             if (hostility > largest_hostility) { largest_hostility = hostility; most_hostile = static_cast<int>(i); }
         }
         bool hostile_speech = false;
         if (most_hostile == static_cast<int>(owner) && requested >= multiply32(5000, world.header.price_index)) {
             hostile_speech = (random.next() & 1U) != 0;
-            if (hostile_speech) voice(actor(), 18);
+            if (hostile_speech) voice(payer, 18);
         }
-        if (!hostile_speech) amount_voice(actor(), requested, 9);
+        if (!hostile_speech) amount_voice(payer, requested, 9);
         amount_voice(owner, requested, 6);
-        const auto paid = pay(static_cast<int>(actor()), static_cast<int>(owner), requested, 0);
-        if (paid) emit(GameEventKind::rent_paid, player_name(actor()) + "支付租金", paid);
+        const auto paid = pay(static_cast<int>(payer), static_cast<int>(owner), requested, 0);
+        if (paid) emit(GameEventKind::rent_paid, player_name(payer) + "支付租金", paid);
     }
     void bankrupt(std::size_t slot) {
         auto& state = world.players.at(slot).state;
@@ -543,6 +725,8 @@ struct GameSession::Impl {
         const auto& node = world.nodes.at(state.node_id);
         state.x = static_cast<std::uint16_t>(node.x); state.y = static_cast<std::uint16_t>(node.y);
         world.nodes[state.node_id].flags |= 0x100U << slot;
+        for(auto id:{world.players[slot].status.god_info,world.players[slot].status.attached_bomb})if(id)remove_object(id);
+        for(std::size_t i=0;i<4;++i)if(!world.special_actors[i].inactive_state && world.special_actors[i].owner==slot)add_confinement(i+4,0,i>=2);
         world.clear_bankrupt_player_fields(slot);
         world.prison_roster[slot] = world.hospital_roster[slot] = 0;
         for (auto& other : world.players) {
@@ -561,20 +745,32 @@ struct GameSession::Impl {
             emit(GameEventKind::game_finished, humans ? "游戏结束，最后一位玩家获胜" : "游戏结束");
             set_phase(GamePhase::finished); return;
         }
-        // The original retains levels/buildings when clearing their owner.
+        // Original 0x40d095 retains buildings and auctions three distinct
+        // properties only when the bankrupt player owned more than three.
+        std::vector<std::uint16_t> properties;
         for (auto& land : world.lands) if (land.economy.owner_code == slot + 1) {
             land.economy.owner_code = 0; land.expired_date = 0;
+            properties.push_back(static_cast<std::uint16_t>(2000+land.id));
         }
         for (auto& facility : world.facilities) if (facility.owner_code == slot + 1) {
             facility.owner_code = 0; facility.expired_date = 0;
+            properties.push_back(static_cast<std::uint16_t>(4000+facility.id));
         }
         for (auto& commerce : world.commercials) if (commerce.owner_code == slot + 1) commerce.owner_code = 0;
-        for (auto card : state.cards) if (card > 0 && card <= world.card_supply.size()) ++world.card_supply[card - 1];
-        state.cards.fill(0);
-        for (std::size_t i = 0; i < world.tool_supply.size(); ++i)
-            world.tool_supply[i] = static_cast<std::uint8_t>(world.tool_supply[i] + state.tool_amounts[i]);
-        state.tool_amounts.fill(0);
-        emit(GameEventKind::unsupported_event, "破产拍卖、股票及特殊角色清理尚未完成");
+        for(std::size_t i=0;i<12;++i)if(world.players[slot].stocks[i].amount)
+            (void)stocks::sell_stock(world,slot,i,world.players[slot].stocks[i].amount,false);
+        // Original ignores sale return values, but removes equipped transport.
+        const auto traffic=state.traffic_method&3U;
+        if(traffic)++state.tool_amounts[traffic==3?11:traffic+3];
+        state.traffic_method=0;state.dice_count=1;
+        (void)sell_stored_tools(state.tool_amounts,world.tool_supply,services::tool_prices);
+        (void)sell_all_cards(state.cards,world.card_supply,services::card_prices);
+        lottery::discard_player_tickets(world,slot);
+        if(properties.size()>3)for(unsigned sold=0;sold<3;++sold){
+            std::size_t pick;
+            do{pick=random.next()%properties.size();}while(!properties[pick]);
+            (void)auction(properties[pick],-1);properties[pick]=0;
+        }
     }
     void insure(std::size_t slot, std::int32_t amount) {
         if (!world.players.at(slot).status.days_assurance) return;
@@ -657,51 +853,72 @@ struct GameSession::Impl {
         events.push_back({GameEventKind::notice, slot, days_left, entry.state.node_id,
                           player_name(slot) + "暂时离开" + std::to_string(days_left) + "天"});
     }
-    int try_defense_card(std::size_t slot) {
+    bool try_free_card(std::size_t slot,std::size_t recipient,std::int32_t amount) {
         auto& entry = world.players.at(slot);
-        if (has_card(entry.state.cards, 21)) {
-            (void)consume_card(entry.state.cards, world.card_supply, 21);
-            events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id, player_name(slot) + "使用免罪卡"});
-            return -1;
+        if (!has_card(entry.state.cards,20)) return false;
+        bool accepted = false;
+        if (entry.state.controller_flags == 1) {
+            const auto key = choice_sequence++;
+            const auto answer = event_choices.find(key);
+            if (answer == event_choices.end()) throw NeedChoice{GameDecision{DecisionKind::card_target,slot,0,amount,
+                "使用免费卡免除这笔费用？",{{"使用免费卡",1},{"保留卡片",0}}},key};
+            accepted = answer->second != 0;
+        } else {
+            const auto limit = multiply32(random.next() % 3000 + 3000,world.header.price_index);
+            accepted = amount > entry.state.cash || amount > limit;
         }
-        if (!has_card(entry.state.cards, 19)) return static_cast<int>(slot);
+        if (accepted) { (void)consume_card(entry.state.cards,world.card_supply,20); events.push_back({GameEventKind::notice,slot,0,entry.state.node_id,"使用免费卡"}); }
+        (void)recipient;
+        return accepted;
+    }
+    int try_frame_card(std::size_t slot,unsigned mode,std::int32_t amount = 0) {
+        auto& entry = world.players.at(slot);
+        if (!has_card(entry.state.cards,19)) return -1;
         int target = -1;
         if (entry.state.controller_flags == 1) {
             const auto key = choice_sequence++;
             const auto found = event_choices.find(key);
             if (found != event_choices.end()) target = found->second;
             else {
-                GameDecision prompt{DecisionKind::card_target, slot, 0, 0, "使用嫁祸卡？", {}};
+                GameDecision prompt{DecisionKind::card_target,slot,0,amount,"使用嫁祸卡？",{}};
                 for (std::size_t i = 0; i < world.players.size(); ++i)
-                    if (i != slot && world.players[i].state.controller_flags)
-                        prompt.options.push_back({"嫁祸给" + player_name(i), static_cast<std::int32_t>(i)});
-                prompt.options.push_back({"保留卡片", -1});
-                throw NeedChoice{std::move(prompt), key};
+                    if (i != slot && world.players[i].state.controller_flags) prompt.options.push_back({"嫁祸给" + player_name(i),static_cast<std::int32_t>(i)});
+                prompt.options.push_back({"保留卡片",-1}); throw NeedChoice{std::move(prompt),key};
             }
         } else {
             std::int32_t hostility = 0;
             for (std::size_t i = 0; i < world.players.size(); ++i) {
                 if (i == slot || !world.players[i].state.controller_flags) continue;
-                const auto amount = std::bit_cast<std::int32_t>(entry.status.hostility[i]);
-                if (amount > hostility) { hostility = amount; target = static_cast<int>(i); }
+                const auto value = std::bit_cast<std::int32_t>(entry.status.hostility[i]);
+                if (value > hostility) { hostility = value; target = static_cast<int>(i); }
             }
-            if (target == -1) {
+            if (target < 0) {
                 std::vector<std::size_t> eligible;
                 for (std::size_t i = 0; i < world.players.size(); ++i) {
-                    const auto& other = world.players[i]; const auto& state = other.status;
-                    if (i != slot && other.state.controller_flags && !state.days_in_hotel &&
-                        !state.days_disappearing && !state.days_in_prison && !state.days_in_hospital) eligible.push_back(i);
+                    const auto& other = world.players[i]; const auto& value = other.status;
+                    if (i != slot && other.state.controller_flags && !value.days_in_hotel && !value.days_disappearing && !value.days_in_prison && !value.days_in_hospital) eligible.push_back(i);
                 }
                 if (!eligible.empty()) target = static_cast<int>(eligible[random.next() % eligible.size()]);
             }
+            if (mode == 1) {
+                const auto limit = multiply32(random.next() % 4000 + 4000,world.header.price_index);
+                if (!(amount > entry.state.cash || amount > limit)) target = -1;
+            } else if (mode == 2 && entry.state.cash < multiply32(20000,world.header.price_index)) target = -1;
         }
         if (target >= 0) {
-            (void)consume_card(entry.state.cards, world.card_supply, 19);
-            events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id,
-                              player_name(slot) + "使用嫁祸卡，目标是" + player_name(static_cast<std::size_t>(target))});
-            return target;
+            (void)consume_card(entry.state.cards,world.card_supply,19);
+            events.push_back({GameEventKind::notice,slot,0,entry.state.node_id,"使用嫁祸卡，目标是" + player_name(static_cast<std::size_t>(target))});
         }
-        return static_cast<int>(slot);
+        return target;
+    }
+    int try_defense_card(std::size_t slot) {
+        auto& entry = world.players.at(slot);
+        if (has_card(entry.state.cards,21)) {
+            (void)consume_card(entry.state.cards,world.card_supply,21);
+            events.push_back({GameEventKind::notice,slot,0,entry.state.node_id,"使用免罪卡"}); return -1;
+        }
+        const auto redirected = try_frame_card(slot,0);
+        return redirected >= 0 ? redirected : static_cast<int>(slot);
     }
     std::uint8_t choose_victim_card(std::size_t slot, std::size_t victim) {
         const auto key = choice_sequence++;
@@ -754,15 +971,17 @@ struct GameSession::Impl {
         }
     }
     void turn_around(std::size_t slot) {
-        auto& state = world.players.at(slot).state;
-        state.direction = static_cast<std::uint8_t>((state.direction + 4) & 7U);
-        const auto& node = world.nodes.at(state.node_id);
-        std::vector<std::uint16_t> choices;
-        for (unsigned i = 0; i < 4; ++i)
-            if (node.neighbors[i] && node.neighbors[i] != state.last_node_id && !(node.flags & (0x40000000U >> i))) choices.push_back(node.neighbors[i]);
-        state.last_node_id = choices.empty() ? 0 : choices[random.next() % choices.size()];
+        const auto turn = [&](auto& state) {
+            state.direction = static_cast<std::uint8_t>((state.direction + 4) & 7U);
+            const auto& node = world.nodes.at(state.node_id);
+            std::vector<std::uint16_t> choices;
+            for (unsigned i = 0; i < 4; ++i)
+                if (node.neighbors[i] && node.neighbors[i] != state.last_node_id && !(node.flags & (0x40000000U >> i))) choices.push_back(node.neighbors[i]);
+            state.last_node_id = choices.empty() ? 0 : choices[random.next() % choices.size()];
+        };
+        if (slot < 4) turn(world.players.at(slot).state); else turn(world.special_actors.at(slot-4));
     }
-    void auction(std::uint16_t property_code, int seller = -1) {
+    AuctionResult auction(std::uint16_t property_code, int seller = -1) {
         AuctionSession auction_session(world,random,property_code,seller);
         static constexpr const char* labels[]{"不加价","加价100","加价500","加价1000","加价5000","加价10000","退出拍卖"};
         for (unsigned count = 0; !auction_session.finished(); ++count) {
@@ -780,6 +999,173 @@ struct GameSession::Impl {
         }
         if (auction_session.result().winner) emit(GameEventKind::notice,"拍卖成交",auction_session.result().price);
         else emit(GameEventKind::notice,"地产拍卖流拍");
+        return auction_session.result();
+    }
+    std::uint16_t random_free_node(std::uint16_t reference = 0) {
+        std::vector<std::uint16_t> choices;
+        for (std::size_t i = 1; i < world.nodes.size(); ++i) {
+            const auto& node = world.nodes[i];
+            if (!(node.flags & 0x80ffff00U) && std::any_of(node.neighbors.begin(),node.neighbors.end(),[](auto n){return n != 0;})) {
+                if (i > 255) throw std::runtime_error("original random node exceeds byte range");
+                choices.push_back(static_cast<std::uint16_t>(i));
+            }
+        }
+        if (choices.empty()) throw std::runtime_error("no free object node");
+        for (unsigned trial = 0; trial < 100000; ++trial) {
+            const auto selected = choices[random.next() % choices.size()];
+            if (!reference || std::abs(world.nodes[selected].x - world.nodes.at(reference).x) >= 300 ||
+                std::abs(world.nodes[selected].y - world.nodes.at(reference).y) >= 300) return selected;
+        }
+        throw std::runtime_error("original distant-node selection cannot find an eligible node");
+    }
+    void place_existing_object(std::size_t index, std::uint16_t node_id) {
+        auto& object = world.objects.at(index);
+        if (object.node_id) return;
+        object.node_id = node_id; object.remaining_days = object.attached_player = 0;
+        if (!node_id) return;
+        auto& node = world.nodes.at(node_id);
+        const auto previous = std::find_if(node.neighbors.begin(),node.neighbors.end(),[](auto n){return n != 0;});
+        const auto& from = world.nodes.at(previous == node.neighbors.end() ? 0 : *previous);
+        object.direction = direction::from_delta(node.x - from.x,node.y - from.y);
+        node.flags |= static_cast<std::uint32_t>(index + 1) << 16U;
+    }
+    void remove_object(std::uint16_t id) {
+        if (!id) return;
+        auto& object = world.objects.at(id - 1);
+        const auto old_node = object.node_id;
+        if (object.kind >= 16 && object.kind <= 18) ++world.tool_supply.at(object.kind - 15);
+        if (object.attached_player && object.attached_player <= world.players.size()) {
+            auto& status = world.players[object.attached_player - 1].status;
+            if (object.kind == 18) status.attached_bomb = 0;
+            else {
+                static constexpr std::array<std::int16_t,18> luck{0,-100,-200,-100,-200,100,200,100,200,-100,100,0,-500,0,0,1000,0,0};
+                static constexpr std::array<std::int16_t,18> money{0,100,150,0,0,-60,-100,0,0,60,-60,0,0,0,0,-200,0,0};
+                static constexpr std::array<std::int16_t,18> physical{0,0,0,100,150,0,0,-60,-100,60,-60,0,0,0,0,-200,0,0};
+                const auto kind = object.kind;
+                if (kind >= luck.size()) throw std::runtime_error("invalid attached god type");
+                const auto sub16 = [](std::int16_t a,std::int16_t b){return std::bit_cast<std::int16_t>(static_cast<std::uint16_t>(static_cast<std::uint16_t>(a)-static_cast<std::uint16_t>(b)));};
+                status.god_info = 0;
+                status.god_luck_modifier = sub16(status.god_luck_modifier,luck[kind]);
+                status.money_fortune_modifier = sub16(status.money_fortune_modifier,money[kind]);
+                status.other_fortune_modifier = sub16(status.other_fortune_modifier,physical[kind]);
+            }
+        }
+        if (!object.attached_player) world.nodes.at(old_node).flags &= ~0x00ff0000U;
+        object.node_id = 0; object.remaining_days = object.attached_player = 0;
+        if (id <= 12) {
+            const auto opposite = static_cast<std::size_t>((id - 1) ^ 1U);
+            const auto node = random_free_node(old_node);
+            place_existing_object(opposite,node);
+        }
+    }
+    std::vector<std::uint16_t> instance_codes(std::uint16_t center_x,std::uint16_t center_y,int radius) const {
+        if (world.camera_rotation > 7) throw std::runtime_error("invalid world camera rotation");
+        const board::Camera camera{{center_x,center_y},static_cast<std::uint8_t>(world.camera_rotation)};
+        std::vector<std::uint16_t> pixels(440U * 440U);
+        const auto put = [&](int x,int y,std::uint16_t code) {
+            if (const auto screen = board::project({x,y},camera)) {
+                const auto row = screen->y - 40;
+                if (screen->x >= 0 && screen->x < 440 && row >= 0 && row < 440)
+                    pixels[static_cast<std::size_t>(row * 440 + screen->x)] |= code;
+            }
+        };
+        for (std::size_t i = 0; i < world.players.size(); ++i) {
+            const auto& entry = world.players[i];
+            if (entry.state.x && !entry.status.days_disappearing)
+                put(entry.state.x,entry.state.y,static_cast<std::uint16_t>(0x8000U | (1U << i)));
+        }
+        for (std::size_t i = 0; i < 4; ++i) {
+            const auto& entry = world.special_actors[i];
+            if (entry.x && !entry.inactive_state) put(entry.x,entry.y,static_cast<std::uint16_t>(0x8000U | (0x10U << i)));
+        }
+        for (std::size_t i = 0; i < world.objects.size(); ++i) {
+            const auto& object = world.objects[i];
+            if (object.node_id && !object.attached_player) {
+                const auto& node = world.nodes.at(object.node_id);
+                put(node.x,node.y,static_cast<std::uint16_t>(0x8000U | ((i + 1U) << 8U)));
+            }
+        }
+        for (std::size_t i = 1; i < world.lands.size(); ++i) {
+            const auto& land = world.lands[i];
+            if (land.economy.level || land.economy.owner_code) put(land.x,land.y,static_cast<std::uint16_t>(2000 + i));
+        }
+        for (std::size_t i = 1; i < world.facilities.size(); ++i) {
+            const auto& facility = world.facilities[i];
+            if (facility.level || facility.owner_code) put(facility.x,facility.y,static_cast<std::uint16_t>(4000 + i));
+        }
+        for (std::size_t i = 1; i < world.commercials.size(); ++i) {
+            const auto& company = world.commercials[i];
+            if (company.sprite_index) put(company.x,company.y,static_cast<std::uint16_t>(6000 + i));
+        }
+        std::vector<std::uint16_t> selected;
+        const auto first = radius < 0 ? 0 : 220 - radius, last = radius < 0 ? 440 : 220 + radius;
+        if (first < 0 || last > 440) throw std::invalid_argument("pick radius outside viewport");
+        for (int y = first; y < last; ++y) for (int x = first; x < last; ++x) {
+            const auto code = pixels[static_cast<std::size_t>(y * 440 + x)];
+            if (code) selected.push_back(code);
+        }
+        return selected;
+    }
+    void area_damage(std::uint16_t x,std::uint16_t y,std::uint8_t mode,bool hit_actors,int source = -1,int radius = 100) {
+        const auto targets = instance_codes(x,y,radius);
+        for (const auto code : targets) {
+            if (code > 2000 && code < 4000) {
+                auto& land = world.lands.at(code - 2000);
+                if (source >= 0 && land.economy.owner_code)
+                    update_hostility(land.economy.owner_code - 1,static_cast<std::size_t>(source),multiply32(mode ? land.economy.level * 30 : 30,world.header.price_index));
+                if (mode) { land.economy.owner_code = land.economy.level = land.economy.chain_store = 0; land.expired_date = 0; }
+                else { if (land.economy.level) --land.economy.level; if (land.economy.chain_store) land.economy.level = land.economy.chain_store = 0; }
+            } else if (code > 4000 && code < 6000) {
+                auto& facility = world.facilities.at(code - 4000);
+                if (source >= 0 && facility.owner_code)
+                    update_hostility(facility.owner_code - 1,static_cast<std::size_t>(source),multiply32(mode ? facility.level * 30 : 30,world.header.price_index));
+                if (mode) { facility.owner_code = facility.level = facility.facility_type = 0; facility.expired_date = 0; release_hotel_guests(); }
+                else { if (facility.level) --facility.level; if (!facility.level) { facility.facility_type = 0; release_hotel_guests(); } }
+            } else if (hit_actors && (code & 0x8000U)) {
+                for (unsigned i = 0; i < world.players.size(); ++i) if (code & (1U << i)) injure(i);
+                for (unsigned i = 4; i < 8; ++i) if (code & (1U << i)) add_confinement(i,0,true);
+                const auto id = static_cast<std::uint16_t>((code >> 8) & 0x3fU);
+                if (id) remove_object(id);
+            }
+        }
+        if (hit_actors) for (std::size_t i = 0; i < world.players.size(); ++i)
+            if (world.players[i].state.controller_flags & 0x40U) add_confinement(i,3,true);
+    }
+    void check_god(const gods::Result& result) {
+        if(!result.supported)throw UnsupportedRule{result.message};
+        if(!result.message.empty())emit(GameEventKind::notice,result.message);
+    }
+    std::int32_t choose_god_money(std::uint8_t kind) {
+        if(!human() || status().days_sleep_walking)return gods::auto_money(kind,random);
+        const auto key=choice_sequence++;
+        if(const auto answer=event_choices.find(key);answer!=event_choices.end()) {
+            random.seed(choice_random_states.at(key));return answer->second;
+        }
+        money_spinner.emplace(kind);spinner_random.seed(random.state());spinner_elapsed=0;
+        throw NeedChoice{GameDecision{DecisionKind::money_spinner,actor(),0,0,"按停止决定金额",{{"停止",1}}},key};
+    }
+    std::uint32_t upgrade_for_god(std::uint16_t code) {
+        unsigned before=0,after=0,maximum=5;
+        if(code>2000 && code<4000)before=world.lands.at(code-2000).economy.level;
+        else if(code>4000 && code<6000)before=world.facilities.at(code-4000).level;
+        else return 0;
+        change_building(code,true);
+        if(code<4000){const auto& land=world.lands.at(code-2000);after=land.economy.level;if(land.economy.chain_store)maximum=1;}
+        else {const auto& fac=world.facilities.at(code-4000);after=fac.level;constexpr unsigned maxima[]{1,5,5,1,5};if(fac.facility_type<5)maximum=maxima[fac.facility_type];}
+        return after>before?1U|(after==maximum?0x80U:0U):0U;
+    }
+    gods::Callbacks god_callbacks() {
+        gods::Callbacks callbacks;
+        callbacks.remove_object=[this](auto id){remove_object(id);};
+        callbacks.choose_money=[this](auto kind){return choose_god_money(kind);};
+        callbacks.pay=[this](auto from,auto to,auto amount,auto flags){(void)pay(from,to,amount,flags);};
+        callbacks.game_over=[this]{return phase==GamePhase::finished;};
+        callbacks.hospital=[this](auto slot,auto amount){injure(slot);add_confinement(slot,amount,true);};
+        callbacks.voice=[this](auto slot,auto category){voice(slot,category);};
+        callbacks.upgrade_property=[this](auto code){return upgrade_for_god(code);};
+        callbacks.downgrade_property=[this](auto code){change_building(code,false);};
+        callbacks.hostility=[this](auto from,auto to,auto delta){update_hostility(from,to,delta);};
+        return callbacks;
     }
     EventCallbacks event_callbacks() {
         EventCallbacks callbacks;
@@ -789,16 +1175,204 @@ struct GameSession::Impl {
         callbacks.add_hospital = [this](auto slot, auto days_left) { injure(slot); add_confinement(slot, days_left, true); };
         callbacks.disappear = [this](auto slot, auto days_left, auto mode) { disappear(slot, days_left, mode); };
         callbacks.try_mianzui_jiahuo = [this](auto slot) { return try_defense_card(slot); };
+        callbacks.set_loan_due_date = [this](auto slot) { set_loan_due_date(slot); };
         callbacks.choose_card = [this](auto slot, auto victim) { return choose_victim_card(slot, victim); };
         callbacks.auction = [this](auto property) { auction(property); };
+        callbacks.area_damage = [this](auto x,auto y,auto mode,auto actors) { area_damage(x,y,mode,actors); };
         callbacks.sell_stock = [this](auto slot, auto stock, auto amount, auto bank) {
             (void)stocks::sell_stock(world, slot, stock, amount, bank);
         };
         callbacks.update_stocks = [this](auto stock) { (void)stocks::update_stocks(world, stock); };
         return callbacks;
     }
-    void run_rule(std::function<void()> action, bool first_attempt = true) {
-        if (first_attempt) event_choices.clear();
+    std::string target_label(CardTarget target) const {
+        switch (target.kind) {
+        case CardTargetKind::actor:return target.value < 4 ? player_name(target.value) : "特殊角色" + std::to_string(target.value-3);
+        case CardTargetKind::property:return target.value < 4000 ? "房产" + std::to_string(target.value-2000) : "设施" + std::to_string(target.value-4000);
+        case CardTargetKind::stock:return "股票" + std::to_string(target.value+1);
+        case CardTargetKind::object:return "地图物件" + std::to_string(target.value);
+        case CardTargetKind::card:return std::string(services::card_names.at(target.value-1));
+        case CardTargetKind::tool:return std::string(services::tool_names.at(target.value-1));
+        }
+        throw std::logic_error("invalid card target kind");
+    }
+    std::optional<CardTarget> choose_target(std::span<const CardTarget> options,const std::string& title) {
+        const auto encode = [](CardTarget value){return static_cast<std::int32_t>((static_cast<unsigned>(value.kind)<<16U)|value.value);};
+        const auto key = choice_sequence++;
+        if (const auto answer = event_choices.find(key); answer != event_choices.end()) {
+            if (answer->second < 0) return std::nullopt;
+            for (auto value : options) if (encode(value) == answer->second) return value;
+            throw std::logic_error("cached card target no longer valid");
+        }
+        GameDecision prompt{DecisionKind::action_target,actor(),0,0,title,{}};
+        for (auto value : options) {
+            DecisionOption option{target_label(value),encode(value)};
+            std::optional<std::uint16_t> code;
+            if(value.kind==CardTargetKind::actor)code=static_cast<std::uint16_t>(0x8000U|(1U<<value.value));
+            else if(value.kind==CardTargetKind::property)code=value.value;
+            else if(value.kind==CardTargetKind::object)code=static_cast<std::uint16_t>(0x8000U|(static_cast<unsigned>(value.value)<<8U));
+            if(code){const auto point=instance_position(*code);option.location=DecisionLocation{point.x,point.y};}
+            prompt.options.push_back(std::move(option));
+        }
+        prompt.options.push_back({"取消",-1}); throw NeedChoice{std::move(prompt),key};
+    }
+    std::optional<std::uint8_t> choose_facility_type(std::size_t slot) {
+        if (world.players.at(slot).state.controller_flags != 1) return static_cast<std::uint8_t>(random.next()%4+1);
+        const auto key = choice_sequence++;
+        if (const auto answer = event_choices.find(key); answer != event_choices.end())
+            return answer->second < 0 ? std::nullopt : std::optional<std::uint8_t>(static_cast<std::uint8_t>(answer->second));
+        throw NeedChoice{GameDecision{DecisionKind::action_target,slot,0,0,"选择设施类型",{{"空置",0},{"旅馆",1},{"百货公司",2},{"加油站",3},{"研究所",4}}},key};
+    }
+    CardLookahead lookahead(std::size_t slot,std::size_t count) {
+        if (count > 8) throw std::invalid_argument("lookahead exceeds original eight nodes");
+        CardLookahead result; result.nodes.assign(count,0);
+        auto previous = world.players.at(slot).state.last_node_id;
+        auto current = world.players[slot].state.node_id;
+        for (std::size_t n = 0; n < count; ++n) {
+            const auto& node = world.nodes.at(current);
+            std::vector<std::uint16_t> candidates;
+            for (unsigned i = 0; i < 4; ++i) if (node.neighbors[i] && node.neighbors[i] != previous && !(node.flags & (0x40000000U>>i))) candidates.push_back(node.neighbors[i]);
+            std::uint16_t next = previous;
+            if (candidates.size() == 1) next = candidates[0];
+            else if (candidates.size() > 1) { next = candidates[random.next()%candidates.size()]; result.crossed_junction = true; }
+            previous = current; current = next; result.nodes[n] = next;
+        }
+        return result;
+    }
+    CardCallbacks card_callbacks() {
+        CardCallbacks callbacks;
+        static_cast<EventCallbacks&>(callbacks) = event_callbacks();
+        callbacks.hostility = [this](auto from,auto to,auto delta){update_hostility(from,to,delta);};
+        callbacks.turn_around = [this](auto slot){turn_around(slot);};
+        callbacks.change_building = [this](auto code,auto upgrade){change_building(code,upgrade);};
+        callbacks.release_hotel = [this](auto){release_hotel_guests();};
+        callbacks.auction_property = [this](auto code,auto seller){return auction(code,seller).winner.has_value();};
+        callbacks.choose_target = [this](auto card,auto options){return choose_target(options,std::string(services::card_names.at(card-1))+"：选择目标");};
+        callbacks.choose_inventory = [this](auto,auto victim)->std::optional<CardTarget> {
+            std::vector<CardTarget> choices;
+            for (auto card : world.players.at(victim).state.cards) if (card) {
+                const CardTarget value{CardTargetKind::card,card};
+                if (std::find(choices.begin(),choices.end(),value)==choices.end()) choices.push_back(value);
+            }
+            for (std::size_t i=0;i<13;++i) if (world.players[victim].state.tool_amounts[i]) choices.push_back({CardTargetKind::tool,static_cast<std::uint16_t>(i+1)});
+            return choose_target(choices,"选择要取得的卡片或道具");
+        };
+        callbacks.choose_facility_type = [this](auto slot){return choose_facility_type(slot);};
+        callbacks.try_free = [this](auto victim,auto owner,auto amount){return try_free_card(victim,owner,amount);};
+        callbacks.try_frame = [this](auto victim,auto mode){return try_frame_card(victim,mode);};
+        callbacks.remove_object = [this](auto id){remove_object(id);};
+        callbacks.attach_god = [this](auto slot,auto id){check_god(gods::attach(world,random,slot,id,world.players.at(slot).state.node_id,god_callbacks()));};
+        callbacks.detach_god = [this](auto slot){check_god(gods::detach(world,slot,god_callbacks()));};
+        callbacks.market_closed = [this]{return world.news_effect_days != 0 || holidays::is_closed({world.header.date.year,world.header.date.month,world.header.date.day},world.header.map_id,world.header.stage_id);};
+        callbacks.lookahead_nodes = [this](auto slot,auto count){return lookahead(slot,count);};
+        callbacks.nearby_instances = [this](auto slot){const auto& state=world.players.at(slot).state;return instance_codes(state.x,state.y,-1);};
+        return callbacks;
+    }
+    std::vector<std::uint16_t> tool_targets(unsigned tool,std::uint16_t source = 0) const {
+        const auto flags = tools::selection_flags(tool,source);
+        unsigned mask = flags & 0xffU;
+        if (mask & 0x40U) mask = (mask & 0x80U)|0x37U;
+        const auto filter = (flags>>8U)&0xffU;
+        const board::Camera camera{{player().x,player().y},static_cast<std::uint8_t>(world.camera_rotation)};
+        const auto visible = [&](int x,int y) {
+            if (mask & 0x80U) return true;
+            const auto screen=board::project({x,y},camera);
+            return screen && screen->x>=0 && screen->x<440 && screen->y>=40 && screen->y<480;
+        };
+        std::vector<std::uint16_t> result;
+        if (mask & 1U) for (std::size_t i=1;i<world.nodes.size();++i) {
+            const auto& node=world.nodes[i];
+            if (visible(node.x,node.y) && ((tool!=2 && tool!=3 && tool!=4) || !(node.flags & 0x00ffff00U))) result.push_back(static_cast<std::uint16_t>(i));
+        }
+        if (mask & 2U) for (std::size_t i=1;i<world.lands.size();++i) {
+            const auto& land=world.lands[i];
+            if (visible(land.x,land.y) && (filter!=8 || (!land.economy.owner_code && !land.economy.level))) result.push_back(static_cast<std::uint16_t>(2000+i));
+        }
+        if (mask & 4U) for (std::size_t i=1;i<world.facilities.size();++i) {
+            const auto& facility=world.facilities[i];
+            if (visible(facility.x,facility.y) && (filter!=8 || (!facility.owner_code && !facility.level))) result.push_back(static_cast<std::uint16_t>(4000+i));
+        }
+        if (mask & 0x10U) {
+            for (std::size_t i=0;i<world.players.size();++i) {const auto& entry=world.players[i];if(entry.state.x && entry.state.controller_flags && !entry.status.days_disappearing && visible(entry.state.x,entry.state.y)) result.push_back(static_cast<std::uint16_t>(0x8000U|(1U<<i)));}
+            for (std::size_t i=0;i<4;++i) {const auto& entry=world.special_actors[i];if(entry.x && !entry.inactive_state && visible(entry.x,entry.y)) result.push_back(static_cast<std::uint16_t>(0x8000U | (0x10U<<i)));}
+        }
+        if (mask & 0x20U) for (std::size_t i=0;i<world.objects.size();++i) {const auto& object=world.objects[i];if(object.node_id) {const auto& node=world.nodes.at(object.node_id);if(visible(node.x,node.y)) result.push_back(static_cast<std::uint16_t>(0x8000U|((i+1U)<<8U)));}}
+        return result;
+    }
+    std::uint16_t choose_tool_target(unsigned tool,std::uint16_t source) {
+        const auto key=choice_sequence++;
+        if (const auto answer=event_choices.find(key);answer!=event_choices.end()) return static_cast<std::uint16_t>(answer->second);
+        GameDecision prompt{DecisionKind::action_target,actor(),0,0,source ? "选择目的地" : "选择道具目标",{}};
+        if (tool==8) for(int value=1;value<=6;++value) prompt.options.push_back({std::to_string(value)+"点",value});
+        else for(auto code:tool_targets(tool,source)) {
+            std::string label;
+            if(code<2000)label="道路"+std::to_string(code);
+            else if(code<6000)label=target_label({CardTargetKind::property,code});
+            else if(code&0xffU)label=target_label({CardTargetKind::actor,static_cast<std::uint16_t>(std::countr_zero(static_cast<unsigned>(code&0xffU)))});
+            else label=target_label({CardTargetKind::object,static_cast<std::uint16_t>((code>>8U)&0x3fU)});
+            const auto point=instance_position(code);
+            prompt.options.push_back({std::move(label),code,DecisionLocation{point.x,point.y}});
+        }
+        prompt.options.push_back({"取消",0});throw NeedChoice{std::move(prompt),key};
+    }
+    board::Point instance_position(std::uint16_t code) const {
+        if(code<2000){const auto& node=world.nodes.at(code);return {node.x,node.y};}
+        if(code<4000){const auto& land=world.lands.at(code-2000);return {land.x,land.y};}
+        if(code<6000){const auto& facility=world.facilities.at(code-4000);return {facility.x,facility.y};}
+        if(code&0xffU){const auto slot=static_cast<std::size_t>(std::countr_zero(static_cast<unsigned>(code&0xffU)));if(slot<4){const auto& p=world.players.at(slot).state;return {p.x,p.y};}const auto& p=world.special_actors.at(slot-4);return {p.x,p.y};}
+        const auto& node=world.nodes.at(world.objects.at(((code>>8U)&0x3fU)-1).node_id);return {node.x,node.y};
+    }
+    void robot(std::size_t slot) {
+        const auto owner=world.players.at(slot).state;
+        auto& robot=world.special_actors[4];
+        robot.x=owner.x;robot.y=owner.y;robot.node_id=owner.node_id;robot.last_node_id=owner.last_node_id;
+        robot.owner=static_cast<std::uint8_t>(slot);robot.direction=owner.direction;robot.inactive_state=0;
+        // Original 0x40deb9 sets nine steps. Actor8 never sets road occupancy bits.
+        for(unsigned step=0;step<9;++step){
+            const auto& old=world.nodes.at(robot.node_id);
+            std::vector<std::uint16_t> choices;
+            for(unsigned i=0;i<4;++i)if(old.neighbors[i] && old.neighbors[i]!=robot.last_node_id && !(old.flags&(0x40000000U>>i))) choices.push_back(old.neighbors[i]);
+            const auto next=choices.empty()?robot.last_node_id:choices[random.next()%choices.size()];
+            const auto& node=world.nodes.at(next);
+            robot.last_node_id=robot.node_id;robot.node_id=next;
+            robot.direction=direction::from_delta(node.x-robot.x,node.y-robot.y);
+            robot.x=static_cast<std::uint16_t>(node.x);robot.y=static_cast<std::uint16_t>(node.y);
+            const auto object=static_cast<std::uint16_t>((node.flags>>16U)&255U);
+            if(object)remove_object(object);
+            events.push_back({GameEventKind::notice,slot,0,next,"机器娃娃清理道路"});
+        }
+        robot.inactive_state=3;
+    }
+    bool restore_last_state() {
+        const auto slot=actor();
+        if(!previous_turn[slot])return false;
+        const auto header=world.header;
+        const auto rotation=world.camera_rotation;
+        const auto lease=world.lease_mode;
+        world=*previous_turn[slot];
+        const auto date=world.header.date;const auto price=world.header.price_index;const auto initial=world.header.initial_fund;
+        world.header=header;world.header.date=date;world.header.price_index=price;world.header.initial_fund=initial;
+        world.camera_rotation=rotation;world.lease_mode=lease;
+        // Original history excludes rand's CRT state and the current player.
+        emit(GameEventKind::notice,"时光机回到上次出发前");
+        return true;
+    }
+    tools::Callbacks tool_callbacks() {
+        tools::Callbacks callbacks;
+        callbacks.robot=[this](auto slot){robot(slot);};
+        callbacks.restore_last_state=[this]{return restore_last_state();};
+        callbacks.remote_dice=[this](auto,unsigned amount){forced_roll=amount;begin_roll();};
+        callbacks.upgrade=[this](auto code){change_building(code,true);};
+        callbacks.before_teleport=[this](auto slot){clear_absences(slot);};
+        callbacks.blast=[this](auto code,bool nuclear,auto slot){
+            const auto point=instance_position(code);
+            area_damage(static_cast<std::uint16_t>(point.x),static_cast<std::uint16_t>(point.y),nuclear?1:0,true,static_cast<int>(slot),nuclear?-1:100);
+        };
+        return callbacks;
+    }
+    void run_rule(std::function<void()> action, bool first_attempt = true, bool finish_after = true, std::function<void()> on_success = {}) {
+        if (first_attempt) { event_choices.clear(); choice_random_states.clear(); }
+        bool completed=false;
         choice_sequence = 0;
         World checkpoint = world;
         const auto checkpoint_random = random.state();
@@ -809,18 +1383,22 @@ struct GameSession::Impl {
         };
         try {
             action();
-            pending_continuation = {}; event_choices.clear();
-            if (phase != GamePhase::finished) finish_turn();
+            pending_continuation = {}; event_choices.clear(); choice_random_states.clear();
+            completed=true;
+            if (phase != GamePhase::finished && (finish_after || (phase != GamePhase::rolling && phase != GamePhase::moving))) {
+                if (finish_after) finish_turn(); else { decision.reset(); set_phase(GamePhase::human_ready); }
+            }
         } catch (const NeedChoice& choice) {
             // Nested fortune/card/auction choices replay a transaction with its
             // answers, never its mutations or already-consumed random draws.
             restore();
             decision = choice.decision; pending_choice_key = choice.key;
-            pending_continuation = [this, action] { run_rule(action, false); };
+            pending_continuation = [this, action, finish_after, on_success] { run_rule(action, false, finish_after,on_success); };
             set_phase(GamePhase::awaiting_decision);
         } catch (const UnsupportedRule& missing) {
-            restore(); pending_continuation = {}; event_choices.clear(); unsupported(missing.message);
+            restore(); pending_continuation = {}; event_choices.clear(); unsupported(missing.message,finish_after ? GamePhase::advancing_turn : GamePhase::human_ready);
         }
+        if(completed && on_success)on_success();
     }
     void resolve_event(bool news) {
         run_rule([this, news] {
@@ -902,6 +1480,41 @@ struct GameSession::Impl {
         if (prompt.options.empty()) { finish_turn(); return; }
         decision = std::move(prompt); set_phase(GamePhase::awaiting_decision);
     }
+    void set_loan_due_date(std::size_t slot) {
+        auto& entry = world.players.at(slot);
+        if (!entry.status.loan_due_date) entry.status.loan_due_date = calendar::pack(holidays::loan_due_date(
+            {world.header.date.year,world.header.date.month,world.header.date.day},world.header.map_id,world.header.stage_id));
+    }
+    bool borrow(std::int32_t amount) {
+        if (amount <= 0 || status().days_bank_no_loans || amount > subtract32(wealth(actor()),player().loan)) return false;
+        player().loan = add32(player().loan,amount); player().bank_balance = add32(player().bank_balance,amount);
+        set_loan_due_date(actor()); emit(GameEventKind::bank_transfer,"贷款已存入银行",amount); return true;
+    }
+    bool repay(std::int32_t amount,bool clear_due_date) {
+        if (amount <= 0 || amount > player().loan || static_cast<std::int64_t>(player().cash) + player().bank_balance < amount) return false;
+        const auto from_bank = std::min(std::max(player().bank_balance,0),amount);
+        player().bank_balance = subtract32(player().bank_balance,from_bank);
+        player().cash = subtract32(player().cash,amount - from_bank);
+        player().loan = subtract32(player().loan,amount);
+        if (!player().loan && clear_due_date) status().loan_due_date = 0;
+        emit(GameEventKind::bank_transfer,"偿还贷款",amount); return true;
+    }
+    void ai_bank_loan() {
+        if (player().loan) {
+            const auto due = calendar::unpack(status().loan_due_date);
+            const auto remaining_days = calendar::is_valid(due) ? calendar::days_between(
+                {world.header.date.year,world.header.date.month,world.header.date.day},due) : 0;
+            const auto total = add32(player().cash,player().bank_balance);
+            if (player().bank_balance > multiply32(player().loan,2) ||
+                (remaining_days <= 6 && static_cast<double>(total) >= player().loan * 1.1)) (void)repay(player().loan,false);
+        } else {
+            const bool attempt = random.next() % 10 == 0;
+            if ((attempt || add32(player().cash,player().bank_balance) < 30000) && !status().days_bank_no_loans && status().loan_ratio) {
+                const auto amount = multiply32(status().loan_ratio,wealth(actor())) / 100;
+                if (amount > 0) { player().loan = amount; player().bank_balance = add32(player().bank_balance,amount); set_loan_due_date(actor()); emit(GameEventKind::bank_transfer,"电脑玩家办理贷款",amount); }
+            }
+        }
+    }
     void open_bank(bool passing) {
         resume_movement = passing;
         if (status().days_rejected_by_bank) {
@@ -910,6 +1523,10 @@ struct GameSession::Impl {
         if (human()) {
             std::vector<DecisionOption> options{{"存款", 1}};
             if (!status().days_bank_no_loans) options.push_back({"提款", 2});
+            if (!passing) {
+                if (!status().days_bank_no_loans) options.push_back({"贷款",3});
+                if (player().loan > 0) options.push_back({"还贷",4});
+            }
             options.push_back({"离开", 0});
             decision = GameDecision{DecisionKind::bank, actor(), 0, 0, "办理存款或提款", std::move(options)};
             set_phase(GamePhase::awaiting_decision);
@@ -929,7 +1546,7 @@ struct GameSession::Impl {
                     emit(GameEventKind::bank_transfer, "电脑玩家调整现金与存款");
                 }
             }
-            if (!passing) emit(GameEventKind::unsupported_event, "电脑贷款与特殊融资规则尚未完成");
+            if (!passing) ai_bank_loan();
             leave_bank();
         }
     }
@@ -943,13 +1560,16 @@ struct GameSession::Impl {
         const unsigned kind = node.flags & 0xffU;
         if (kind != 0 && status().days_sleep_walking) { finish_turn(); return; }
         if (kind == 0) {
+            property_pending = true; purchased_property = false;
             if (node.type_and_index > 2000 && node.type_and_index < 4000) property(node.type_and_index - 2000);
             else if (node.type_and_index > 4000 && node.type_and_index < 6000) facility(node.type_and_index - 4000);
+            else if (node.type_and_index > 6000 && node.type_and_index < 8000) commercial(node.type_and_index - 6000);
             else if (node.type_and_index == 0) finish_turn();
             else unsupported("这个设施的规则尚未完成");
         } else if (kind == 1) finish_turn();
         else if (kind == 2 || kind == 3) resolve_event(kind == 2);
         else if (kind == 4 || kind == 5) visit_confinement(kind == 5);
+        else if (kind == 9) open_lottery();
         else if (kind == 13) receive_random_card();
         else if (kind == 15) open_shop(node.type_and_index);
         else if (kind == 16) open_magic();
@@ -1003,6 +1623,26 @@ struct GameSession::Impl {
         }
         emit(GameEventKind::bank_transfer, "月结完成，无贷款玩家获得存款利息");
     }
+    std::uint32_t lease_expiry() const {
+        static constexpr std::array<std::uint32_t,6> intervals{0,0x20000,0x10000,0x600,0x300,0x100};
+        if (world.lease_mode >= intervals.size()) throw std::runtime_error("invalid lease mode");
+        const auto interval = intervals[world.lease_mode];
+        return interval ? calendar::add_packed_interval(calendar::pack({world.header.date.year,world.header.date.month,world.header.date.day}),interval) : 0;
+    }
+    void expire_properties() {
+        const auto today = calendar::pack({world.header.date.year,world.header.date.month,world.header.date.day});
+        const auto age = [](std::uint8_t& state) {
+            if (state & 0xf0U) { state = static_cast<std::uint8_t>(state - 0x10); if (!(state & 0xf0U)) state = 0; }
+        };
+        for (auto& land : world.lands) {
+            age(land.temporary_state);
+            if (land.expired_date == today) { land.economy.owner_code = 0; land.expired_date = 0; }
+        }
+        for (auto& facility : world.facilities) {
+            age(facility.temporary_state);
+            if (facility.expired_date == today) { facility.owner_code = 0; facility.expired_date = 0; }
+        }
+    }
     void next_turn() {
         const auto previous = actor();
         std::size_t next = previous;
@@ -1020,9 +1660,22 @@ struct GameSession::Impl {
             const auto advance = calendar::next_day({world.header.date.year, world.header.date.month, world.header.date.day});
             const auto date = advance.date;
             world.header.date = {date.day, date.month, date.year};
-            ++days;
+            ++days; ++world.round_counter;
             update_price_index();
+            if (world.news_effect_days & 0x80) world.news_effect_days = 0;
+            else if (world.news_effect_days && --world.news_effect_days == 0) world.news_effect_days = 0x80;
+            for (auto& stock : world.stocks) {
+                if (stock.suspension_days) --stock.suspension_days;
+                if (stock.news_movement & 0xf0U) stock.news_movement = static_cast<std::uint8_t>(stock.news_movement - 0x10);
+                if (stock.news_movement & 0x0fU) --stock.news_movement;
+            }
+            (void)stocks::daily_update(world,random,holidays::is_closed({date.year,date.month,date.day},world.header.map_id,world.header.stage_id));
+            if (lottery::draw_due(world.header.date)) {
+                const auto draw = lottery::draw(world,random);
+                if (draw.held) emit(GameEventKind::notice,"彩票开奖：" + std::to_string(draw.number),draw.payout);
+            }
             if (advance.month_changed) close_month();
+            expire_properties();
             emit(GameEventKind::date_changed, std::to_string(date.year) + "年" + std::to_string(date.month) + "月" + std::to_string(date.day) + "日");
         }
         start_turn();
@@ -1042,20 +1695,88 @@ std::uint32_t GameSession::random_state() const noexcept { return impl_->random.
 int GameSession::steps_remaining() const noexcept { return impl_->remaining; }
 std::uint64_t GameSession::completed_days() const noexcept { return impl_->days; }
 
+void GameSession::set_camera_rotation(std::uint8_t rotation) {
+    if (rotation > 7) throw std::invalid_argument("camera rotation must be 0..7");
+    impl_->world.camera_rotation = rotation;
+}
 bool GameSession::roll_dice() {
     if (impl_->phase != GamePhase::human_ready) return false;
     impl_->begin_roll(); return true;
 }
+std::vector<CardTarget> GameSession::card_targets(std::uint8_t card) const {
+    return legal_card_targets(impl_->world,impl_->actor(),card,impl_->card_callbacks());
+}
+bool GameSession::use_card(const CardUse& request) {
+    if(impl_->phase!=GamePhase::human_ready)return false;
+    impl_->last_action_accepted=true;
+    impl_->run_rule([this,request]{
+        const auto result=apply_card(impl_->world,impl_->random,impl_->actor(),request,impl_->card_callbacks());
+        impl_->last_action_accepted=result.used();
+        if(result.status==CardUseStatus::missing_callback)throw UnsupportedRule{result.message};
+        if(result.used())impl_->emit(GameEventKind::notice,"使用"+std::string(services::card_names.at(request.card_id-1)));
+    },true,false);
+    return impl_->last_action_accepted || impl_->phase==GamePhase::awaiting_decision;
+}
+bool GameSession::use_tool(unsigned id,std::uint16_t target,std::uint16_t destination) {
+    if(impl_->phase!=GamePhase::human_ready || id<1 || id>13 || !impl_->player().tool_amounts[id-1])return false;
+    impl_->last_action_accepted=true;
+    impl_->run_rule([this,id,target,destination]{
+        auto chosen=target,finish=destination;
+        if((tools::selection_flags(id)!=0 || id==8) && !chosen)chosen=impl_->choose_tool_target(id,0);
+        if(!chosen && (tools::selection_flags(id)!=0 || id==8)){impl_->last_action_accepted=false;return;}
+        if(id==11 && !finish)finish=impl_->choose_tool_target(id,chosen);
+        if(id==11 && !finish){impl_->last_action_accepted=false;return;}
+        if(tools::selection_flags(id)!=0){const auto options=impl_->tool_targets(id);if(std::find(options.begin(),options.end(),chosen)==options.end()){impl_->last_action_accepted=false;return;}}
+        if(id==11){const auto options=impl_->tool_targets(id,chosen);if(std::find(options.begin(),options.end(),finish)==options.end()){impl_->last_action_accepted=false;return;}}
+        const auto result=tools::use(impl_->world,impl_->random,impl_->actor(),id,chosen,finish,impl_->tool_callbacks());
+        impl_->last_action_accepted=result.applied;
+        if(!result.supported)throw UnsupportedRule{result.message};
+        if(result.applied)impl_->emit(GameEventKind::notice,"使用"+std::string(services::tool_names.at(id-1)));
+    },true,false);
+    return impl_->last_action_accepted || impl_->phase==GamePhase::awaiting_decision;
+}
+bool GameSession::dismount() {
+    if(impl_->phase!=GamePhase::human_ready)return false;
+    return tools::dismount(impl_->world,impl_->actor());
+}
+bool GameSession::buy_stock(std::size_t stock,std::int32_t quantity) {
+    if(impl_->phase!=GamePhase::human_ready || stock>=impl_->world.stocks.size() || quantity<=0 || impl_->card_callbacks().market_closed())return false;
+    const auto& quote=impl_->world.stocks[stock];
+    if(quote.suspension_days || stocks::trend(impl_->world,stock)==stocks::PriceTrend::limit_up || quantity>quote.flags_10)return false;
+    try {const auto result=stocks::buy_stock(impl_->world,impl_->actor(),stock,quantity,true);impl_->emit(GameEventKind::bank_transfer,"买入股票",result.cost);return true;}
+    catch(const std::invalid_argument&){return false;}catch(const std::out_of_range&){return false;}
+}
+bool GameSession::sell_stock(std::size_t stock,std::int32_t quantity) {
+    if(impl_->phase!=GamePhase::human_ready || stock>=impl_->world.stocks.size() || quantity<=0 || impl_->card_callbacks().market_closed())return false;
+    const auto& quote=impl_->world.stocks[stock];
+    if(quote.suspension_days || stocks::trend(impl_->world,stock)==stocks::PriceTrend::limit_down)return false;
+    try {const auto result=stocks::sell_stock(impl_->world,impl_->actor(),stock,quantity,true);impl_->emit(GameEventKind::bank_transfer,"卖出股票",result.proceeds);return true;}
+    catch(const std::invalid_argument&){return false;}catch(const std::out_of_range&){return false;}
+}
 bool GameSession::respond(std::size_t option, std::int32_t amount) {
     if (impl_->phase != GamePhase::awaiting_decision || !impl_->decision || option >= impl_->decision->options.size()) return false;
     const auto decision = *impl_->decision;
-    const auto value = decision.options[option].value;
+    auto value = decision.options[option].value;
+    if (decision.kind == DecisionKind::money_spinner) {
+        if(!impl_->money_spinner)return false;
+        impl_->money_spinner->stop();return true;
+    }
     if (impl_->pending_continuation) {
+        if (decision.kind == DecisionKind::roulette) value = Impl::roulette_value(impl_->roulette_kind,impl_->roulette_cursor + 12);
+        if (decision.kind == DecisionKind::primary_stock && value) {
+            if (amount <= 0 || amount > decision.max_amount) return false;
+            value = amount;
+        }
         impl_->event_choices[impl_->pending_choice_key] = value;
         impl_->decision.reset();
         auto continuation = std::move(impl_->pending_continuation);
         if (!continuation) throw std::logic_error("event choice lost its continuation");
         continuation(); return true;
+    }
+    if (decision.kind == DecisionKind::lottery) {
+        if (value && lottery::buy_ticket(impl_->world,impl_->actor(),static_cast<unsigned>(value)) != lottery::Purchase::purchased) return false;
+        if (value) impl_->emit(GameEventKind::notice,"购买彩票" + std::to_string(value),lottery::ticket_price);
+        impl_->finish_turn(); return true;
     }
     if (decision.kind == DecisionKind::shop) return impl_->shop_action(value,amount > 0 ? static_cast<unsigned>(amount) : 1U);
     if (decision.kind == DecisionKind::magic_category) { impl_->magic_effect_prompt(static_cast<unsigned>(value)); return true; }
@@ -1067,6 +1788,8 @@ bool GameSession::respond(std::size_t option, std::int32_t amount) {
         auto& player = impl_->player();
         if (value == 0) { impl_->leave_bank(); return true; }
         if (amount <= 0) return false;
+        if (value == 3) { const bool result=impl_->borrow(amount);if(result)impl_->open_bank(impl_->resume_movement);return result; }
+        if (value == 4) { const bool result=impl_->repay(amount,true);if(result)impl_->open_bank(impl_->resume_movement);return result; }
         if (value == 1 && amount <= player.cash) {
             player.cash = subtract32(player.cash, amount); player.bank_balance = add32(player.bank_balance, amount);
         } else if (value == 2 && amount <= player.bank_balance) {
@@ -1092,16 +1815,30 @@ bool GameSession::respond(std::size_t option, std::int32_t amount) {
     } else if (decision.kind == DecisionKind::buy_land || decision.kind == DecisionKind::upgrade_land) {
         if (value == 1) impl_->buy(decision.land_id, decision.kind == DecisionKind::upgrade_land);
         else impl_->finish_turn();
-    } else impl_->finish_turn();
+    } else if (decision.kind == DecisionKind::notice && impl_->unsupported_resume == GamePhase::human_ready) impl_->set_phase(GamePhase::human_ready);
+    else impl_->finish_turn();
     return true;
 }
 void GameSession::tick(unsigned elapsed_ms) {
+    if(impl_->phase==GamePhase::awaiting_decision && impl_->decision && impl_->decision->kind==DecisionKind::money_spinner){
+        impl_->spinner_elapsed+=elapsed_ms;
+        while(impl_->spinner_elapsed>=30 && !impl_->money_spinner->finished()){
+            impl_->spinner_elapsed-=30;impl_->money_spinner->tick(impl_->spinner_random);
+        }
+        impl_->decision->amount=impl_->money_spinner->amount();
+        if(impl_->money_spinner->finished()){
+            impl_->event_choices[impl_->pending_choice_key]=impl_->money_spinner->amount();
+            impl_->choice_random_states[impl_->pending_choice_key]=impl_->spinner_random.state();
+            impl_->money_spinner.reset();impl_->decision.reset();
+            auto continuation=std::move(impl_->pending_continuation);continuation();
+        }
+        return;
+    }
     if (impl_->phase == GamePhase::awaiting_decision && impl_->decision && impl_->decision->kind == DecisionKind::roulette) {
         impl_->roulette_elapsed += elapsed_ms;
         impl_->roulette_cursor = (impl_->roulette_cursor + impl_->roulette_elapsed / 100) % 12;
         impl_->roulette_elapsed %= 100;
-        const auto kind = impl_->world.facilities.at(impl_->roulette_facility).facility_type;
-        impl_->decision->amount = Impl::roulette_value(kind,impl_->roulette_cursor);
+        impl_->decision->amount = Impl::roulette_value(impl_->roulette_kind,impl_->roulette_cursor);
         return;
     }
     // Consume only as much elapsed time as the current animation needs. The

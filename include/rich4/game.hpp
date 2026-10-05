@@ -9,22 +9,26 @@
 #include <vector>
 
 #include "rich4/save.hpp"
+#include "rich4/cards.hpp"
 
 namespace rich4 {
 
 class World;
 
 enum class GamePhase { human_ready, rolling, moving, awaiting_decision, advancing_turn, finished };
-enum class DecisionKind { buy_land, upgrade_land, bank, card_target, choose_card, rescue, buy_facility, construct_facility, upgrade_facility, roulette, shop, magic_category, magic_effect, auction, notice };
+enum class DecisionKind { buy_land, upgrade_land, bank, card_target, choose_card, rescue, buy_facility, construct_facility, upgrade_facility, roulette, shop, magic_category, magic_effect, auction, lottery, primary_stock, property_target, action_target, notice, money_spinner };
 enum class GameEventKind {
     turn_started, dice_rolled, moved, land_purchased, land_upgraded, rent_paid,
     bank_transfer, date_changed, points_received, player_bankrupt, game_finished,
     unsupported_event, notice
 };
 
+struct DecisionLocation { std::int32_t x, y; };
+
 struct DecisionOption {
     std::string label;
     std::int32_t value;
+    std::optional<DecisionLocation> location = std::nullopt;
 };
 
 struct GameDecision {
@@ -34,6 +38,7 @@ struct GameDecision {
     std::int32_t amount = 0;
     std::string prompt;
     std::vector<DecisionOption> options;
+    std::int32_t max_amount = 0;
 };
 
 struct GameEvent {
@@ -75,6 +80,13 @@ public:
     // Returns false for input that does not apply to the current phase. option
     // is an index into pending_decision().options. Bank amount must be positive.
     bool roll_dice();
+    void set_camera_rotation(std::uint8_t rotation);
+    [[nodiscard]] std::vector<CardTarget> card_targets(std::uint8_t card) const;
+    bool use_card(const CardUse& card);
+    bool use_tool(unsigned id, std::uint16_t target = 0, std::uint16_t destination = 0);
+    bool dismount();
+    bool buy_stock(std::size_t stock, std::int32_t quantity);
+    bool sell_stock(std::size_t stock, std::int32_t quantity);
     bool respond(std::size_t option, std::int32_t amount = 0);
     void tick(unsigned elapsed_ms);
     [[nodiscard]] std::vector<GameEvent> drain_events();
