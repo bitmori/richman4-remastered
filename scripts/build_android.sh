@@ -68,6 +68,9 @@ fi
 # Optional bundled Traditional Chinese font (OFL). Without it the app uses the system Noto CJK font.
 FONT="${RICH4_ANDROID_FONT:-$REPO/.local/NotoSerifCJKtc-Regular.otf}"
 
+# Launcher icon: the original desktop icon (die with a red 4) from rich4.exe, generated not committed.
+python3 "$REPO/scripts/make_android_icon.py" "$GAME_ASSETS/rich4.exe" "$ANDROID_DIR/app/build/generated/rich4Res"
+
 export ANDROID_HOME="$SDK"
 echo "sdk.dir=$SDK" > "$ANDROID_DIR/local.properties"
 GRADLE_ARGS=(--no-daemon "-Prich4.gameAssets=$GAME_ASSETS")

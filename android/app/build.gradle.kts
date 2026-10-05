@@ -45,6 +45,8 @@ android {
     }
     sourceSets["main"].java.srcDir(sdlJava)
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/rich4Assets"))
+    // Launcher icon from the original rich4.exe, written by scripts/make_android_icon.py (never committed).
+    sourceSets["main"].res.srcDir(layout.buildDirectory.dir("generated/rich4Res"))
 }
 
 // Packs the original game files (never committed) into assets/rich4-data/ of the APK.
