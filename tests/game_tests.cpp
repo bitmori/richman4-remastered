@@ -346,6 +346,91 @@ void thirty_days_and_timing() {
     require(small.world().header.date.day == 4 && small.world().header.date.month == 11,
             "date must advance once per complete round");
 }
+// Plays whole rounds until the date advances `days` times; returns every presentation effect.
+std::vector<rich4::EffectEvent> play_days(rich4::GameSession &game, std::uint64_t days) {
+    std::vector<rich4::EffectEvent> effects;
+    for (unsigned bound = 0; game.completed_days() < days && bound < 200000; ++bound) {
+        if (game.phase() == rich4::GamePhase::human_ready)
+            require(game.roll_dice(), "autoplay roll failed");
+        if (game.pending_decision())
+            require(game.respond(game.pending_decision()->options.empty()
+                                     ? 0
+                                     : game.pending_decision()->options.size() - 1),
+                    "decision answer rejected");
+        game.tick(50);
+        for (auto &effect : game.drain_effects())
+            effects.push_back(std::move(effect));
+        (void)game.drain_events();
+    }
+    require(game.completed_days() == days, "days did not advance");
+    return effects;
+}
+const rich4::EffectEvent *find_effect(const std::vector<rich4::EffectEvent> &effects, rich4::EffectKind kind) {
+    for (const auto &effect : effects)
+        if (effect.kind == kind)
+            return &effect;
+    return nullptr;
+}
+// Original fcn_0042ba97 on the 15th: listed companies pay their whole balance to the active
+// shareholders' deposits (binary32 share ratio, truncated product), then clear it; losses come out
+// of the deposit, then cash. Presentation effects carry the table, the draw and the month report.
+void monthly_settlement() {
+    auto value = world();
+    value.header.date = {14, 10, 2026};
+    value.stocks[0].flags_4 = 1;
+    value.commercials.at(1).funds = 1000;
+    value.players[0].stocks[0].amount = 1;
+    value.players[1].stocks[0].amount = 2;
+    value.stocks[1].flags_4 = 1; // second listing of the same company: already paid out (funds 0)
+    value.lottery_tickets[6] = 2; // player 1 holds number 7
+    value.public_fund = 5000;
+    rich4::GameSession game(std::move(value), 3);
+    const auto effects = play_days(game, 1);
+    const auto &players = game.world().players;
+    require(players[0].state.bank_balance == 10333 && players[1].state.bank_balance == 10666 &&
+                players[2].state.bank_balance == 10000,
+            "dividend shares differ from trunc(funds * float(shares / total))");
+    require(game.world().commercials[1].funds == 0, "paid-out company balance not cleared");
+    const auto *table = find_effect(effects, rich4::EffectKind::dividend);
+    require(table && table->monthly && table->monthly->dividends.size() == 2 &&
+                table->monthly->dividends[0].earnings == 1000 && table->monthly->dividends[0].payout[0] == 333 &&
+                table->monthly->dividends[0].payout[1] == 666 && table->monthly->dividends[1].earnings == 0 &&
+                table->monthly->active == 0xf,
+            "dividend table effect differs");
+    const auto *draw = find_effect(effects, rich4::EffectKind::lottery_draw);
+    require(draw && draw->monthly && draw->monthly->tickets[6] == 2 && draw->monthly->pool == 5000 &&
+                draw->monthly->number >= 1 && draw->monthly->number <= 36,
+            "lottery draw effect differs");
+    require((draw->monthly->winner == 1) == (draw->monthly->number == 7), "lottery winner differs from the draw");
+    require(table < draw, "the dividend table must show before the lottery draw");
+
+    value = world();
+    value.header.date = {14, 10, 2026};
+    value.stocks[0].flags_4 = 1;
+    value.commercials.at(1).funds = -30000;
+    value.players[2].stocks[0].amount = 5;
+    rich4::GameSession loss(std::move(value), 3);
+    (void)play_days(loss, 1);
+    require(loss.world().players[2].state.bank_balance == 0 && loss.world().players[2].state.cash <= 80000,
+            "a dividend loss must empty the deposit before cash");
+
+    value = world();
+    value.header.date = {31, 10, 2026};
+    value.players[1].state.bank_balance = 50000;
+    value.players[2].state.loan = 1000;
+    value.players[3].status.total_winter_sleep_days = 3;
+    value.players[3].status.cumulative_spending = 9000;
+    rich4::GameSession month(std::move(value), 3);
+    const auto report_effects = play_days(month, 1);
+    const auto *report = find_effect(report_effects, rich4::EffectKind::month_report);
+    require(report && report->monthly, "month report effect missing");
+    const auto &figures = *report->monthly;
+    require(figures.deposit[1] == 50000 && figures.interest[1] == 5000 && figures.balance[1] == 55000 &&
+                (figures.loans & 4) && !(figures.loans & 2) && figures.champion == 1,
+            "month report figures differ");
+    require(figures.unlucky_days[3] == 3 && figures.spending[3] == 9000 && figures.unlucky == -1,
+            "a lone unlucky score has no runner-up, so no 悲情人物");
+}
 void save_reload_and_deferred_spawn() {
     auto value = world();
     for (auto &entry : value.players) {
@@ -976,6 +1061,7 @@ int main() {
         alliance_rent();
         bank_and_failure();
         thirty_days_and_timing();
+        monthly_settlement();
         save_reload_and_deferred_spawn();
         facilities_events_and_rescue();
         service_and_auction_choices();

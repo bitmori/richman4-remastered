@@ -20,6 +20,7 @@
 #include "screens/effects.hpp" // EFFECTS: original board animations
 #include "screens/intro.hpp"   // new-game airplane / parachute intro
 #include "screens/spinners.hpp" // SPINNERS: god slot machine / cupid wheels
+#include "screens/monthly.hpp"  // MONTHLY: dividend table, lottery draw, month-end report
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -76,6 +77,7 @@ struct Options {
     bool touch = false; // finger-sized number pad (always on Android; --touch on desktop)
     fs::path gallery;   // dev: render every original-style menu/finance screen to DIR and exit
     bool items_gallery = false; // dev: render every card/tool/shop screen into OUTPUT/gallery
+    bool monthly_gallery = false; // MONTHLY (dev): play sample monthly screens into OUTPUT/gallery
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
     bool start_loaded = false;      // dev: open --load straight into play (no menu) in real time
@@ -115,6 +117,8 @@ Options arguments(int argc, char **argv) {
             options.overlay_gallery = true;
         else if (argument == "--items-gallery")
             options.items_gallery = true;
+        else if (argument == "--monthly-gallery") // MONTHLY (dev)
+            options.monthly_gallery = true;
         else if (argument == "--start-new")
             options.start_new = true;
         else if (argument == "--touch")
@@ -234,6 +238,7 @@ class Application {
         pad_.set_scale(options_.touch ? 2 : 1);
         effects_.set_skip(options_.auto_rounds && !options_.play_effects); // EFFECTS: replays stay zero-duration
         spinners_.set_skip(options_.auto_rounds && !options_.play_effects); // SPINNERS: same as effects
+        monthly_.set_skip(options_.auto_rounds && !options_.play_effects); // MONTHLY: one frame per screen
         messages_.set_instant(options_.auto_rounds != 0); // Headless replay never waits on a bubble.
         main_screen_.set_skip_toss(options_.auto_rounds && !options_.play_effects); // replays stay fast
         items_.sound = [this](std::size_t effect) {
@@ -277,6 +282,18 @@ class Application {
                     canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
                     draw_board();
                 },
+                [this](const std::string &name) {
+                    graphics::write_ppm(canvas_, options_.output / "gallery" / (name + ".ppm"));
+                });
+            return 0;
+        }
+        if (options_.monthly_gallery && !options_.output.empty()) { // MONTHLY (dev): sample screens
+            screens::NewGameChoice choice;
+            choice.players = {{10, 1}, {0, 2}, {5, 2}, {9, 2}};
+            new_game(choice);
+            fs::create_directories(options_.output / "gallery");
+            monthly_.gallery(
+                frame_, session_->world(), [this] { canvas_ = graphics::make_canvas(640, 480, 0); },
                 [this](const std::string &name) {
                     graphics::write_ppm(canvas_, options_.output / "gallery" / (name + ".ppm"));
                 });
@@ -771,6 +788,7 @@ class Application {
         bank_done_for_visit_ = false;
         messages_.clear();
         spinners_.clear();
+        monthly_.clear(); // MONTHLY
         presentation_.clear();
         presented_player_.reset();
         items_.reset();
@@ -833,7 +851,7 @@ class Application {
     };
     bool presenting() const {
         return intro_.active() || main_screen_.dice_busy() || effects_.active() || messages_.active() ||
-               spinners_.active();
+               spinners_.active() || monthly_.active(); // MONTHLY: full-screen monthly screens
     }
     void pump_presentation() {
         while (session_ && !presentation_.empty() && !presenting()) {
@@ -841,6 +859,8 @@ class Application {
             presentation_.pop_front();
             if (step.effect && spinners::handles(*step.effect))
                 spinners_.enqueue(std::move(*step.effect)); // SPINNERS: computer spin / wheel slow-down
+            else if (step.effect && native::monthly::handles(*step.effect))
+                monthly_.enqueue(std::move(*step.effect)); // MONTHLY: dividend / lottery draw / month report
             else if (step.effect)
                 effects_.enqueue({std::move(*step.effect)}, session_.get()); // EFFECTS
             else
@@ -957,6 +977,8 @@ class Application {
             if (!effects_.active()) // SPINNERS: computer spins / wheel slow-down, in presentation order
                 spinners_.draw_effect(frame_, session_->world(), spinner_elapsed(), spinners::skip_button);
         }
+        if (session_ && screen_ == Screen::game && monthly_.active() && !effects_.active() && !spinners_.active())
+            draw_monthly(); // MONTHLY: full screen, modal
         if (session_ && screen_ == Screen::game)
             draw_intro();
         if (screen_ == Screen::menu) {
@@ -1006,6 +1028,8 @@ class Application {
             draw_trading();
         }
         std::string overlay_key;
+        if (screen_ == Screen::game && session_ && monthly_.active()) // MONTHLY: first frames of each screen
+            overlay_key = std::string("monthly-") + monthly_.shot();
         if (screen_ == Screen::game && session_ && messages_.active()) {
             const auto kind = messages_.current()->kind;
             if (messages_.draw(frame_)) {
@@ -1097,6 +1121,13 @@ class Application {
             graphics::write_ppm(canvas_, options_.output / ("effect-" + std::to_string(effect_frames_++) + ".ppm"));
             effect_capture_ = now + 300;
         }
+    }
+    // MONTHLY: dividend table / lottery draw / month-end report (screens/monthly.cpp) over everything.
+    void draw_monthly() {
+        const auto now = SDL_GetTicks();
+        const auto elapsed = monthly_ticks_ ? static_cast<unsigned>(std::min<Uint64>(now - monthly_ticks_, 100)) : 0U;
+        monthly_ticks_ = now;
+        monthly_.draw(frame_, session_->world(), options_.auto_rounds ? 40U : elapsed * speed_);
     }
     unsigned spinner_elapsed() { // SPINNERS: real time between frames (replays: 40 ms per frame)
         const auto now = SDL_GetTicks();
@@ -1559,6 +1590,8 @@ class Application {
                 throw std::runtime_error("Native UI replay could not load its initial save");
             return;
         }
+        if (screen_ == Screen::game && monthly_.active())
+            return; // MONTHLY: a full-screen monthly screen covers the controls (closes by itself)
         if (screen_ == Screen::game && messages_.active())
             return; // An overlay is showing for exactly this frame (instant mode); controls are covered.
         if (session_->pending_decision() && (!presentation_.empty() || presenting()))
@@ -2294,7 +2327,15 @@ class Application {
                                           audio_->play_loop(id);
                                   },
                                   [this] { audio_->stop_loop(); }}};
-    Uint64 spinner_ticks_ = 0; // SPINNERS: last spinner effect draw time
+    Uint64 spinner_ticks_ = 0; // SPINNERS: last spinner effect draw time (MONTHLY shares this clock)
+    Uint64 monthly_ticks_ = 0; // MONTHLY: last draw_monthly() time
+    native::monthly::MonthlyScreens monthly_{{[this](std::size_t id) { // MONTHLY: Effect.mkf / Speaking.mkf
+                                          if (sound_effects_)
+                                              audio_->play_sound(id);
+                                      },
+                                      [this](std::size_t entry) {
+                                          return sound_effects_ ? audio_->play_speech(entry) : 0U;
+                                      }}};
     unsigned test_spinner_frames_ = 0; // SPINNERS (--play-effects): frames shown before the replay STOP
     std::deque<PresentationStep> presentation_; // see observe()
     std::optional<std::size_t> presented_player_;
