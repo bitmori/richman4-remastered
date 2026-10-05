@@ -1566,6 +1566,11 @@ class Application {
         return {[this](std::size_t slot, const AiSettings &settings) {
                     const bool waits = session_->phase() != GamePhase::human_ready &&
                                        session_->phase() != GamePhase::finished;
+                    // The core can only save on a waiting human turn, so while every human is on
+                    // 託管 nothing (not even Android's background autosave) is written. Autosave now,
+                    // before the hand-over, so a killed app resumes where control was handed over.
+                    if (settings.autopilot && session_->can_save())
+                        write_save(options_.save_directory / "Autosave.DAT");
                     if (session_->set_ai_settings(slot, settings) && waits)
                         notify_action(false, "設定將於本回合結束後生效");
                     observe(); // an idle hand-over starts the computer turn at once
