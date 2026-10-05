@@ -269,8 +269,9 @@ struct GameSession::Impl {
         unsupported_resume = resume;
         emit(GameEventKind::unsupported_event, description);
         if (human()) {
-            decision =
-                GameDecision{DecisionKind::notice, actor(), 0, 0, std::move(description), {{"继续", 0}}};
+            // The developer description stays in the event log only; the player sees a
+            // neutral Traditional notice (docs/audit/rules-text-hover.md §2).
+            decision = GameDecision{DecisionKind::notice, actor(), 0, 0, "本次事件略過。", {{"繼續", 0}}};
             set_phase(GamePhase::awaiting_decision);
         } else
             finish_turn();
@@ -3110,7 +3111,12 @@ struct GameSession::Impl {
             else if (node.type_and_index == 0)
                 finish_turn();
             else
-                unsupported("这个设施的规则尚未完成");
+                // Hospital/prison buildings 8001/8002 (any code outside the three ranges):
+                // the original falls into the common property tail
+                // (core_actions:369-371 -> loc_0041b077: after-property god check + flight
+                // bombardment), then ends the turn. finish_turn() runs that tail because
+                // property_pending is set.
+                finish_turn();
         } else if (kind == 1)
             finish_turn();
         else if (kind == 2 || kind == 3)
@@ -3147,18 +3153,10 @@ struct GameSession::Impl {
             finish_turn();
         } else if (kind == 14)
             open_bank(false);
-        else {
-            const char *name = kind == 2    ? "新闻"
-                               : kind == 3  ? "命运"
-                               : kind == 4  ? "监狱"
-                               : kind == 5  ? "医院"
-                               : kind == 9  ? "彩票"
-                               : kind == 13 ? "卡片"
-                               : kind == 15 ? "商店"
-                               : kind == 16 ? "魔法屋"
-                                            : "特殊地点";
-            unsupported(std::string(name) + "规则尚未完成；继续将略过本次事件");
-        }
+        else
+            // Node kind > 16: the original's `cmp ebx,0x10; ja loc_0041b3d0`
+            // (core_actions:361) ends the turn silently. No shipped map has one.
+            finish_turn();
     }
     std::int32_t wealth(std::size_t slot) const {
         return stocks::player_wealth(world, slot);

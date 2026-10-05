@@ -959,12 +959,33 @@ void explicit_unsupported_and_save_guard() {
         rejected = true;
     }
     require(rejected, "saving an in-flight move must not lose queued state");
-    until(game, [&] { return game.pending_decision().has_value(); });
-    bool explicit_gap = false;
+    // Original core_actions:361 (`cmp ebx,0x10; ja loc_0041b3d0`) ends the turn silently on
+    // node kinds above 16, so no dialog and no unsupported event.
+    until(game, [&] {
+        return game.phase() == rich4::GamePhase::advancing_turn || game.pending_decision().has_value();
+    });
+    require(!game.pending_decision(), "unknown node kind must end the turn without a dialog");
     for (const auto &event : game.drain_events())
-        if (event.kind == rich4::GameEventKind::unsupported_event)
-            explicit_gap = true;
-    require(explicit_gap, "unported compulsory event must never silently pass");
+        require(event.kind != rich4::GameEventKind::unsupported_event, "unknown node kind is not a rule gap");
+}
+void hospital_and_prison_buildings() {
+    // Map nodes 8001/8002 (hospital/prison building tiles) fall into the original's
+    // empty-property tail (core_actions:369 -> loc_0041b077) and end the turn: no dialog.
+    for (const std::uint16_t code : {std::uint16_t(8001), std::uint16_t(8002)}) {
+        auto value = world();
+        for (auto &node : value.nodes) {
+            node.flags &= ~0xffU;
+            node.type_and_index = code;
+        }
+        rich4::GameSession game(std::move(value), 0);
+        first_landing(game);
+        require(!game.pending_decision() && game.phase() == rich4::GamePhase::advancing_turn,
+                "hospital/prison building tile must not open a dialog");
+        for (const auto &event : game.drain_events())
+            require(event.kind != rich4::GameEventKind::unsupported_event,
+                    "hospital/prison building tile reported as an unported rule");
+        require(game.world().players[0].state.cash == 100000, "building tile must not charge the player");
+    }
 }
 } // namespace
 int main() {
@@ -988,6 +1009,7 @@ int main() {
         direct_trading();
         lifecycle_and_finished_saves();
         explicit_unsupported_and_save_guard();
+        hospital_and_prison_buildings();
         std::cout << "native game rule tests passed\n";
         return 0;
     } catch (const std::exception &error) {
