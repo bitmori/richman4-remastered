@@ -5,6 +5,7 @@
 #pragma once
 
 #include "../native_frame.hpp"
+#include "rich4/world.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -50,6 +51,9 @@ void darken(graphics::Image &image, graphics::Rect rect, int level);
 void greyscale(graphics::Image &image, graphics::Rect rect);
 // Raw headerless RGB555 picture (jump.mkf 0..7, Panel 22 hit map uses bytes instead).
 graphics::Image raw_picture(Artwork &artwork, char archive, std::size_t entry, int width, int height);
+// Festival picture for the world's date (Data 4..127, raw 200x200, holidays::festival_picture),
+// drawn instead of the Panel 2 season picture; nullptr on ordinary days. Cached per entry.
+const graphics::Image *festival_picture(Artwork &artwork, const World &world);
 // Copies the sub-rectangle `source` of image (frame-local) to (x, y), honouring transparency.
 void blit_part(graphics::Image &canvas, const graphics::Image &image, graphics::Rect source, int x, int y);
 // fcn_0045620f style 1-pixel rectangle outline.

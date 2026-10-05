@@ -57,6 +57,35 @@ void boundaries() {
     }
     require(rejected, "Dates before original epoch are invalid, not negative table indices");
 }
+// fcn_004521f0 rows and the Data.mkf festival pictures (ref_00475208 + row).
+void festivals() {
+    require(holidays::festival_row({1998, 1, 1}, 0, 0) == 0 && holidays::festival_picture({1998, 1, 1}, 0, 0) == 4,
+            "Taiwan New Year's Day is row 0, Data 4");
+    require(holidays::festival_row({2026, 2, 14}, 0, 0) == 1 && holidays::festival_picture({2026, 2, 14}, 0, 0) == 5 &&
+                !holidays::is_closed({2026, 2, 14}, 0, 0),
+            "Valentine's Day has a picture but is not a closing day");
+    require(holidays::festival_row({2026, 10, 31}, 0, 0) == 13 && holidays::festival_picture({2026, 10, 31}, 0, 0) == 17,
+            "A 0x80 row is skipped and the following same-date row matches");
+    require(holidays::festival_row({1998, 1, 28}, 0, 0) == 17 && holidays::festival_picture({1998, 1, 28}, 0, 0) == 21,
+            "Lunar New Year matches the lunar row");
+    require(holidays::festival_picture({2026, 6, 10}, 2, 1) == 98, "Stage 1 map 2 uses base 95");
+    require(holidays::festival_picture({2026, 12, 25}, 3, 1) == 127, "Last festival picture is Data 127");
+    require(!holidays::festival_row({2026, 10, 9}, 0, 0) && !holidays::festival_picture({2026, 10, 11}, 0, 0),
+            "Ordinary days and plain Sundays have no festival row");
+    constexpr std::array<std::size_t, 9> bounds{4, 28, 47, 67, 87, 95, 108, 118, 128};
+    constexpr std::array<std::size_t, 8> base{4, 28, 47, 67, 87, 108, 95, 118};
+    for (auto day = calendar::days_from_1998({1998, 1, 1}); day <= calendar::days_from_1998({2030, 12, 31}); ++day) {
+        const auto date = calendar::from_days(day);
+        for (std::uint16_t table = 0; table < 8; ++table) {
+            const auto map = std::uint16_t(table % 4), stage = std::uint16_t(table / 4);
+            const auto picture = holidays::festival_picture(date, map, stage);
+            if (!picture)
+                continue;
+            const auto next = *std::upper_bound(bounds.begin(), bounds.end(), base[table]);
+            require(*picture >= base[table] && *picture < next, "Festival picture stays inside its table's range");
+        }
+    }
+}
 std::vector<std::uint32_t> row(const std::string &line, std::size_t columns) {
     auto text = line;
     std::replace(text.begin(), text.end(), ',', ' ');
@@ -118,6 +147,7 @@ void oracle(const std::filesystem::path &directory) {
 int main(int argc, char **argv) {
     try {
         boundaries();
+        festivals();
         if (argc == 3 && std::string(argv[1]) == "--oracle")
             oracle(argv[2]);
         else if (argc != 1)

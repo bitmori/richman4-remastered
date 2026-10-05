@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "rich4/calendar.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -15,6 +16,12 @@ inline constexpr calendar::Date lunar_last_date{2020, 12, 31};
 
 // Original holiday tables, indexed by stage*4+map. Sunday is always closed.
 // Beyond the lunar table only original fixed Gregorian rules and Sunday apply.
+// fcn_004521f0: the first matching (non-0x80) row of the map's holiday table, festival or not.
+[[nodiscard]] std::optional<std::size_t> festival_row(calendar::Date date, std::uint16_t map, std::uint16_t stage);
+// Data.mkf entry of the raw 200x200 festival picture the calendar shows instead of the season
+// picture (rich4.asm loc_00416b4c, ui_bank fcn_00433f24): ref_00475208[stage*4+map] + row.
+[[nodiscard]] std::optional<std::size_t> festival_picture(calendar::Date date, std::uint16_t map,
+                                                          std::uint16_t stage);
 [[nodiscard]] bool is_closed(calendar::Date date, std::uint16_t map, std::uint16_t stage);
 [[nodiscard]] calendar::Date loan_due_date(calendar::Date current, std::uint16_t map, std::uint16_t stage);
 

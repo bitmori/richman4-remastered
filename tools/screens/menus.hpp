@@ -127,6 +127,7 @@ struct OptionsActions {
     std::function<void(unsigned)> play_song; // 1..8
     unsigned playing_song = 0;               // 1..8, 0 none
     std::function<void()> restart, quit;     // in-game big buttons (重新遊戲 / 結束遊戲)
+    std::function<void()> help;              // out-of-game 遊戲說明: the Help window, centred
 };
 class OptionsScreen {
   public:

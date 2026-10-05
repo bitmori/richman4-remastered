@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // See docs/ui/main-screen.md for the original layout; section numbers refer to it.
 #include "main_screen.hpp"
+#include "draw.hpp"
 
 #include "rich4/calendar.hpp"
 #include "rich4/flc.hpp"
@@ -503,13 +504,17 @@ void MainScreen::draw_calendar(Frame &frame, const World &world, const MainScree
     const auto map = world.header.map_id, stage = world.header.stage_id;
     const Text big{24, text_ink, 1, white, true};
     if (calendar_mode_ == 0) {
-        graphics::blit(frame.canvas, frame.artwork.frame('p', 2, season), 440, 280, graphics::Transparency::opaque);
+        // loc_00416b4c: on a holiday-table date the festival picture replaces the season picture
+        // and the weekday/day turn red even when the day is not a closing day.
+        const auto *festival = screens::festival_picture(frame.artwork, world);
+        graphics::blit(frame.canvas, festival ? *festival : frame.artwork.frame('p', 2, season), 440, 280,
+                       graphics::Transparency::opaque);
         anchored(frame, 'p', 2, 8, 462, 300);
         anchored(frame, 'p', 2, 11, 492, 301);
         const auto weekday = calendar::weekday(today);
         static constexpr std::array<const char *, 7> weekdays{"星期日", "星期一", "星期二", "星期三",
                                                               "星期四", "星期五", "星期六"};
-        const bool holiday = weekday == 0 || holidays::is_closed(today, map, stage);
+        const bool holiday = weekday == 0 || festival != nullptr;
         const Text style{16, holiday ? red : text_ink, 1, holiday ? text_ink : white, true};
         text(frame, weekdays[weekday % 7], 454, 352, Align::vertical, style);
         auto day_style = style;

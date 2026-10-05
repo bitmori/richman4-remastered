@@ -476,7 +476,10 @@ void BankScreen::draw_side_panel(Host &host, const World &world, std::size_t slo
     // Calendar (fcn_00433f24).
     const auto &date = world.header.date;
     constexpr std::array<int, 12> season{3, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3};
-    frame.picture('p', 2, std::size_t(season[std::clamp(int(date.month), 1, 12) - 1]), x, 280);
+    if (const auto *festival = festival_picture(frame.artwork, world)) // fcn_004521f0 row: Data 4..127
+        graphics::blit(frame.canvas, *festival, x, 280, graphics::Transparency::opaque);
+    else
+        frame.picture('p', 2, std::size_t(season[std::clamp(int(date.month), 1, 12) - 1]), x, 280);
     const Style calendar_style{60, 0x101010, 0xffffff, outline | bold};
     text(frame, std::to_string(date.day), x + 60, 376, 2, calendar_style);
     try {
