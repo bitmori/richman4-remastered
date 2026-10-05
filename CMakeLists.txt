@@ -57,7 +57,7 @@ if(RICH4_BUILD_GAME)
     tools/screens/effects.cpp tools/screens/intro.cpp
     tools/screens/messages.cpp tools/screens/draw.cpp tools/screens/finance.cpp
     tools/screens/stocks.cpp tools/screens/market.cpp tools/screens/menus.cpp
-    tools/screens/items.cpp tools/screens/spinners.cpp tools/screens/endgame.cpp tools/screens/help.cpp
+    tools/screens/items.cpp tools/screens/spinners.cpp tools/screens/facility.cpp tools/screens/endgame.cpp tools/screens/help.cpp
     tools/screens/monthly.cpp tools/screens/minigames.cpp
     tools/screens/tile_popup.cpp tools/screens/ai_settings.cpp)
   target_link_libraries(rich4-native PRIVATE rich4_core SDL3::SDL3 Freetype::Freetype Iconv::Iconv PkgConfig::FLUIDSYNTH)

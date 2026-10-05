@@ -263,6 +263,7 @@ The text style is the same for all three: `create_font(0x10, 0xf0f0f0, 0x101010,
 - `fcn_00440aac`, choose a facility type:
   - Text "請選擇設施類別" mode 2 at (220,122).
   - Icon strip `Data.mkf 517:4` opaque, top-left (43,279).
+  - Full spec, flows and native mapping: `facility-build.md`.
 - Spinners:
   - `fcn_00440706`: slot machine `Panel.mkf 67` at (220,320).
   - `fcn_0044090e`: cupid wheel `Panel.mkf 68+k` at (220,320) and (265,230).

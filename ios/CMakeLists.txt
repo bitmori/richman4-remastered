@@ -81,6 +81,7 @@ set(sources
   "${RICH4_REPO}/tools/screens/messages.cpp"
   "${RICH4_REPO}/tools/screens/items.cpp"
   "${RICH4_REPO}/tools/screens/spinners.cpp"
+  "${RICH4_REPO}/tools/screens/facility.cpp"
   "${RICH4_REPO}/tools/screens/monthly.cpp"
   "${RICH4_REPO}/tools/screens/endgame.cpp"
   "${RICH4_REPO}/tools/screens/help.cpp"

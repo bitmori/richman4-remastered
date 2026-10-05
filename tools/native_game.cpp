@@ -24,6 +24,7 @@
 #include "screens/effects.hpp" // EFFECTS: original board animations
 #include "screens/intro.hpp"   // new-game airplane / parachute intro
 #include "screens/spinners.hpp" // SPINNERS: god slot machine / cupid wheels
+#include "screens/facility.hpp" // FACILITY: original facility-type picker (Data 517:4 strip)
 #include "screens/monthly.hpp"  // MONTHLY: dividend table, lottery draw, month-end report
 #include "screens/endgame.hpp"  // END SCREENS: PLAY AGAIN / stage clear
 #include "screens/help.hpp"     // HELP: the original Help window
@@ -65,6 +66,7 @@ using namespace rich4;
 namespace fs = std::filesystem;
 namespace messages = native::messages;
 namespace spinners = native::spinners;
+namespace facility_ui = native::facility; // FACILITY (rich4::Facility is the world record)
 namespace minigames = native::minigames;
 using native::Artwork;
 using native::Button;
@@ -700,6 +702,10 @@ class Application {
         else if (key == SDLK_M || key == SDLK_C || key == SDLK_H)
             pad_.key(host, key == SDLK_M ? 'M' : key == SDLK_C ? 'C' : 'H');
     }
+    bool facility_cancellable() const { // FACILITY
+        return session_ && session_->pending_decision() && facility_ui::handles(*session_->pending_decision()) &&
+               facility_ui::Picker::cancellable(*session_->pending_decision());
+    }
     bool bank_pending() const {
         return session_ && session_->pending_decision() &&
                session_->pending_decision()->kind == DecisionKind::bank;
@@ -709,7 +715,7 @@ class Application {
         return help_.active() || pad_.active() || screen_ == Screen::new_game || screen_ == Screen::settings ||
                screen_ == Screen::wealth || screen_ == Screen::stocks || screen_ == Screen::load ||
                screen_ == Screen::trading || screen_ == Screen::ai_settings ||
-               screen_ == Screen::save || (screen_ == Screen::game && bank_pending());
+               screen_ == Screen::save || (screen_ == Screen::game && (bank_pending() || facility_cancellable()));
     }
     void cancel_screen() {
         auto host = make_host();
@@ -744,6 +750,8 @@ class Application {
         case Screen::game:
             if (bank_pending())
                 bank_screen_.cancel(host, *session_->pending_decision(), bank_actions());
+            else if (facility_cancellable()) // FACILITY: Back = the 改建卡 picker's right-click
+                facility_picker_.cancel(host, *session_->pending_decision(), [this](std::size_t i) { respond(i); });
             break;
         default:
             break;
@@ -1914,6 +1922,11 @@ class Application {
             spinners_.draw_decision(frame_, session_->world(), decision, 210, [this] { respond(0); });
             return;
         }
+        if (facility_ui::handles(decision)) { // FACILITY: fcn_00440aac strip; ids stay 210+option index
+            auto host = make_host();
+            facility_picker_.draw(host, decision, decision_key_, [this](std::size_t index) { respond(index); });
+            return;
+        }
         if (messages::is_yes_no(decision)) {
             // Original §2.2 question box + Data.mkf 440 strip; ids stay 210+option index.
             // Card prompts (free/frame card) list YES first; their values are not 1/0.
@@ -2901,10 +2914,25 @@ class Application {
         base();
         draw_choice_dialog(messages::localized(frame_card, world));
         save("frame-card-several");
-        base();
-        draw_choice_dialog(GameDecision{DecisionKind::construct_facility, slot, 1, 0, "請選擇設施類別",
-                                        {{"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}});
-        save("facility-type");
+        { // FACILITY: build (no cancel) and 改建卡 (with 取消), idle and with a slot selected
+            const GameDecision build{DecisionKind::construct_facility, slot, 1, 0, "請選擇設施類別",
+                                     {{"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4}}};
+            const GameDecision rebuild{DecisionKind::action_target, slot, 0, 0, "請選擇設施類別",
+                                       {{"公園", 0}, {"旅館", 1}, {"百貨公司", 2}, {"加油站", 3}, {"研究所", 4},
+                                        {"取消", -1}}};
+            auto host = make_host();
+            for (const auto &[name, decision, selected] :
+                 {std::tuple{"facility-type", &build, std::optional<int>{}},
+                  std::tuple{"facility-type-selected", &build, std::optional<int>{2}},
+                  std::tuple{"facility-rebuild", &rebuild, std::optional<int>{}},
+                  std::tuple{"facility-rebuild-selected", &rebuild, std::optional<int>{0}}}) {
+                base();
+                facility_picker_.select(selected, name);
+                facility_picker_.draw(host, *decision, name, [](std::size_t) {});
+                save(name);
+            }
+            facility_picker_.select(std::nullopt, {});
+        }
         base();
         draw_choice_dialog(GameDecision{DecisionKind::action_target, slot, 0, 0, "選擇點數",
                                         {{"1點", 1}, {"2點", 2}, {"3點", 3}, {"4點", 4}, {"5點", 5}, {"6點", 6},
@@ -3099,6 +3127,7 @@ class Application {
     Uint64 intro_ticks_ = 0, intro_capture_ = 0;
     unsigned intro_frames_ = 0;
     bool intro_pressed_ = false; // a press began during the intro; its release skips
+    facility_ui::Picker facility_picker_; // FACILITY
     spinners::Spinners spinners_{{[this](std::size_t id) { // SPINNERS
                                       if (sound_effects_)
                                           audio_->play_sound(id);
