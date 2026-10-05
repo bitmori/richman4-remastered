@@ -50,6 +50,7 @@ namespace rich4 { namespace mobile_platform = ios_platform; }
 #include <array>
 #include <bit>
 #include <chrono>
+#include <cstdlib>
 #include <ctime>
 #include <deque>
 #include <functional>
@@ -918,6 +919,26 @@ class Application {
     }
     // intro: a new game plays the original airplane/parachute intro before the first turn
     // (rich4_main.asm:376 fcn_00415872); loading a save does not (loc_00401d08).
+    // Options 結束遊戲 during a game: keep the progress in the AUTO slot (when the turn can be saved),
+    // close the session and return to the title screen. Only the title screen's EXIT quits the app.
+    void end_to_title() {
+        if (session_ && session_->can_save() && !options_.auto_rounds)
+            write_save(options_.save_directory / "Autosave.DAT");
+        messages_.clear();
+        spinners_.clear();
+        monthly_.clear();
+        minigames_.clear();
+        effects_.clear();
+        presentation_.clear();
+        hold_ms_ = 0;
+        presented_player_.reset();
+        items_.reset();
+        auction_room_.reset();
+        walk_sound_.stop(*audio_);
+        tile_popup_.reset();
+        session_.reset();
+        screen_ = previous_screen_ = Screen::menu;
+    }
     void install_session(World world, std::uint32_t seed, bool intro = false) {
         validate_playable_world(world);
         end_amount_edit();
@@ -1220,7 +1241,7 @@ class Application {
                        },
                        audio_->music_enabled() ? audio_->music_track() : 0,
                        [this] { open_setup(selected_stage_); },
-                       [this] { running_ = false; },
+                       [this] { end_to_title(); }, // 結束遊戲 in a game: back to the title (its EXIT quits)
                        [this] { help_.open(-1, -1); }}); // HELP: Options 遊戲說明, centred
         } else if (screen_ == Screen::load || screen_ == Screen::save) {
             buttons_.clear();
@@ -3151,10 +3172,11 @@ int main(int argc, char **argv) {
                      "  --headless --auto-rounds N --output DIR [--start-new] [--seed N] [--overlay-gallery]\n";
         return 0;
     }
+    int status = 0;
     try {
         Application application(arguments(argc, argv));
         try {
-            return application.run();
+            status = application.run();
         } catch (const std::exception &error) {
             try {
                 application.write_diagnostic(error.what());
@@ -3165,6 +3187,12 @@ int main(int argc, char **argv) {
         }
     } catch (const std::exception &error) {
         std::cerr << "rich4-native: " << error.what() << '\n';
-        return 1;
+        status = 1;
     }
+#if defined(TARGET_OS_IOS) && TARGET_OS_IOS
+    // The title screen's EXIT quits: SDL's UIKit delegate deliberately does not exit when main
+    // returns (SDL_uikitappdelegate.m postFinishLaunch), which would leave a frozen screen.
+    std::exit(status);
+#endif
+    return status;
 }
