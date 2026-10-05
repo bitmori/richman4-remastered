@@ -5,6 +5,8 @@
 Apple Silicon 上的基础玩法已经通过 Boxedwine + Wine 11.0 32 位运行验证。
 这个结果同时提供了原版与重新编译版本的行为对照；尚不能推出 ARM64 原生引擎或 Android 运行结果。
 
+随后已按用户选择开始 C++20 原生重写，并以 SDL3 承接显示。已完成模块、原版差分和 Android 核心验证详见 [迁移账本](migrations/README.md) 与 [验收记录](migrations/validation.md)。本文保留最初的源码调查，不把它当作完整迁移状态。
+
 上游 README 明确说明当前构建输出是 Windows EXE，并提醒 Wine 新 WoW64 模式存在启动问题。
 本次选择真正的 32 位 Wine 文件系统，由 Boxedwine 模拟 x86，避开该特定路径。
 Boxedwine 本身有 ARM64 Mac 可执行切片，游戏 EXE 仍是 x86。
@@ -43,8 +45,7 @@ Boxedwine 本身有 ARM64 Mac 可执行切片，游戏 EXE 仍是 x86。
 2. **原生重写**：把资源加载、图像、音频、输入与文件访问抽象为跨平台层，然后逐模块替换汇编。
    Mac ARM64 可作为第一开发平台，Android 共用引擎。先实现并验证资源解码，再扩展到完整回合，最后覆盖所有规则。
 
-当前没有创建只显示静态素材的 APK，也没有把主菜单原型称为完整移植。
-下一轮适合以已经能玩的 Wine 版本为对照，明确选择兼容封装还是持续原生重写。
+用户已选择持续原生重写。现在存在 Mac SDL3 资源查看器以及 Android ARM64 原生核心测试；没有可玩的原生 APK。完整游戏状态机、回合、AI、音视频等仍在迁移清单中。
 
 ## 剩余验收
 
@@ -54,4 +55,4 @@ Boxedwine 本身有 ARM64 Mac 可执行切片，游戏 EXE 仍是 x86。
 - 完整过场必须补齐真实素材；当前 23 个 AVI 的 SHA-256 完全相同，无法从这些占位文件还原视频。
 
 本次安装过 Homebrew `mingw-w64`、`nasm` 及依赖；Boxedwine 放在仓库 `.local`，游戏副本与注册表位于其应用沙盒内。
-没有修改 Downloads 中的原始文件，没有更改 macOS 的安全设置，也没有启动 Android 移植实验。
+没有修改 Downloads 中的原始文件，没有更改 macOS 的安全设置。后续原生核心的 Android 验证使用本机已安装的 SDK/NDK 与 ARM64 模拟器。
