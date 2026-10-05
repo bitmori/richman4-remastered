@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // News/fortune dispatch translated from original handlers; see migration 014.
 #include "rich4/events.hpp"
+#include "rich4/legacy_float.hpp"
 #include "rich4/inventory.hpp"
 
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -24,11 +24,6 @@ std::int32_t add(std::int32_t a, std::int32_t b) {
 }
 std::int32_t multiply(std::int32_t a, std::int32_t b) {
     return std::bit_cast<std::int32_t>(std::bit_cast<std::uint32_t>(a) * std::bit_cast<std::uint32_t>(b));
-}
-std::int32_t truncate_number(double value) {
-    if (!std::isfinite(value) || value >= 2147483648.0 || value < -2147483648.0)
-        return std::numeric_limits<std::int32_t>::min(); // Original x87 integer indefinite.
-    return static_cast<std::int32_t>(value);
 }
 // Exact integer times binary32 with truncation, avoiding host double rounding
 // near an integer boundary (e.g. the original bank-hack 0.1f multiplier).
@@ -57,11 +52,11 @@ void income(World& world, std::size_t slot, std::int32_t amount, bool cash = tru
 void voice(const EventCallbacks& callbacks, std::size_t actor, std::uint8_t category) {
     if (callbacks.voice) callbacks.voice(actor, category);
 }
-void voice_money(Random& random, std::int32_t amount, std::size_t actor,
+void voice_money(const World& world, Random& random, std::int32_t amount, std::size_t actor,
                  std::uint8_t base, const EventCallbacks& callbacks) {
-    if (amount >= 9000) voice(callbacks, actor, base);
-    else if (amount >= 5000) voice(callbacks, actor, static_cast<std::uint8_t>(base + (random.next() & 1)));
-    else if (amount >= (base == 6 ? 2000 : 1)) voice(callbacks, actor, static_cast<std::uint8_t>(base + 2));
+    if (amount >= multiply(9000, world.header.price_index)) voice(callbacks, actor, base);
+    else if (amount >= multiply(5000, world.header.price_index)) voice(callbacks, actor, static_cast<std::uint8_t>(base + (random.next() & 1)));
+    else if (amount >= (base == 6 ? multiply(2000, world.header.price_index) : 1)) voice(callbacks, actor, static_cast<std::uint8_t>(base + 2));
 }
 int fortune_modifier(const WorldPlayer& player, Random& random, bool physical, bool adverse) {
     const auto resistance = physical ? player.status.other_fortune_modifier : player.status.money_fortune_modifier;
@@ -340,13 +335,14 @@ EventResult apply_news_id(World& world, Random& random, std::uint8_t id, const E
                 }
                 taxes[slot] = multiply(total / 20, world.header.price_index);
             } else {
+                using E = numeric::Extended;
                 float value = 0;
                 for (std::size_t stock = 0; stock < world.stocks.size(); ++stock) {
                     if (world.players[slot].stocks[stock].amount == 0) continue;
-                    value = static_cast<float>(double(world.players[slot].stocks[stock].amount) *
-                        double(std::bit_cast<float>(world.stocks[stock].float_bits[2])) + double(value));
+                    value = (E::from(world.players[slot].stocks[stock].amount) *
+                        E::from(std::bit_cast<float>(world.stocks[stock].float_bits[2])) + E::from(value)).single();
                 }
-                taxes[slot] = multiply(truncate_number(double(value) * 0.05), world.header.price_index);
+                taxes[slot] = multiply((E::from(value) * E::from(0.05)).integer(), world.header.price_index);
             }
         }
         for (std::size_t slot = 0; slot < taxes.size(); ++slot) {
@@ -547,15 +543,15 @@ EventResult apply_fortune_id(World& world, Random& random, std::size_t actor, st
         auto amount = multiply(adverse ? -nominal : nominal, world.header.price_index);
         const auto modifier = fortune_modifier(player, random, false, adverse);
         if (modifier == 1) {
-            if (adverse) voice_money(random, amount, actor, 12, callbacks);
+            if (adverse) voice_money(world, random, amount, actor, 12, callbacks);
             return done(id, adverse ? "命运：神明阻止了损失" : "命运：奖励被神明阻止");
         }
         if (modifier == 2) amount = add(amount, amount);
-        if (!adverse) { income(world, actor, amount); voice_money(random, amount, actor, 6, callbacks); }
+        if (!adverse) { income(world, actor, amount); voice_money(world, random, amount, actor, 6, callbacks); }
         else {
             callbacks.pay(static_cast<std::int32_t>(actor), -1, amount, 0);
             if (alive(player) && std::count_if(world.players.begin(), world.players.end(), alive) > 1) {
-                voice_money(random, amount, actor, 9, callbacks); insurance(world, actor, amount, callbacks);
+                voice_money(world, random, amount, actor, 9, callbacks); insurance(world, actor, amount, callbacks);
             }
         }
         return {true, id, std::string(adverse ? "命运：支付 " : "命运：获得 ") + std::to_string(amount)};

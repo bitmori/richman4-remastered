@@ -160,12 +160,12 @@ a positive price divisible by ten and truncating yields one less (2000→1399),
 where a host binary64 intermediate can incorrectly round back to 1400.
 Tax percentages are truncated at the original stage, before price-index scaling.
 
-Stock tax valuation currently reproduces the original sequence of binary32
-accumulator stores using binary64 intermediate arithmetic. Its extreme x87
-double-rounding cases are **not yet proved equivalent**; a future exact floating
-arithmetic oracle must cover these rather than treating successful ordinary tests
-as evidence of bit identity across all values. The same care applies to newly
-ported shared stock helpers in their own migration.
+Stock tax valuation now uses the shared fixed-width x87 arithmetic module from
+migration023, rounding after each original arithmetic instruction and spilling
+the accumulator to binary32 after each stock. This removes the previous host
+binary64 intermediate approximation. Monetary event speech thresholds also scale
+by the price index; the threshold determines whether an extra random voice draw
+occurs, so this is part of game-state reproducibility rather than audio alone.
 
 ## Validation and remaining evidence
 

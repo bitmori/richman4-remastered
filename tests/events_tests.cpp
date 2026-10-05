@@ -163,6 +163,11 @@ void money_and_gods() {
     world.lands[1].land_price = 39; world.lands[1].price_per_level = 0;
     payments.clear(); require(apply_news_id(world, random, 12, callbacks).supported &&
             payments[0] == std::make_tuple(0,-1,3,0U), "Property tax truncates before multiplying price index");
+    std::vector<std::uint8_t> spoken;
+    callbacks.voice = [&](std::size_t, std::uint8_t category) { spoken.push_back(category); };
+    const auto before_voice = random.state();
+    require(apply_fortune_id(world, random, 0, 21, callbacks).supported && spoken == std::vector<std::uint8_t>{8} &&
+            random.state() == before_voice, "Inflation scales voice thresholds as well as reward;6000 atindex3 is still base2000");
 }
 
 void physical_and_inventory() {
