@@ -2,15 +2,25 @@
 #include "items.hpp"
 #include "voices.hpp" // AUDIO: clerk voice ids
 
+#include "messages.hpp"
 #include "rich4/cards.hpp"
+#include "rich4/flc.hpp"
 #include "rich4/inventory.hpp"
 #include "rich4/services.hpp"
 #include "rich4/world.hpp"
 
 #include <algorithm>
 #include <array>
+#include <iostream>
 
 namespace rich4::native::items {
+namespace detail {
+struct CastMovie {
+    flc::Decoder decoder;
+    graphics::Image image;
+    bool sounded = false;
+};
+} // namespace detail
 namespace {
 using graphics::Rect;
 
@@ -183,6 +193,7 @@ void Screens::run_deferred() {
 }
 
 void Screens::reset() {
+    cast_.reset();
     popups_.clear();
     deferred_.clear();
     press_.reset();
@@ -549,10 +560,92 @@ bool Screens::draw_decision(Frame &frame, GameSession &session, const Host &host
         magic_ = {};
         draw_rescue(frame, session, decision, host);
         return true;
-    default:
+    case DecisionKind::action_target: // 遙控骰子: options 1..6 points then 取消 (0), no map targets
+        if (decision.options.size() != 7 ||
+            !std::all_of(decision.options.begin(), decision.options.end(), [&decision](const auto &option) {
+                return !option.location && option.value == ((&option - decision.options.data()) + 1) % 7;
+            }))
+            break;
         end_visits();
-        return false;
+        draw_remote_dice(frame, decision, host);
+        return true;
+    case DecisionKind::card_target: // 嫁禍卡 victim (rich4_card_passive.asm:170-215)
+        if (decision.prompt != "使用嫁祸卡？")
+            break;
+        end_visits();
+        draw_frame_up(frame, session, decision, host);
+        return true;
+    default:
+        break;
     }
+    end_visits();
+    return false;
+}
+
+// 遙控骰子 (_rich4_use_tool_yaokongtouzi): the Panel 72:0 six-face bar at (92,300) over the board;
+// the touched face lights with 72:n at (104+40(n-1), 314) (fcn_00446774). Each face's hit area
+// covers its whole 40x55 column of the bar; 取消 stands in for the original right-click.
+void Screens::draw_remote_dice(Frame &frame, const GameDecision &decision, const Host &host) {
+    shot = "remote-dice";
+    keyed(frame, art(frame, 'p', 72, 0), 92, 300);
+    for (std::size_t i = 0; i < decision.options.size(); ++i) {
+        const int value = decision.options[i].value;
+        if (value < 1 || value > 6)
+            continue;
+        const int x = 104 + 40 * (value - 1);
+        const Rect cell{value == 1 ? 92 : x - 5, 300, value == 6 ? 348 : x + 35, 355};
+        if (frame.pointer_down && frame.pointer_in(cell))
+            keyed(frame, art(frame, 'p', 72, std::size_t(value)), x, 314);
+        frame.hit(option_id + int(i), cell, [host, i] { host.respond(i); });
+    }
+    if (const auto cancel = option_of(decision, 0))
+        frame.button(option_id + int(*cancel), {356, 306, 436, 350}, "取消",
+                     [host, index = *cancel] { host.respond(index); });
+}
+
+// 嫁禍卡 for a human (fcn_00440e1a): with one candidate the original asks "是否嫁禍給%s？" (yes/no);
+// with more it shows the Data 517:5 plate with "請選擇嫁禍對象..." at (220,140) and the Data 518
+// face strip (2/3/4 slots) at (220,320) holding the candidates' Data 2 portraits at +12+80i.
+void Screens::draw_frame_up(Frame &frame, GameSession &session, const GameDecision &decision,
+                            const Host &host) {
+    const auto &world = session.world();
+    std::vector<std::size_t> candidates;
+    for (std::size_t i = 0; i < decision.options.size(); ++i)
+        if (decision.options[i].value >= 0 && std::size_t(decision.options[i].value) < world.players.size())
+            candidates.push_back(i);
+    const auto keep = option_of(decision, -1);
+    const auto character = [&](std::size_t index) {
+        return world.players[std::size_t(decision.options[index].value)].state.character;
+    };
+    if (candidates.size() == 1 && keep) {
+        shot = "frame-up-yesno";
+        const auto yes = candidates.front();
+        messages::draw_yes_no(frame, "是否嫁禍給" + std::string(names.at(character(yes))) + "？",
+                              option_id + int(yes), [host, yes] { host.respond(yes); },
+                              option_id + int(*keep), [host, index = *keep] { host.respond(index); });
+        return;
+    }
+    shot = "frame-up";
+    keyed(frame, art(frame, 'd', 517, 5), 220, 140);
+    centred(frame, "請選擇嫁禍對象...", 220, 140, 16, ui::color(240, 240, 240));
+    const auto &strip = art(frame, 'd', 518, std::clamp<std::size_t>(candidates.size(), 2, 4) - 2);
+    keyed(frame, strip, 220, 320);
+    const int left = 220 - strip.origin_x, top = 320 - strip.origin_y;
+    for (std::size_t k = 0; k < candidates.size() && k < 4; ++k) {
+        const auto index = candidates[k];
+        const Rect face{left + 12 + 80 * int(k), top + 12, left + 84 + 80 * int(k), top + 84};
+        frame.picture('d', 2, character(index), face.left, face.top);
+        if (frame.pointer_down && frame.pointer_in(face)) { // the god-of-death picker's 2 px yellow hover
+            ui::border(frame.canvas, face, ui::color(255, 255, 0));
+            ui::border(frame.canvas, {face.left + 1, face.top + 1, face.right - 1, face.bottom - 1},
+                       ui::color(255, 255, 0));
+        }
+        frame.hit(option_id + int(index), {face.left - 4, face.top - 4, face.right + 4, face.bottom + 4},
+                  [host, index] { host.respond(index); });
+    }
+    if (keep) // stands in for the original's right-click (keep the card)
+        frame.button(option_id + int(*keep), {160, top + strip.height + 10, 280, top + strip.height + 52},
+                     "保留卡片", [host, index = *keep] { host.respond(index); });
 }
 
 // §6 point shop.
@@ -923,14 +1016,20 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
     };
     shot = magic_.casting ? "magic-casting" : magic_.selected >= 0 ? "magic-selected" : "magic-effect";
     if (magic_.casting) {
-        keyed(frame, art(frame, 'p', 18, 2), 182, 142);
-        if (group >= 0 && group < 12)
-            keyed(frame, art(frame, 'p', 18, std::size_t(11 + group)), 326, 296);
-        balloon("天靈靈地靈靈～");
-        voice_once("magic-cast", {41}); // AUDIO
         const int effect = magic_.selected;
-        if (now >= magic_.casting + 1000)
-            schedule_effect(effect);
+        // #0041 cast balloon for 1 s, then the Panel 20 hexagram movie with sound 0x3b
+        // (magic_house.asm:1175) before the effect applies; a tap skips both.
+        if (magic_.casting > 1 && now >= magic_.casting + 1000) {
+            shot = "magic-movie";
+            if (!draw_cast_movie(frame, magic_.movie, now - magic_.casting - 1000))
+                schedule_effect(effect);
+        } else {
+            keyed(frame, art(frame, 'p', 18, 2), 182, 142);
+            if (group >= 0 && group < 12)
+                keyed(frame, art(frame, 'p', 18, std::size_t(11 + group)), 326, 296);
+            balloon("天靈靈地靈靈～");
+            voice_once("magic-cast", {41}); // AUDIO
+        }
         if (const auto index = option_of(decision, effect))
             frame.hit(option_id + int(*index), {0, 0, 640, 480}, [respond_effect, effect] { respond_effect(effect); });
         return;
@@ -996,9 +1095,71 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         magic_.casting = now;
 }
 
+// Panel 20: 25-frame 640x480 FLC drawn opaque at (0,0) (fcn_0045144f flags 0). Returns false once
+// it has ended (its last, white frame stays on screen until the effect is answered).
+bool Screens::draw_cast_movie(Frame &frame, std::shared_ptr<detail::CastMovie> &state, std::uint64_t elapsed) {
+    try {
+        if (!state)
+            state = std::make_shared<detail::CastMovie>(
+                detail::CastMovie{flc::Decoder(frame.artwork.archive('p').decode(20)), {}, false});
+        auto &movie = *state;
+        const auto delay = std::max<std::uint64_t>(movie.decoder.delay_ms(), 1);
+        const auto count = std::max<std::size_t>(movie.decoder.frame_count(), 1);
+        const auto index = std::size_t(std::min<std::uint64_t>(elapsed / delay, count - 1));
+        while (movie.decoder.decoded_frames() <= index && movie.decoder.next())
+            movie.image = movie.decoder.image();
+        if (!movie.sounded) {
+            movie.sounded = true;
+            if (sound)
+                sound(0x3b);
+        }
+        if (!movie.image.pixels.empty())
+            opaque(frame, movie.image, 0, 0);
+        return elapsed < delay * count;
+    } catch (const std::exception &error) { // a broken asset must never block the effect
+        std::cerr << "Magic-house movie skipped: " << error.what() << '\n';
+        return false;
+    }
+}
+
+void Screens::start_magic_cast(int group, int effect) {
+    if (group >= 0 && group < 12 && effect >= 0 && effect < 12)
+        cast_ = MagicCast{group, effect, 0, nullptr};
+}
+
+void Screens::draw_magic_cast(Frame &frame) {
+    if (!cast_)
+        return;
+    const auto now = this->now(frame);
+    if (!cast_->started)
+        cast_->started = std::max<std::uint64_t>(now, 1);
+    const auto elapsed = now - cast_->started;
+    shot = "magic-computer";
+    bool playing = true;
+    if (elapsed < 1500) {
+        opaque(frame, art(frame, 'p', 18, 0), 0, 0);
+        keyed(frame, art(frame, 'p', 18, 2), 182, 142);
+        keyed(frame, art(frame, 'p', 18, std::size_t(11 + cast_->group)), 326, 296);
+        keyed(frame, art(frame, 'p', 18, 8), 320, 384);
+        centred(frame,
+                std::string(magic_groups[std::size_t(cast_->group)]) + "\n\n" +
+                    magic_table[std::size_t(cast_->effect)].text,
+                320, 384, 18, ui::color(250, 240, 210));
+    } else {
+        shot = "magic-computer-movie";
+        playing = draw_cast_movie(frame, cast_->movie, elapsed - 1500);
+    }
+    frame.hit(magic_cast_skip_id, {0, 0, 640, 480}, [this] { cast_.reset(); });
+    if (!playing)
+        cast_.reset();
+}
+
 // §8 prison and hospital bail screens.
 namespace {
 constexpr std::array<const char *, 4> npc_names{"小偷", "強盜", "流氓", "間諜"};
+// _special_player_strings (rich4.asm:41232): what a bailed-out NPC 4..7 says (#0124 #0125 #0123 #0126).
+constexpr std::array<const char *, 4> npc_thanks{"謝謝你！你真是\n我的再生父母！", "我先走了！大恩\n大德來日再報！",
+                                                 "太感激了！我一\n定會報答你的！", "受人點水之恩，\n必當湧泉已報！"};
 }
 
 void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision &decision, const Host &host) {
@@ -1027,9 +1188,22 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
             return npc_names[std::size_t(slot - 4)];
         return names.at(world.players.at(std::size_t(slot)).state.character);
     };
+    // A bailed-out NPC thanks the player before the screen closes (prison.asm:765-806,
+    // hospital.asm:505-551); a player slot closes at once, as in the original.
+    const auto confirm = [this, host, hospital](int slot, std::size_t index) {
+        rescue_voice(hospital, slot); // AUDIO: nurse lines / rescued-NPC thanks
+        if (slot < 4) {
+            host.respond(index);
+            return;
+        }
+        rescue_.selected = -1;
+        rescue_.thanks = slot;
+        rescue_.thanks_until = 1; // stamped with the frame time below
+    };
+    const bool thanking = rescue_.thanks >= 4 && rescue_.thanks < 8;
     for (int slot = 0; slot < 8; ++slot) {
         const auto [x, y] = slot_origin(slot);
-        const auto index = option_of(decision, slot);
+        const auto index = rescue_.thanks == slot ? std::nullopt : option_of(decision, slot);
         if (index) {
             const auto character = slot < 4 ? world.players.at(std::size_t(slot)).state.character : 0;
             const std::size_t portrait = slot < 4 ? (hospital ? 14U : 5U) + character
@@ -1043,27 +1217,49 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
                 ui::border(frame.canvas, {rect.left + 1, rect.top + 1, rect.right - 1, rect.bottom - 1},
                            ui::color(255, 255, 0));
             }
-            frame.hit(option_id + int(*index), rect, [this, host, hospital, slot, points, index = *index] {
-                if (points < (slot < 4 ? 30 : 300)) {
-                    rescue_.selected = -1;
-                    rescue_.poor_until = 1;
-                    if (sound)
-                        sound(3);
-                } else if (rescue_.selected == slot) {
-                    rescue_voice(hospital, slot);
-                    host.respond(index);
-                }
-                else {
-                    rescue_.selected = slot;
-                    rescue_.poor_until = 0;
-                }
-            });
+            if (!thanking) {
+                frame.hit(option_id + int(*index), rect, [this, confirm, slot, points, index = *index] {
+                    if (points < (slot < 4 ? 30 : 300)) {
+                        rescue_.selected = -1;
+                        rescue_.poor_until = 1;
+                        if (sound)
+                            sound(3);
+                    } else if (rescue_.selected == slot)
+                        confirm(slot, index);
+                    else {
+                        rescue_.selected = slot;
+                        rescue_.poor_until = 0;
+                    }
+                });
+            }
         } else if (!hospital)
             keyed(frame, art(frame, 'p', 63, 4), x, y);
     }
     // Points box.
     keyed(frame, art(frame, 'p', entry, hospital ? 30 : 21), hospital ? 8 : 542, 432);
     right_middle(frame, std::to_string(points), hospital ? 88 : 622, 452, 20, white);
+    if (thanking) { // Panel 64 big NPC art and its thank-you balloon (63:1 / 65:1)
+        shot = std::string(hospital ? "hospital" : "prison") + "-thanks";
+        const auto slot = rescue_.thanks;
+        if (rescue_.thanks_until == 1)
+            rescue_.thanks_until = now + 2500;
+        keyed(frame, art(frame, 'p', 64, std::size_t(slot - 4)), hospital ? 420 : 365, 450);
+        const int bx = hospital ? 200 : 210, by = hospital ? 200 : 150;
+        keyed(frame, art(frame, 'p', entry, 1), bx, by);
+        centred(frame, npc_thanks[std::size_t(slot - 4)], bx + 92, by + 34, 18, dark, false, dark, true);
+        if (const auto index = option_of(decision, slot)) {
+            const auto finish = [this, host, index = *index] {
+                rescue_ = {};
+                host.respond(index);
+            };
+            if (now >= rescue_.thanks_until && !rescue_.thanks_scheduled) {
+                rescue_.thanks_scheduled = true;
+                deferred_.push_back(finish);
+            }
+            frame.hit(option_id + int(*index), {0, 0, 640, 480}, finish); // a tap continues at once
+        }
+        return;
+    }
     if (hospital) {
         keyed(frame, art(frame, 'p', 65, 2), 8, 8);
         centred(frame, "您好！請問您要替誰\n辦理出院手續？", 148, 56, 18, dark, false, dark, true);
@@ -1096,10 +1292,7 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
         const auto index = option_of(decision, slot);
         if (index)
             frame.button(yes_id, {mid - 120, panel.top + 40, mid - 10, panel.bottom - 10}, "是",
-                         [this, host, hospital, slot, index = *index] {
-                             rescue_voice(hospital, slot);
-                             host.respond(index);
-                         });
+                         [confirm, slot, index = *index] { confirm(slot, index); });
         frame.button(no_id, {mid + 10, panel.top + 40, mid + 120, panel.bottom - 10}, "否",
                      [this] { rescue_.selected = -1; });
     }
@@ -1221,7 +1414,38 @@ void Screens::gallery(Frame &frame, const World &base, const std::function<void(
     shoot("magic-selected", [&] { draw_magic(frame, game, effect, host); });
     magic_.casting = *clock;
     shoot("magic-casting", [&] { draw_magic(frame, game, effect, host); });
+    for (const int movie_ms : {300, 900, 1500}) { // Panel 20 cast movie (frames 4, 12, 21)
+        magic_.casting = *clock - 1000 - std::uint64_t(movie_ms);
+        magic_.movie.reset();
+        shoot("magic-movie-" + std::to_string(movie_ms), [&] { draw_magic(frame, game, effect, host); });
+    }
     magic_ = {};
+    for (const int at : {500, 2400}) { // a computer's cast: group/effect balloon, then the movie
+        start_magic_cast(3, 10);
+        cast_->started = *clock - std::uint64_t(at);
+        shoot(at < 1500 ? "magic-computer" : "magic-computer-movie", [&] { draw_magic_cast(frame); });
+    }
+    cast_.reset();
+    // Remote dice (Panel 72) with face 4 pressed, and the 嫁禍卡 chooser (Data 518).
+    GameDecision dice{DecisionKind::action_target, world.header.current_player, 0, 0, "选择道具目标", {}};
+    for (int value = 1; value <= 6; ++value)
+        dice.options.push_back({std::to_string(value) + "点", value});
+    dice.options.push_back({"取消", 0});
+    shoot("remote-dice", [&] { draw_remote_dice(frame, dice, host); });
+    frame.pointer_x = 104 + 40 * 3 + 15;
+    frame.pointer_y = 328;
+    frame.pointer_down = true;
+    shoot("remote-dice-pressed", [&] { draw_remote_dice(frame, dice, host); });
+    frame.pointer_x = frame.pointer_y = -1;
+    frame.pointer_down = false;
+    for (const std::size_t victims : {1U, 2U, 3U}) {
+        GameDecision frame_up{DecisionKind::card_target, world.header.current_player, 0, 3000, "使用嫁祸卡？", {}};
+        for (std::size_t i = 0; i < world.players.size() && frame_up.options.size() < victims; ++i)
+            if (i != world.header.current_player)
+                frame_up.options.push_back({"", std::int32_t(i)});
+        frame_up.options.push_back({"保留卡片", -1});
+        shoot("frame-up-" + std::to_string(victims), [&] { draw_frame_up(frame, game, frame_up, host); });
+    }
     // Bail screens.
     for (const bool hospital : {false, true}) {
         GameDecision rescue{DecisionKind::rescue, world.header.current_player, 0, 0,
@@ -1239,6 +1463,14 @@ void Screens::gallery(Frame &frame, const World &base, const std::function<void(
         rescue_.selected = -1;
         rescue_.poor_until = *clock + 1000;
         shoot(name + "-poor", [&] { draw_rescue(frame, game, rescue, host); });
+        rescue_ = {};
+        for (const int npc : {4, 5, 6, 7}) { // Panel 64 thank-you of each bailed-out NPC
+            rescue_ = {};
+            draw_rescue(frame, game, rescue, host); // initialise the visit
+            rescue_.thanks = npc;
+            rescue_.thanks_until = *clock + 1000;
+            shoot(name + "-thanks-" + std::to_string(npc), [&] { draw_rescue(frame, game, rescue, host); });
+        }
         rescue_ = {};
     }
     clock = saved_clock;

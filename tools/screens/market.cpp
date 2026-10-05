@@ -6,6 +6,7 @@
 #include "../native_stock_names.hpp"
 #include "rich4/calendar.hpp"
 #include "rich4/economy.hpp"
+#include "rich4/flc.hpp"
 #include "rich4/services.hpp"
 #include "rich4/world.hpp"
 
@@ -13,6 +14,8 @@
 #include <array>
 #include <bit>
 #include <cstdio>
+#include <iostream>
+#include <map>
 
 namespace rich4::native::screens {
 namespace {
@@ -397,10 +400,33 @@ void TradingBoard::draw_detail(Host &host, const World &world, std::size_t actor
 // ---------------------------------------------------------------------------------------
 // Lottery bar (_rich4_ui_letou_bar_entry)
 
+namespace {
+// Panel 14: the bar's 5-frame neon sign FLC (213x68), looped at (8,8) and advanced on every 100 ms
+// tick (LT:2932). Index 0 is transparent over the bar. Decoded once per asset set.
+const std::vector<graphics::Image> &neon_frames(Artwork &artwork) {
+    static std::map<const Artwork *, std::vector<graphics::Image>> cache;
+    auto &frames = cache[&artwork];
+    if (frames.empty()) {
+        try {
+            flc::Decoder movie(artwork.archive('p').decode(14));
+            while (frames.size() < movie.frame_count() && movie.next())
+                frames.push_back(movie.image());
+        } catch (const std::exception &error) {
+            std::cerr << "Lottery neon skipped: " << error.what() << '\n';
+        }
+        if (frames.empty())
+            frames.emplace_back(); // never retry a broken asset every frame
+    }
+    return frames;
+}
+} // namespace
+
 void draw_lottery(Host &host, const World &world, const GameDecision &decision,
                   const std::function<void(std::size_t)> &respond) {
     auto &frame = host.frame;
     backdrop(frame, 'p', 12, 0);
+    if (const auto &neon = neon_frames(frame.artwork); !neon.front().pixels.empty())
+        graphics::blit(frame.canvas, neon[(frame.ticks / 100) % neon.size()], 8, 8);
     frame.picture('p', 12, 1, 210, -5);
     if ((frame.ticks / 100) % 35 < 3) {
         constexpr std::array<std::size_t, 3> blink{3, 4, 3};
@@ -458,16 +484,22 @@ void draw_lottery(Host &host, const World &world, const GameDecision &decision,
 // ---------------------------------------------------------------------------------------
 // Auction room (_rich4_ui_auction_entry)
 
-void draw_auction(Host &host, const World &world, const GameDecision &decision,
-                  const std::function<void(std::size_t)> &respond) {
-    auto &frame = host.frame;
+namespace {
+constexpr Style auction_setup{18, 0xffffff, 0x101010, shadow | bold};
+constexpr unsigned bid_frame_ms = 200; // bid animation: sprite frames 1..4,0 in about 1 s (AU:1776)
+constexpr std::uint64_t sold_ms = 3500;
+
+// Room, auctioneer (idle 26:25 or gavel 26:21), the lot on the table and the price; returns the seller.
+int draw_room(Frame &frame, const World &world, std::uint16_t code, std::int32_t price, bool gavel) {
     backdrop(frame, 'p', 26, 0);
     frame.picture('p', 26, 17, 67, 63);
-    frame.picture('p', 26, 25, 123, 24);
+    if (gavel)
+        frame.picture('p', 26, 21, 124, 27);
+    else
+        frame.picture('p', 26, 25, 123, 24);
     // Property on the table (AU:2484-2620; building types are not modelled, type 0 is used).
     std::size_t picture = 90;
     int seller = -1;
-    const auto code = decision.land_id;
     if (code > 2000 && code < 4000 && std::size_t(code - 2000) < world.lands.size()) {
         const auto &land = world.lands[code - 2000].economy;
         seller = land.owner_code ? int(land.owner_code) - 1 : -1;
@@ -481,36 +513,130 @@ void draw_auction(Host &host, const World &world, const GameDecision &decision,
     }
     if (picture < frame.artwork.frame_count('p', 26))
         graphics::blit(frame.canvas, frame.artwork.frame('p', 26, picture), 232, 180);
+    text(frame, "標價：", 182, 242, 0, auction_setup);
+    text(frame, std::to_string(price) + "元", 272, 262, 6, auction_setup);
+    return seller;
+}
+
+void announce(Frame &frame, std::string_view line) {
     graphics::blit(frame.canvas, frame.artwork.frame('p', 26, 2), 410, 60);
-    text(frame, "目前標價" + std::to_string(decision.amount) + "元\n請意者出價。", 410, 60, 4, {16, 0x101010, 0, bold});
-    const Style setup{18, 0xffffff, 0x101010, shadow | bold};
-    text(frame, "標價：", 182, 242, 0, setup);
-    text(frame, std::to_string(decision.amount) + "元", 272, 262, 6, setup);
-    // Bidders down the right-hand side.
+    text(frame, line, 410, 60, 4, {16, 0x101010, 0, bold});
+}
+
+// Bidder column at (590, 80+120k): Panel 27+3c bidding (5 frames), 28+3c cannot bid (1 frame),
+// 29+3c winner (5 frames); `pose(k)` returns {entry offset 0/1/2, frame}.
+template <typename Pose>
+void draw_bidders(Frame &frame, const World &world, std::optional<std::size_t> current, int seller,
+                  Pose pose) {
     for (std::size_t k = 0; k < world.players.size() && k < 4; ++k) {
         const auto &player = world.players[k].state;
         if (!player.controller_flags)
             continue;
         const int y = 80 + 120 * int(k);
-        graphics::blit(frame.canvas, frame.artwork.frame('p', std::size_t(27 + 3 * player.character), 0), 590, y);
-        if (k == decision.player)
+        const auto [offset, index] = pose(k);
+        const auto entry = std::size_t(27 + 3 * player.character + offset);
+        const auto count = std::max<std::size_t>(frame.artwork.frame_count('p', entry), 1);
+        graphics::blit(frame.canvas, frame.artwork.frame('p', entry, std::size_t(index) % count), 590, y);
+        if (current == k)
             graphics::blit(frame.canvas, frame.artwork.frame('p', 26, std::size_t(78 + player.character)), 590, y);
         if (int(k) == seller)
-            text(frame, "賣方", 590, y + 14, 2, setup);
+            text(frame, "賣方", 590, y + 14, 2, auction_setup);
         else
-            text(frame, std::to_string(player.cash) + "元", 620, y + 14, 6, setup);
+            text(frame, std::to_string(player.cash) + "元", 620, y + 14, 6, auction_setup);
+    }
+}
+} // namespace
+
+void AuctionRoom::draw(Host &host, const World &world, const GameDecision &decision,
+                       const std::function<void(std::size_t)> &respond) {
+    auto &frame = host.frame;
+    const auto key = std::to_string(decision.land_id) + ':' + std::to_string(decision.player) + ':' +
+                     std::to_string(decision.amount);
+    if (bid_ && bid_->key != key)
+        bid_.reset(); // a different bidder or auction: nothing in flight belongs to it
+    if (bid_ && !bid_->started)
+        bid_->started = frame.ticks;
+    if (bid_ && frame.ticks >= bid_->started + 5 * bid_frame_ms) {
+        const auto index = bid_->index;
+        bid_.reset();
+        respond(index); // the decision is gone now: draw nothing more of it this frame
+        return;
+    }
+    const auto price = bid_ ? bid_->price : decision.amount;
+    const auto seller = draw_room(frame, world, decision.land_id, price, false);
+    announce(frame, "目前標價" + std::to_string(decision.amount) + "元\n請意者出價。");
+    const auto bid_frame = bid_ ? int((frame.ticks - bid_->started) / bid_frame_ms) : 0;
+    draw_bidders(frame, world, decision.player, seller, [&](std::size_t k) {
+        if (decision.inactive_players & (1U << k))
+            return std::pair{1, 0}; // ineligible or withdrew (AU:2798-2830)
+        if (bid_ && k == decision.player)
+            return std::pair{0, (bid_frame + 1) % 5}; // frames 1..4,0
+        return std::pair{0, 0};
+    });
+    if (bid_) { // starburst 26:1 next to the bidder with the new price, ＰＡＳＳ or 放棄
+        const int y = 80 + 120 * int(decision.player);
+        graphics::blit(frame.canvas, frame.artwork.frame('p', 26, 1), 480, y - 15);
+        const auto label = bid_->action == 0 ? std::string("ＰＡＳＳ")
+                           : bid_->action == 6 ? std::string("放棄")
+                                               : std::to_string(bid_->price) + "元";
+        text(frame, label, 480, y - 15, 4, {16, 0x101010, 0, bold});
     }
     // Seven bid buttons: PASS, +100, +500, +1000, +5000, +10000, give up (ref_00475b84).
     constexpr std::array<int, 7> rows{133, 181, 229, 277, 325, 373, 421};
+    constexpr std::array<std::int32_t, 7> raise{0, 100, 500, 1000, 5000, 10000, 0};
     for (int i = 0; i < 7; ++i) {
         const graphics::Rect rect{363, rows[std::size_t(i)] - 19, 450, rows[std::size_t(i)] + 20};
-        const bool pressed = frame.pointer_down && frame.pointer_in(rect);
+        const bool pressed = (frame.pointer_down && frame.pointer_in(rect)) || (bid_ && bid_->action == i);
         graphics::blit(frame.canvas, frame.artwork.frame('p', 26, std::size_t(2 * i + (pressed ? 3 : 4))), 406,
                        rows[std::size_t(i)]);
-        for (std::size_t index = 0; index < decision.options.size(); ++index)
-            if (decision.options[index].value == i)
-                hit(host, 210 + int(index), rect, click_sound, [respond, index] { respond(index); });
+        for (std::size_t index = 0; index < decision.options.size(); ++index) {
+            if (decision.options[index].value != i || (bid_ && bid_->index != index))
+                continue;
+            // While the bid animates, a tap anywhere finishes it at once.
+            hit(host, 210 + int(index), bid_ ? graphics::Rect{0, 0, 640, 480} : rect,
+                bid_ ? no_sound : click_sound,
+                [this, instant = host.instant, sound = host.sound, respond, index, i, key,
+                 price = decision.amount + raise[std::size_t(i)]] {
+                    if (bid_ || instant) { // replays never wait for the picture
+                        bid_.reset();
+                        respond(index);
+                        return;
+                    }
+                    bid_ = Bid{key, index, i, price, 0};
+                    if (sound)
+                        sound(29); // auction bid (ui_auction.asm:1776)
+                });
+        }
     }
+}
+
+void AuctionRoom::start_sold(std::size_t winner, std::int32_t price, std::uint16_t property) {
+    sold_ = Sold{winner, price, property, 0, false};
+}
+
+void AuctionRoom::draw_sold(Host &host, const World &world) {
+    if (!sold_)
+        return;
+    auto &frame = host.frame;
+    if (!sold_->started)
+        sold_->started = std::max<std::uint64_t>(frame.ticks, 1);
+    const auto elapsed = frame.ticks - sold_->started;
+    if (elapsed >= sold_ms || sold_->winner >= world.players.size()) {
+        sold_.reset();
+        return;
+    }
+    if (!sold_->sounded) {
+        sold_->sounded = true;
+        host.sound(63); // gavel (ui_auction.asm:502)
+    }
+    (void)draw_room(frame, world, sold_->property, sold_->price, true); // the lot now belongs to the winner
+    const auto winner = sold_->winner;
+    const std::string buyer = names.at(world.players[winner].state.character);
+    announce(frame, elapsed < sold_ms / 2 ? std::to_string(sold_->price) + "元成交" : "恭喜" + buyer + "\n購得此地！");
+    draw_bidders(frame, world, winner, -1, [&](std::size_t k) {
+        return k == winner ? std::pair{2, int(elapsed / 100) % 5} : std::pair{0, 0}; // winner celebrates
+    });
+    hit(host, ids::auction_skip, {0, 0, 640, 480}, no_sound, [this] { sold_.reset(); });
 }
 
 } // namespace rich4::native::screens
