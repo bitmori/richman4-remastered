@@ -6,3 +6,4 @@ artifacts/
 *.mid
 *.exe
 *.apk
+__pycache__/

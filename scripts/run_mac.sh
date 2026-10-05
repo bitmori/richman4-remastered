@@ -12,6 +12,6 @@ case "$EXE" in rich4.exe|rich4_mscrt.exe) ;; *) echo "Usage: $0 [rich4.exe|rich4
 }
 mkdir -p "$REPO_DIR/artifacts"
 exec "$ENGINE" -root "$RUNTIME_DIR/Rich4/root" -zip "$WINE_ZIP" \
-  -mount_drive "$GAME_DIR" d -w /mnt/drive_d -resolution 640x480 -bpp 16 \
+  -mount_drive "$GAME_DIR" d -w /mnt/drive_d -resolution 640x480 -bpp 16 -scale 100 -scale_quality 0 \
   -env 'WINEDLLOVERRIDES=mscoree,mshtml=' -env LANG=zh_TW.UTF-8 \
   /bin/wine "D:\\$EXE" > "$REPO_DIR/artifacts/mac-runtime.log" 2>&1

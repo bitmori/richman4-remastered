@@ -14,6 +14,8 @@ def audit(directory):
     files = {p.name.lower(): p for p in directory.iterdir() if p.is_file()}
     result = {"directory": str(directory), "archives": [], "errors": [], "warnings": []}
     exe = files.get("rich4.exe")
+    if exe is None:
+        result["errors"].append("Missing rich4.exe")
     result["exe_sha256"] = hashlib.sha256(exe.read_bytes()).hexdigest() if exe else None
     result["matches_upstream_executable"] = result["exe_sha256"] == EXPECTED_EXE
     if not result["matches_upstream_executable"]:
