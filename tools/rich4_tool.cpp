@@ -2,6 +2,7 @@
 #include "rich4/assets.hpp"
 #include "rich4/graphics.hpp"
 #include "rich4/save.hpp"
+#include "rich4/terrain.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -38,6 +39,7 @@ void usage() {
               << "  rich4-tool dump ARCHIVE.mkf OUTPUT_DIRECTORY\n"
               << "  rich4-tool extract ARCHIVE.mkf ENTRY OUTPUT_FILE\n"
               << "  rich4-tool frame ARCHIVE.mkf ENTRY FRAME OUTPUT.ppm\n"
+              << "  rich4-tool terrain ARCHIVE.mkf ENTRY OUTPUT.ppm\n"
               << "  rich4-tool roundtrip-save INPUT.dat OUTPUT.dat\n";
 }
 }
@@ -55,12 +57,12 @@ int main(int argc, char** argv) {
             std::cout << "{\"bytes\":" << encoded.size() << ",\"identical\":true}\n";
             return 0;
         }
-        if (command != "inspect" && command != "dump" && command != "extract" && command != "frame") {
+        if (command != "inspect" && command != "dump" && command != "extract" && command != "frame" && command != "terrain") {
             usage(); return 2;
         }
         const rich4::assets::Archive archive(argv[2]);
         if (command == "inspect" && argc == 3) {
-            std::size_t compressed{}, decoded_bytes{}, graphical_entries{}, frames{}, pixels{};
+            std::size_t compressed{}, decoded_bytes{}, graphical_entries{}, frames{}, pixels{}, grounds{}, tiles{};
             for (std::size_t i = 0; i < archive.size(); ++i) {
                 const auto& entry = archive.metadata(i);
                 compressed += entry.compressed() ? 1U : 0U;
@@ -74,11 +76,15 @@ int main(int argc, char** argv) {
                     frames += parsed.entries.size();
                     for (std::size_t frame = 0; frame < parsed.entries.size(); ++frame)
                         pixels += rich4::graphics::decode_frame(data, frame).pixels.size();
+                } else if (data.size() >= 4 && data[0] == 'G' && data[1] == 'N' && data[2] == 'D' && data[3] == 0) {
+                    ++grounds;
+                    tiles += rich4::terrain::parse_ground(data).tile_count();
                 }
             }
             std::cout << "{\"entries\":" << archive.size() << ",\"compressed\":" << compressed
                       << ",\"decoded_bytes\":" << decoded_bytes << ",\"graphic_resources\":" << graphical_entries
-                      << ",\"frames\":" << frames << ",\"decoded_pixels\":" << pixels << "}\n";
+                      << ",\"frames\":" << frames << ",\"decoded_pixels\":" << pixels
+                      << ",\"ground_resources\":" << grounds << ",\"ground_tiles\":" << tiles << "}\n";
         } else if (command == "dump" && argc == 4) {
             const std::filesystem::path directory(argv[3]);
             std::filesystem::create_directories(directory);
@@ -93,6 +99,9 @@ int main(int argc, char** argv) {
         } else if (command == "frame" && argc == 6) {
             const auto data = archive.decode(index_of(argv[3]));
             rich4::graphics::write_ppm(rich4::graphics::decode_frame(data, index_of(argv[4])), argv[5]);
+        } else if (command == "terrain" && argc == 5) {
+            const auto ground = rich4::terrain::parse_ground(archive.decode(index_of(argv[3])));
+            rich4::graphics::write_ppm(rich4::terrain::render_overview(ground), argv[4]);
         } else { usage(); return 2; }
         return 0;
     } catch (const std::exception& error) {
