@@ -11,6 +11,11 @@ original EXE for a complete game. The summary always records
 `original_full_game_equivalence_verified: false`. Pure-function original-EXE
 comparisons remain documented in their individual migrations.
 
+**Paused on 2026-10-05 at the user's request.** The user found substantial missing
+UI details and incomplete reproduction of the original interface. This runner
+does not check visual fidelity or complete user experience. Do not resume tests
+or development automatically; see [the handoff](../STATUS.md).
+
 ## Run
 
 Build the current native application and fixture generator before starting.
@@ -141,3 +146,15 @@ still cannot count as execution.
 The expanded matrix's result must come from its own subsequent `summary.json`
 produced by the integrated application. Passing the orchestration tests or
 combining separate partial reports does not establish a passing full matrix.
+
+## Result at pause
+
+The standalone card 17 probe passed at
+`artifacts/native-acceptance/card17-probe-20261005/report.json`.
+The 20-case run at
+`artifacts/native-acceptance/debug-asan-complete-20261005/summary.json`
+completed only five cases (natural maps 0–4), all passed, before the user requested
+a pause. Its dedicated runner and children were terminated and the retained
+summary was marked `status: interrupted`, `interruption.partial: true`, and
+`native_acceptance_verified: false`. No complete 20-case pass exists; the separate
+probe is not merged into the previous failed summary. No background run remains.
