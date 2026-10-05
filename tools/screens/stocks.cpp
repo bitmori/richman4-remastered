@@ -11,6 +11,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include <numbers>
 #include <vector>
 
 namespace rich4::native::screens {
@@ -361,8 +362,8 @@ void StockMarket::draw_info(Host &host, const World &world, std::size_t stock) {
     const auto owned = [fraction](double dx, double dy) {
         double angle = std::atan2(dx, -dy); // 0 at 12 o'clock, clockwise
         if (angle < 0)
-            angle += 2 * M_PI;
-        return angle < 2 * M_PI * fraction;
+            angle += 2 * std::numbers::pi;
+        return angle < 2 * std::numbers::pi * fraction;
     };
     for (int y = 336; y <= 401; ++y)
         for (int x = 414; x <= 591; ++x) {
