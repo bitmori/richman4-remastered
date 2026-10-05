@@ -301,7 +301,7 @@ void MainScreen::draw_toolbar(Frame &frame, const GameSession &session, const Ma
 
 // §3.1-3.2
 void MainScreen::draw_info_panel(Frame &frame, const World &world, const MainScreenActions &actions) {
-    const auto p = std::min<std::size_t>(world.header.current_player, world.players.size() - 1);
+    const auto p = displayed_player(world);
     const auto &player = world.players[p];
     const auto &state = player.state;
     const unsigned tab = tab_[p] % 4;
@@ -381,7 +381,7 @@ void MainScreen::draw_info_panel(Frame &frame, const World &world, const MainScr
 
 // §3.4
 void MainScreen::draw_header(Frame &frame, const World &world) {
-    const auto p = std::min<std::size_t>(world.header.current_player, world.players.size() - 1);
+    const auto p = displayed_player(world);
     const auto &player = world.players[p];
     graphics::blit(frame.canvas, frame.artwork.frame('p', 0, 4), 440, 0, graphics::Transparency::opaque);
     text(frame, "現金", 530, 40, Align::left);
@@ -442,7 +442,7 @@ void MainScreen::draw_minimap(Frame &frame, const World &world, int top, const M
         anchored(frame, 'm', 27 + std::size_t(state.character), 6, 440 + minimap_scale(state.x),
                  top + minimap_scale(state.y));
     }
-    const auto &active = world.active_player().state;
+    const auto &active = world.players[displayed_player(world)].state;
     const int box_x = 440 + minimap_scale(active.x), box_y = top + minimap_scale(active.y);
     outline(frame.canvas, {box_x - 15, box_y - 15, box_x + 15, box_y + 15}, white, area);
     if (free_scroll_) {

@@ -138,7 +138,7 @@ struct GameSession::Impl {
     // ---- Presentation effects (docs/ui/effects.md §9): read-only, never draw randomness. ----
     void effect(EffectKind kind, std::size_t slot, EffectPoint target, std::uint16_t property = 0) {
         const auto &state = world.players.at(slot).state;
-        effects.push_back({kind, slot, state.node_id, target, std::nullopt, 0, {}, property});
+        effects.push_back({kind, slot, state.node_id, target, std::nullopt, 0, {}, property, events.size()});
     }
     EffectPoint actor_point(std::size_t slot) const {
         const auto &state = world.players.at(slot).state;
@@ -165,7 +165,7 @@ struct GameSession::Impl {
             return;
         const auto &node = world.nodes[target];
         EffectEvent event{EffectKind::object_throw, actor(), target, {node.x, node.y}, actor_point(actor()),
-                          static_cast<std::uint8_t>(tool + 14), {}, 0};
+                          static_cast<std::uint8_t>(tool + 14), {}, 0, events.size()};
         effects.push_back(std::move(event));
     }
     // Card pictures: demolish (12) and monster (11) on a property target.

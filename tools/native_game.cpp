@@ -25,6 +25,7 @@
 #include <bit>
 #include <chrono>
 #include <ctime>
+#include <deque>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -66,6 +67,7 @@ struct Options {
     bool play_effects = false; // EFFECTS (dev): play effects in replays and dump effect-NNN.ppm frames
     std::string ui_preset;          // dev: initial main-screen state, e.g. "view=2,tab=1,calendar=1,map=1"
     unsigned capture_every = 0;     // dev: also dump every Nth rendered frame into --output
+    bool start_loaded = false;      // dev: open --load straight into play (no menu) in real time
     unsigned auto_rounds = 0;
     unsigned map = 0;
     unsigned exercise_card = 0, exercise_tool = 0;
@@ -89,6 +91,8 @@ Options arguments(int argc, char **argv) {
             options.headless = true;
         else if (argument == "--hidden-window")
             options.hidden_window = true;
+        else if (argument == "--start-loaded")
+            options.start_loaded = true;
         else if (argument == "--exercise-recovery")
             options.exercise_recovery = true;
         else if (argument == "--exercise-trading")
@@ -229,6 +233,8 @@ class Application {
     }
 
     int run() {
+        if (options_.start_loaded && !options_.load.empty() && !options_.auto_rounds)
+            load(options_.load);
         auto last_tick = SDL_GetTicks();
         for (unsigned iteration = 0; running_; ++iteration) {
             draw();
@@ -354,11 +360,12 @@ class Application {
             last_tick = now;
             if (session_ && screen_ == Screen::game) {
                 observe(); // a GO press emits the roll before the clock advances
-                if (!effects_.active()) // EFFECTS: an AI's missile/card movie plays before its roll
+                if (!effects_.active() && !messages_.active()) // only the step being shown advances
                     main_screen_.advance(elapsed);
+                pump_presentation();
                 // The original roll animation, board effects (EFFECTS) and every bubble/box/news popup
-                // block the game loop.
-                if (!main_screen_.dice_busy() && !effects_.active() && !messages_.active())
+                // block the game loop until everything already emitted has been shown, in order.
+                if (presentation_.empty() && !presenting())
                     session_->tick(elapsed);
                 observe();
                 if (session_->can_save() && last_autosaved_day_ != session_->completed_days()) {
@@ -508,6 +515,8 @@ class Application {
         last_autosaved_day_ = UINT64_MAX;
         bank_done_for_visit_ = false;
         messages_.clear();
+        presentation_.clear();
+        presented_player_.reset();
         observe();
     }
     bool load(const fs::path &path) {
@@ -547,33 +556,67 @@ class Application {
         const auto state = "RICH4-RNG-1 " + std::to_string(session_->random_state()) + '\n';
         ui::write_file(path.string() + ".rng", {state.begin(), state.end()});
     }
+    // One tick of the core can emit a whole chain (e.g. a jailed player's notice, the next turn and
+    // that player's roll). The original plays these strictly one after another, so presentation
+    // (bubbles/boxes, dice, effect movies, sounds) goes through one ordered queue, and the core
+    // clock only advances once the queue is empty. Bookkeeping for the replay harness stays immediate.
+    struct PresentationStep {
+        std::optional<GameEvent> event;
+        std::optional<EffectEvent> effect;
+    };
+    bool presenting() const {
+        return main_screen_.dice_busy() || effects_.active() || messages_.active();
+    }
+    void pump_presentation() {
+        while (session_ && !presentation_.empty() && !presenting()) {
+            auto step = std::move(presentation_.front());
+            presentation_.pop_front();
+            if (step.effect)
+                effects_.enqueue({std::move(*step.effect)}, session_.get()); // EFFECTS
+            else
+                present(*step.event);
+        }
+    }
+    void present(const GameEvent &event) {
+        if (event.kind == GameEventKind::turn_started)
+            presented_player_ = event.player;
+        main_screen_.on_event(event, *session_, artwork_);
+        if (auto item = messages::from_event(event, session_->world()))
+            messages_.push(std::move(*item)); // Voices play when their bubble appears.
+        if (!sound_effects_)
+            return;
+        switch (event.kind) {
+        case GameEventKind::dice_rolled:
+            audio_->play_sound(10);
+            break;
+        case GameEventKind::land_purchased:
+            audio_->play_sound(49);
+            break;
+        case GameEventKind::land_upgraded:
+            audio_->play_sound(50);
+            break;
+        case GameEventKind::rent_paid:
+            audio_->play_sound(55);
+            break;
+        default:
+            break;
+        }
+    }
     void observe() {
-        effects_.enqueue(session_->drain_effects(), session_.get()); // EFFECTS
-        for (const auto &event : session_->drain_events()) {
-            main_screen_.on_event(event, *session_, artwork_);
+        auto effects = session_->drain_effects();
+        auto events = session_->drain_events();
+        std::size_t next_effect = 0;
+        const auto queue_effects_before = [&](std::size_t event_index) {
+            while (next_effect < effects.size() && effects[next_effect].after_events <= event_index)
+                presentation_.push_back({std::nullopt, std::move(effects[next_effect++])});
+        };
+        for (std::size_t index = 0; index < events.size(); ++index) {
+            const auto &event = events[index];
+            queue_effects_before(index);
+            presentation_.push_back({event, std::nullopt});
             ++event_counts_[event.kind];
             if (event.kind == GameEventKind::dice_rolled && event.player < dice_by_player_.size())
                 ++dice_by_player_[event.player];
-            if (auto item = messages::from_event(event, session_->world()))
-                messages_.push(std::move(*item)); // Voices play when their bubble appears.
-            if (sound_effects_) {
-                switch (event.kind) {
-                case GameEventKind::dice_rolled:
-                    audio_->play_sound(10);
-                    break;
-                case GameEventKind::land_purchased:
-                    audio_->play_sound(49);
-                    break;
-                case GameEventKind::land_upgraded:
-                    audio_->play_sound(50);
-                    break;
-                case GameEventKind::rent_paid:
-                    audio_->play_sound(55);
-                    break;
-                default:
-                    break;
-                }
-            }
             if (event.kind == GameEventKind::unsupported_event)
                 unsupported_.push_back(event.message);
             if (event.kind == GameEventKind::notice && event.message.starts_with("使用")) {
@@ -605,6 +648,8 @@ class Application {
                         << ",\"day\":" << session_->completed_days()
                         << ",\"message\":" << quoted(event.message) << "}\n";
         }
+        queue_effects_before(events.size());
+        pump_presentation();
     }
     void draw() {
         buttons_.clear();
@@ -743,7 +788,10 @@ class Application {
     void draw_board() {
         const auto &world = session_->world();
         sync_decision();
-        const auto &active = world.active_player().state;
+        // Follow the turn being presented, not the core's (possibly already advanced) current player.
+        main_screen_.set_displayed_player(presentation_.empty() && !presenting() ? std::nullopt
+                                                                                 : presented_player_);
+        const auto &active = world.players[main_screen_.displayed_player(world)].state;
         std::vector<board::PlayerSprite> players;
         for (const auto &player : world.players) {
             const auto &state = player.state;
@@ -1758,6 +1806,8 @@ class Application {
     std::unique_ptr<board::Renderer> board_;
     std::unique_ptr<audio::Audio> audio_;
     native::EffectPlayer effects_{artwork_}; // EFFECTS
+    std::deque<PresentationStep> presentation_; // see observe()
+    std::optional<std::size_t> presented_player_;
     Uint64 effect_ticks_ = 0;                // EFFECTS: last draw_effects() time
     Uint64 effect_capture_ = 0;              // EFFECTS (--play-effects): next frame dump time
     unsigned effect_frames_ = 0;

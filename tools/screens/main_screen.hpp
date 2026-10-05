@@ -52,6 +52,15 @@ class MainScreen {
     // The original roll animation is synchronous: while busy the application holds the game clock.
     [[nodiscard]] bool dice_busy() const;
     void advance(unsigned elapsed_ms);
+    // The player whose turn is being presented. While the app's presentation queue is still
+    // showing an earlier turn, the core's current_player has already moved on.
+    void set_displayed_player(std::optional<std::size_t> slot) {
+        displayed_player_ = slot;
+    }
+    [[nodiscard]] std::size_t displayed_player(const World &world) const {
+        const auto slot = displayed_player_.value_or(world.header.current_player);
+        return std::min<std::size_t>(slot, world.players.size() - 1);
+    }
     void cycle_view_mode() {
         view_mode_ = (view_mode_ + 1) % 3;
     }
@@ -81,6 +90,7 @@ class MainScreen {
     int hover_ = -1;
     int go_x_ = 180, go_y_ = 120;
     std::optional<std::pair<int, int>> go_drag_; // pointer offset inside the GO button
+    std::optional<std::size_t> displayed_player_;
     // Touch: a tap anywhere on GO rolls (the original's 35x41 roll hotspot is too small for a
     // finger); it becomes a drag only once the pointer moves. Set on press, fired on release.
     std::function<void()> pending_roll_;

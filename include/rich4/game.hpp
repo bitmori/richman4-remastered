@@ -137,6 +137,9 @@ struct EffectEvent {
     std::uint8_t object_kind = 0;                   // throws: 16/17/18; god_appear: god kind
     std::vector<std::uint8_t> dice{};               // dice_roll values
     std::uint16_t property = 0;                     // target property code (2001.. / 4001..), if any
+    // Presentation order: how many GameEvents of the same drain batch were emitted before this
+    // effect, so the app can interleave drain_effects() with drain_events() in true order.
+    std::size_t after_events = 0;
 };
 
 struct MoveAnimation {
