@@ -104,6 +104,11 @@ EventResult missing(std::uint8_t id, const char *feature) {
 EventResult done(std::uint8_t id, const char *description) {
     return {true, id, description};
 }
+EventResult done(std::uint8_t id, const char *description, std::int32_t value) {
+    auto result = done(id, description);
+    result.value = value;
+    return result;
+}
 
 struct Property {
     std::uint16_t code;
@@ -365,8 +370,10 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
 
     if (id < 4) {
         auto &roster = id < 2 ? world.prison_roster : world.hospital_roster;
+        std::uint8_t affected = 0;
         for (std::size_t slot = 0; slot < std::min<std::size_t>(world.players.size(), 4); ++slot)
             if (roster[slot] != 0) {
+                affected = static_cast<std::uint8_t>(affected | (1U << slot));
                 auto &days = id < 2 ? world.players[slot].status.days_in_prison
                                     : world.players[slot].status.days_in_hospital;
                 if ((id & 1) == 0) {
@@ -375,8 +382,11 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
                 } else
                     days = static_cast<std::uint8_t>((days + 3) & 0x7f);
             }
-        return done(id, id < 2 ? ((id & 1) ? "新闻：刑期延长三天" : "新闻：大赦释放")
-                               : ((id & 1) ? "新闻：住院延长三天" : "新闻：康复出院"));
+        auto result = done(id, id < 2 ? ((id & 1) ? "新闻：刑期延长三天" : "新闻：大赦释放")
+                                      : ((id & 1) ? "新闻：住院延长三天" : "新闻：康复出院"));
+        result.players = affected;
+        result.value = 3;
+        return result;
     }
     if (id == 4 || id == 20) {
         const auto candidates =
@@ -385,7 +395,9 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
             return missing(id, "a valid disaster target");
         const auto property = choose(candidates, random);
         callbacks.area_damage(property.x, property.y, id == 4 ? 1 : 0, id == 4);
-        return done(id, id == 4 ? "新闻：灾害袭击，区域受损" : "新闻：地震，区域建筑降级");
+        auto result = done(id, id == 4 ? "新闻：灾害袭击，区域受损" : "新闻：地震，区域建筑降级");
+        result.property = property.code;
+        return result;
     }
     if (id == 5 || id == 15 || id == 19 || id == 21) {
         const auto candidates = matching_properties(world, [id](const auto &p) {
@@ -397,21 +409,30 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
         destroy_property(world, property.code, id == 5 || id == 19);
         if (property.owner != 0)
             voice(callbacks, property.owner - 1, static_cast<std::uint8_t>(3 + (random.next() & 1)));
-        return done(id, id == 5 || id == 19 ? "新闻：地产遭到破坏并被清除" : "新闻：建筑损坏，降级一层");
+        auto result =
+            done(id, id == 5 || id == 19 ? "新闻：地产遭到破坏并被清除" : "新闻：建筑损坏，降级一层");
+        result.property = property.code;
+        return result;
     }
     if (id == 6 || id == 14) {
         const auto candidates = properties(world);
         if (candidates.empty())
             return missing(id, "a property for land-price news");
-        update_price(world, choose(candidates, random), id == 6);
-        return done(id, id == 6 ? "新闻：地价上涨三成" : "新闻：地价下跌三成");
+        const auto &property = choose(candidates, random);
+        update_price(world, property, id == 6);
+        auto result = done(id, id == 6 ? "新闻：地价上涨三成" : "新闻：地价下跌三成");
+        result.property = property.code;
+        return result;
     }
     if (id == 7) {
         const auto candidates = matching_properties(world, [](const auto &p) { return p.owner == 0; });
         if (candidates.empty())
             return missing(id, "an unowned auction property");
-        callbacks.auction(choose(candidates, random).code);
-        return done(id, "新闻：无主地产拍卖");
+        const auto code = choose(candidates, random).code;
+        callbacks.auction(code);
+        auto result = done(id, "新闻：无主地产拍卖");
+        result.property = code;
+        return result;
     }
     if (id >= 8 && id <= 10) {
         std::array<std::int32_t, 4> totals{};
@@ -434,11 +455,15 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
             }
         if (!winner)
             return missing(id, "a living player to receive the award");
-        income(world, *winner, multiply(id == 9 ? 5000 : 10000, world.header.price_index));
+        const auto award = multiply(id == 9 ? 5000 : 10000, world.header.price_index);
+        income(world, *winner, award);
         voice(callbacks, *winner, static_cast<std::uint8_t>(6 + (id == 9 ? (random.next() & 1) : 0)));
-        return done(id, id == 8   ? "新闻：地产最多者获奖"
-                        : id == 9 ? "新闻：地产最少者获补助"
-                                  : "新闻：持股最多者获奖");
+        auto result = done(id, id == 8   ? "新闻：地产最多者获奖"
+                               : id == 9 ? "新闻：地产最少者获补助"
+                                         : "新闻：持股最多者获奖");
+        result.subject = static_cast<std::int32_t>(*winner);
+        result.value = award;
+        return result;
     }
     if (id >= 11 && id <= 13) {
         std::vector<std::int32_t> taxes(world.players.size());
@@ -482,7 +507,14 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
             if (std::count_if(world.players.begin(), world.players.end(), alive) <= 1)
                 break;
         }
-        return done(id, id == 11 ? "新闻：征收现金税" : id == 12 ? "新闻：征收地产税" : "新闻：征收股票税");
+        auto result =
+            done(id, id == 11 ? "新闻：征收现金税" : id == 12 ? "新闻：征收地产税" : "新闻：征收股票税");
+        for (std::size_t slot = 0; slot < std::min<std::size_t>(taxes.size(), 4); ++slot)
+            if (taxes[slot] != 0) {
+                result.players = static_cast<std::uint8_t>(result.players | (1U << slot));
+                result.player_amounts[slot] = taxes[slot];
+            }
+        return result;
     }
     if (id == 16 || id == 17) {
         for (auto &player : world.players)
@@ -496,6 +528,8 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
         if (candidates.empty())
             return missing(id, "a property for street damage");
         const auto property = choose(candidates, random);
+        auto result = done(id, "新闻：整条街建筑受损");
+        result.property = property.code;
         if (property.code < 4000) {
             const auto street = world.lands.at(property.code - 2000).economy.street_name;
             for (std::size_t i = 1; i < world.lands.size(); ++i)
@@ -503,7 +537,7 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
                     destroy_property(world, static_cast<std::uint16_t>(2000 + i), false);
         } else
             destroy_property(world, property.code, false);
-        return done(id, "新闻：整条街建筑受损");
+        return result;
     }
     if (id == 22) {
         for (auto &player : world.players)
@@ -512,10 +546,17 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
         return done(id, "新闻：银行暂停贷款十五天");
     }
     if (id == 23) {
+        auto result = done(id, "新闻：无贷款者获得存款一成奖励");
         for (std::size_t slot = 0; slot < world.players.size(); ++slot)
-            if (alive(world.players[slot]) && world.players[slot].state.loan == 0)
-                income(world, slot, world.players[slot].state.bank_balance / 10, false);
-        return done(id, "新闻：无贷款者获得存款一成奖励");
+            if (alive(world.players[slot]) && world.players[slot].state.loan == 0) {
+                const auto bonus = world.players[slot].state.bank_balance / 10;
+                income(world, slot, bonus, false);
+                if (slot < 4 && bonus != 0) {
+                    result.players = static_cast<std::uint8_t>(result.players | (1U << slot));
+                    result.player_amounts[slot] = bonus;
+                }
+            }
+        return result;
     }
     if (id == 24 || id == 25) {
         for (auto &stock : world.stocks)
@@ -544,7 +585,9 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
                 history += 144;
             world.stock_history_bits[index][static_cast<std::size_t>(history)] = stock.float_bits[1];
         }
-        return done(id, id == 27 ? "新闻：一家公司股票暂停交易十五天" : "新闻：股票恢复交易");
+        auto result = done(id, id == 27 ? "新闻：一家公司股票暂停交易十五天" : "新闻：股票恢复交易");
+        result.subject = static_cast<std::int32_t>(index);
+        return result;
     }
     if (id == 29) {
         std::vector<std::size_t> choices;
@@ -560,7 +603,12 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
         const auto target = callbacks.try_mianzui_jiahuo(owner - 1);
         if (target >= 0)
             callbacks.add_prison(static_cast<std::size_t>(target), 5);
-        return done(id, "新闻：公司负责人面临五天监禁");
+        auto result = done(id, "新闻：公司负责人面临五天监禁");
+        result.company = static_cast<std::int32_t>(company);
+        result.subject = owner - 1;
+        if (target >= 0 && target < 4)
+            result.players = static_cast<std::uint8_t>(1U << target);
+        return result;
     }
     if (id >= 30) {
         std::vector<std::size_t> choices;
@@ -588,7 +636,9 @@ EventResult apply_news_id(World &world, Random &random, std::uint8_t id, const E
             world.stocks[company.stock_index].news_movement = movement;
             callbacks.update_stocks(static_cast<std::uint32_t>(company.stock_index + 1));
         }
-        return done(id, "新闻：公司业绩与股价变化");
+        auto result = done(id, "新闻：公司业绩与股价变化");
+        result.company = static_cast<std::int32_t>(index);
+        return result;
     }
     throw SaveError("Unreachable news dispatch");
 }
@@ -640,7 +690,7 @@ EventResult apply_fortune_id(World &world, Random &random, std::size_t actor, st
         auto amount = multiply(10000, world.header.price_index);
         const auto modifier = fortune_modifier(player, random, false, true);
         if (modifier == 1)
-            return done(id, "命运：神明阻止了损失");
+            return done(id, "命运：神明阻止了损失", amount);
         if (id == 2) {
             if (modifier == 2)
                 amount = add(amount, amount);
@@ -650,7 +700,9 @@ EventResult apply_fortune_id(World &world, Random &random, std::size_t actor, st
         } else
             player.status.days_rejected_by_bank =
                 static_cast<std::uint8_t>(player.status.days_rejected_by_bank + 30);
-        return done(id, id == 2 ? "命运：身份遭盗用，新增贷款" : "命运：银行拒绝往来三十天");
+        auto result = done(id, id == 2 ? "命运：身份遭盗用，新增贷款" : "命运：银行拒绝往来三十天");
+        result.value = amount;
+        return result;
     }
     if (id == 4) {
         for (std::size_t slot = 0; slot < world.players.size(); ++slot) {
@@ -660,7 +712,9 @@ EventResult apply_fortune_id(World &world, Random &random, std::size_t actor, st
                 fraction32(world.players[slot].state.bank_balance, std::bit_cast<std::uint32_t>(0.1F));
             callbacks.pay(static_cast<std::int32_t>(slot), static_cast<std::int32_t>(actor), amount, 4);
         }
-        return done(id, "命运：取得其他玩家存款的一成");
+        auto result = done(id, "命运：取得其他玩家存款的一成");
+        result.value = 10;
+        return result;
     }
     if (id == 5) {
         bool received = false;
@@ -697,7 +751,7 @@ EventResult apply_fortune_id(World &world, Random &random, std::size_t actor, st
         if (modifier == 1) {
             if (id >= 33)
                 voice(callbacks, actor, 0);
-            return done(id, "命运：神明阻止了灾祸");
+            return done(id, "命运：神明阻止了灾祸", days);
         }
         if (modifier == 2)
             days = static_cast<std::uint8_t>(days * 2);
@@ -710,10 +764,12 @@ EventResult apply_fortune_id(World &world, Random &random, std::size_t actor, st
             else
                 callbacks.add_hospital(static_cast<std::size_t>(target), days);
         }
-        return done(id, id == 6    ? "命运：出国旅行"
-                        : id == 7  ? "命运：被外星人带走"
-                        : id >= 33 ? "命运：面临监禁"
-                                   : "命运：受伤住院");
+        auto result = done(id, id == 6    ? "命运：出国旅行"
+                               : id == 7  ? "命运：被外星人带走"
+                               : id >= 33 ? "命运：面临监禁"
+                                          : "命运：受伤住院");
+        result.value = days;
+        return result;
     }
     if (id == 8 || id == 9) {
         if (fortune_modifier(player, random, false, true) == 1)
@@ -727,7 +783,9 @@ EventResult apply_fortune_id(World &world, Random &random, std::size_t actor, st
         }
         if (id == 9)
             voice(callbacks, actor, 5);
-        return done(id, id == 8 ? "命运：损失一成股票" : "命运：全部股票被变卖");
+        auto result = done(id, id == 8 ? "命运：损失一成股票" : "命运：全部股票被变卖");
+        result.value = 10;
+        return result;
     }
     if (id == 10 || id == 11) {
         if (fortune_modifier(player, random, true, true) == 1)
@@ -749,7 +807,7 @@ EventResult apply_fortune_id(World &world, Random &random, std::size_t actor, st
         if (modifier == 1) {
             if (adverse)
                 voice_money(world, random, amount, actor, 12, callbacks);
-            return done(id, adverse ? "命运：神明阻止了损失" : "命运：奖励被神明阻止");
+            return done(id, adverse ? "命运：神明阻止了损失" : "命运：奖励被神明阻止", amount);
         }
         if (modifier == 2)
             amount = add(amount, amount);
@@ -763,7 +821,10 @@ EventResult apply_fortune_id(World &world, Random &random, std::size_t actor, st
                 insurance(world, actor, amount, callbacks);
             }
         }
-        return {true, id, std::string(adverse ? "命运：支付 " : "命运：获得 ") + std::to_string(amount)};
+        auto result = done(id, adverse ? "命运：支付 " : "命运：获得 ");
+        result.message += std::to_string(amount);
+        result.value = amount;
+        return result;
     }
     if (id == 32) {
         if (fortune_modifier(player, random, true, true) == 1)

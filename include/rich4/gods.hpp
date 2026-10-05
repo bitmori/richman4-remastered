@@ -19,6 +19,8 @@ struct Callbacks {
     std::function<std::uint32_t(std::uint16_t)> upgrade_property; // Original40b110 result bits.
     std::function<void(std::uint16_t)> downgrade_property;
     std::function<void(std::size_t, std::size_t, std::int32_t)> hostility;
+    // Presentation only: the god's arrival caption (object kind), after any bad-god speech.
+    std::function<void(std::size_t, std::uint8_t)> arrival;
 };
 struct Result {
     bool supported = true, applied = false, stop_movement = false;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -77,6 +78,17 @@ struct GameDecision {
     std::int32_t max_amount = 0;
 };
 
+// Original on-screen announcements (docs/ui/messages.md). Presentation only: emitting
+// them never changes a rule outcome or consumes random numbers.
+enum class Announcement : std::uint8_t {
+    none,
+    toll,              // Box before a toll: property, subject=owner, second=ally, amount, value=multiplier.
+    cash_insufficient, // "您的現金不足！" box when a buy/upgrade costs more than cash.
+    news,              // Full-screen news: id 0..35 plus body arguments.
+    fortune,           // Full-screen fortune: id 0..48 plus body arguments.
+    god_arrival,       // God attached: id = object kind (1..10, 12, 15).
+};
+
 struct GameEvent {
     GameEventKind kind;
     std::size_t player;
@@ -84,6 +96,12 @@ struct GameEvent {
     std::uint16_t node = 0;
     std::string message;
     std::optional<std::uint8_t> voice_category = std::nullopt;
+    Announcement announcement = Announcement::none;
+    std::uint8_t announcement_id = 0; // News/fortune handler, god kind or facility type (toll).
+    std::uint16_t property = 0;       // Original property code: 2000+land, 4000+facility.
+    std::int32_t subject = -1, second_subject = -1, company = -1, value = 0;
+    std::uint8_t players = 0; // Affected player slots (portrait rows).
+    std::array<std::int32_t, 4> player_amounts{};
 };
 
 struct MoveAnimation {
