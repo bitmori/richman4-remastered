@@ -420,10 +420,12 @@ struct GameSession::Impl {
                         const auto result = apply_card(world, random, actor(), *request, callbacks);
                         if (result.status == CardUseStatus::missing_callback)
                             throw UnsupportedRule{result.message};
-                        if (result.status == CardUseStatus::used)
+                        if (result.status == CardUseStatus::used) {
                             emit(GameEventKind::notice,
                                  std::string("电脑使用") +
                                      std::string(services::card_names.at(request->card_id - 1)));
+                            events.back().card = request->card_id;
+                        }
                     }
                 } else {
                     tools_ai::Callbacks callbacks;
@@ -1548,6 +1550,7 @@ struct GameSession::Impl {
         if (accepted) {
             (void)consume_card(entry.state.cards, world.card_supply, 20);
             events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id, "使用免费卡"});
+            events.back().card = 20;
         }
         (void)recipient;
         return accepted;
@@ -1604,6 +1607,7 @@ struct GameSession::Impl {
             (void)consume_card(entry.state.cards, world.card_supply, 19);
             events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id,
                               "使用嫁祸卡，目标是" + player_name(static_cast<std::size_t>(target))});
+            events.back().card = 19;
         }
         return target;
     }
@@ -1612,6 +1616,7 @@ struct GameSession::Impl {
         if (has_card(entry.state.cards, 21)) {
             (void)consume_card(entry.state.cards, world.card_supply, 21);
             events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id, "使用免罪卡"});
+            events.back().card = 21;
             return -1;
         }
         const auto redirected = try_frame_card(slot, 0);
@@ -3074,9 +3079,11 @@ bool GameSession::use_card(const CardUse &request) {
             impl_->last_action_accepted = result.used();
             if (result.status == CardUseStatus::missing_callback)
                 throw UnsupportedRule{result.message};
-            if (result.used())
+            if (result.used()) {
                 impl_->emit(GameEventKind::notice,
                             "使用" + std::string(services::card_names.at(request.card_id - 1)));
+                impl_->events.back().card = request.card_id;
+            }
         },
         true, false);
     return impl_->last_action_accepted || impl_->phase == GamePhase::awaiting_decision;

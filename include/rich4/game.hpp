@@ -84,6 +84,8 @@ struct GameEvent {
     std::uint16_t node = 0;
     std::string message;
     std::optional<std::uint8_t> voice_category = std::nullopt;
+    // Card id (1..30) when this event reports a card being used, for the card-art popup.
+    std::optional<std::uint8_t> card = std::nullopt;
 };
 
 struct MoveAnimation {
