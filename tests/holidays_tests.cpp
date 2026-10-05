@@ -38,6 +38,15 @@ void boundaries() {
             "Fallback does not guess a lunar new year beyond original table");
     require(!holidays::is_closed({2026, 11, 26}, 3, 0),
             "Fallback scope deliberately excludes nth-weekday calculation");
+    // fcn_00452444 presentation columns (0x47ff4f..0x47ff54): fireworks / Santa / music only.
+    require(holidays::celebration({2026, 1, 1}, 0, 0) == holidays::Celebration{523, 90, 0} &&
+                holidays::celebration({2026, 10, 10}, 0, 0) == holidays::Celebration{523, 90, 0} &&
+                holidays::celebration({2026, 10, 1}, 1, 0) == holidays::Celebration{523, 90, 0} &&
+                !holidays::celebration({2026, 10, 10}, 1, 0) && !holidays::celebration({2026, 10, 9}, 0, 0) &&
+                holidays::celebration({2026, 12, 25}, 3, 0) == holidays::Celebration{554, 114, 13} &&
+                !holidays::celebration({2026, 12, 25}, 0, 1) &&
+                holidays::celebration({2020, 1, 25}, 0, 0) == holidays::Celebration{0, 0, 14},
+            "Holiday celebration rows differ from the original table");
     require(holidays::loan_due_date({2026, 10, 5}, 0, 0) == calendar::Date{2027, 1, 4},
             "Ninety-day due date landing on Sunday advances to Monday");
     require(holidays::loan_due_date({2026, 7, 12}, 0, 0) == calendar::Date{2026, 10, 12},

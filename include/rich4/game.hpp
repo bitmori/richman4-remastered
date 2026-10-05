@@ -160,7 +160,24 @@ enum class EffectKind : std::uint8_t {
     demon_puff,        // Data 526, demon god downgraded the property at `target`
     bankrupt,          // Data 555
     money_spinner,     // computer/sleep-walking god slot machine (fcn_00440706); `spinner` set
-    roulette           // cupid wheel: computer spin, or the slow-down after a human STOP; `spinner` set
+    roulette,          // cupid wheel: computer spin, or the slow-down after a human STOP; `spinner` set
+    // ---- Board movies (docs/audit/data-400-601.md). `from` = the actor's old world point when the
+    // movie shows the actor leaving (drawn there until the commit frame), else unset. ----
+    ambulance,         // Data 524, hospitalised (rich4_hospital_utils.asm:92)
+    police,            // Data 538, jailed (rich4_prison_utils.asm:92)
+    dog_vehicle,       // Data 552, rode into the dog (core_actions:2919)
+    dog_fight,         // Data 532, met the dog on foot (core_actions:2945)
+    ufo,               // Data 533, abducted (object_kind 0) or returned (object_kind 1)
+    airplane,          // Data 558, left on a trip (object_kind 0) or returned (object_kind 1)
+    parachute,         // Data 559 + character, player placed on the board (fcn_0040829d/fcn_00418c55)
+    news_movie,        // Data 531/539/527/534/535 for news object_kind 4/5/15/20/21 at `target`
+    card_throw,        // Data 415 card flies `from` -> `target` (AI targeted cards, animate_object(0))
+    item_box,          // Data 536 spinning "?" before the random card square (core_actions:2507)
+    coupon,            // Data 537 spinning ticket before a point-coupon box (core_actions:2394)
+    truck_demolish,    // 工程車 pose 12 swing + Data 526 puff (player_utils state 3); object_kind =
+                       // facing direction, previous_level = building level before the demolition
+    holiday_fireworks, // Data 523 on New Year / national day (holiday table 0x47ff4c)
+    christmas          // Data 554 on Dec 25 (holiday table 0x47ff4c)
 };
 struct EffectPoint {
     std::int32_t x = 0, y = 0; // Original world coordinates (same space as board::Point).
@@ -179,6 +196,9 @@ struct EffectEvent {
     // effect, so the app can interleave drain_effects() with drain_events() in true order.
     std::size_t after_events = 0;
     std::optional<SpinnerState> spinner = std::nullopt; // money_spinner / roulette
+    // truck_demolish: `property` level and type (land chain flag / facility type) shown until the
+    // commit frame, i.e. the building before the rule demolished it.
+    std::uint8_t previous_level = 0, previous_type = 0;
     bool operator==(const EffectEvent &) const = default;
 };
 
@@ -208,6 +228,9 @@ class GameSession {
     [[nodiscard]] std::uint32_t random_state() const noexcept;
     [[nodiscard]] int steps_remaining() const noexcept;
     [[nodiscard]] std::uint64_t completed_days() const noexcept;
+    // Presentation only: 19 (hospital gown) or 20 (prison stripes) while a player pulled out of
+    // hospital/prison early still wears it (fcn_0040d761 -> fcn_0040bf93), else 0.
+    [[nodiscard]] std::uint8_t player_costume(std::size_t slot) const noexcept;
 
     // Returns false for input that does not apply to the current phase. option
     // is an index into pending_decision().options. Bank amount must be positive.

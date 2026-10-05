@@ -37,12 +37,16 @@ struct PlayerSprite {
     // Pre-roll toss pose (original movement state 2, rich4_player_utils.asm fcn_0040d7c4):
     // animation_frame then indexes the toss frames of the facing direction.
     bool tossing{};
+    // Original pose index forced over stand/walk (not toss): 12 construction-vehicle demolish swing,
+    // 19 hospital gown, 20 prison stripes (fcn_0040bf93). 0 = the normal pose.
+    std::uint8_t special_pose{};
 };
 
 // DATA.MKF entry the original loads for this player's current pose
 // (_rich4_update_player_sprite, rich4.asm ~5350): 0x80 + character * 21 + pose, where pose is
 // traffic * 3 + {0 stand, 1 walk, 2 toss}, 13/14/15 boat stand/walk/toss, 16/17 sleepwalk
-// (tossing on foot, +2), 18 injured.
+// (tossing on foot, +2), 18 injured, or special_pose (12, 19, 20) when set. A sleepwalking
+// player or actor also gets the Data 414 "ZZZ" object sprite above it (fcn_0040829d).
 [[nodiscard]] std::size_t player_resource(const PlayerSprite &player);
 
 struct ObjectSprite {

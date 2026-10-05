@@ -16,6 +16,13 @@ inline constexpr calendar::Date lunar_last_date{2020, 12, 31};
 // Original holiday tables, indexed by stage*4+map. Sunday is always closed.
 // Beyond the lunar table only original fixed Gregorian rules and Sunday apply.
 [[nodiscard]] bool is_closed(calendar::Date date, std::uint16_t map, std::uint16_t stage);
+// Presentation only: the day-change celebration of fcn_00452444 for the matching table row:
+// Data FLC + Effect sound (0 = none) played at (0,40), and the MIDI track (0 = none).
+struct Celebration {
+    std::uint16_t movie = 0, sound = 0, music = 0;
+    bool operator==(const Celebration &) const = default;
+};
+[[nodiscard]] std::optional<Celebration> celebration(calendar::Date date, std::uint16_t map, std::uint16_t stage);
 [[nodiscard]] calendar::Date loan_due_date(calendar::Date current, std::uint16_t map, std::uint16_t stage);
 
 } // namespace rich4::holidays

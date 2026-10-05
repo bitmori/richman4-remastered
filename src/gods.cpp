@@ -299,6 +299,8 @@ Result touch(World &world, Random &random, std::size_t actor, std::uint16_t id, 
         return missing("对象碰撞受伤规则尚未接入");
     if (kind == 11) {
         callbacks.remove_object(11);
+        if (callbacks.dog) // core_actions:2919/2945: vehicle movie, or the dust fight before the hospital
+            callbacks.dog(actor, player.state.traffic_method == 0);
         if (player.state.traffic_method == 0) {
             callbacks.hospital(actor, 3);
             return {true, true, true, "碰撞受伤住院"};

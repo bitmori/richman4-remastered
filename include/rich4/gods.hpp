@@ -24,6 +24,8 @@ struct Callbacks {
     std::function<void(std::size_t, std::uint8_t)> appeared;
     // Presentation only: the god's arrival caption (object kind), after any bad-god speech.
     std::function<void(std::size_t, std::uint8_t)> arrival;
+    // Presentation only: the dog (kind 11) was met, on foot (fight, then hospital) or riding.
+    std::function<void(std::size_t, bool)> dog;
 };
 struct Result {
     bool supported = true, applied = false, stop_movement = false;

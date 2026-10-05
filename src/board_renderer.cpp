@@ -176,7 +176,8 @@ std::size_t player_resource(const PlayerSprite &player) {
     }
     // State 2 (toss) has no injured artwork: the original never tosses with those flags.
     const unsigned action = player.tossing ? 2U : unsigned(player.walking);
-    const unsigned pose = player.injured        ? 18U
+    const unsigned pose = player.special_pose && !player.tossing ? unsigned(player.special_pose)
+                          : player.injured                       ? 18U
                           : player.sleepwalking ? (player.tossing ? 2U : 16U + action)
                           : player.on_water     ? 13U + action
                                                 : player.traffic_method * 3U + action;
@@ -383,6 +384,10 @@ RenderStats Renderer::render(graphics::Image &destination, const Scene &scene, c
         const auto direction = std::size_t((player.direction + 8 - camera.rotation) & 7);
         const auto frame = direction * frames_per_direction + player.animation_frame % frames_per_direction;
         enqueue(player.position, true, resource_index, frame, player.active ? 13 : 12);
+        if (player.sleepwalking) // object slot 19 (Data 414) at the same anchor, drawn right after
+            enqueue(player.position, true, 0x19eU,
+                    player.animation_frame % std::max<std::size_t>(1, impl_->resource(true, 0x19eU).layout.entries.size()),
+                    player.active ? 13 : 12);
     }
     for (const auto &actor : scene.special_players) {
         if (actor.slot < 4 || actor.slot > 8 || actor.direction > 7) {
@@ -400,6 +405,10 @@ RenderStats Renderer::render(graphics::Image &destination, const Scene &scene, c
         const auto direction = std::size_t((actor.direction + 8 - camera.rotation) & 7);
         enqueue(actor.position, true, index, direction * count + actor.animation_frame % count,
                 actor.active ? 13 : 12);
+        if (actor.sleepwalking && actor.slot < 8) // the same ZZZ marker (rich4.asm:1623)
+            enqueue(actor.position, true, 0x19eU,
+                    actor.animation_frame % std::max<std::size_t>(1, impl_->resource(true, 0x19eU).layout.entries.size()),
+                    actor.active ? 13 : 12);
     }
     for (const auto &object : scene.objects) {
         if (object.kind == 0 || object.kind > 20 || object.direction > 7) {

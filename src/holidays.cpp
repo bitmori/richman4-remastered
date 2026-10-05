@@ -145,12 +145,9 @@ std::optional<calendar::Date> lunar_date(calendar::Date date) {
     return calendar::unpack(run.first_date + static_cast<std::uint32_t>(day - run.first_day));
 }
 
-bool is_closed(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
-    if (map > 3 || stage > 1)
-        throw std::invalid_argument("Holiday map/stage is outside the original eight maps");
-    const auto weekday = calendar::weekday(date); // Also validates the date.
-    if (weekday == 0)
-        return true;
+namespace {
+// fcn_004521f0: index of the first table row matching `date` (rows flagged 0x80 never match).
+std::optional<std::size_t> find_row(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
     const auto lunar = lunar_date(date);
     auto compared = calendar::pack(date) & 0xffffU;
     for (const auto &rule : rules[stage * 4U + map]) {
@@ -177,9 +174,48 @@ bool is_closed(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
                 target = (std::uint32_t(rule.month) << 8U) | static_cast<std::uint32_t>(day);
         }
         if (compared == target && (rule.flags & 0x80U) == 0)
-            return rule.flags != 0;
+            return static_cast<std::size_t>(&rule - rules[stage * 4U + map].data());
     }
-    return false;
+    return std::nullopt;
+}
+// Presentation columns of the same table (0x47ff4f flags, 0x47ff50 FLC, 0x47ff52 sound,
+// 0x47ff54 MIDI) for the rows that have any: {block, row, flags, movie, sound, music}.
+struct Party {
+    std::uint8_t block, row, flags;
+    std::uint16_t movie, sound, music;
+};
+constexpr std::array<Party, 16> parties{{
+    {0, 0, 3, 523, 90, 0},   {0, 10, 3, 523, 90, 0}, {0, 15, 15, 554, 114, 13}, {0, 17, 4, 0, 0, 14},
+    {1, 0, 3, 523, 90, 0},   {1, 9, 3, 523, 90, 0},  {1, 10, 15, 554, 114, 13}, {1, 12, 4, 0, 0, 14},
+    {2, 0, 3, 523, 90, 0},   {2, 18, 15, 554, 114, 13}, {3, 1, 3, 523, 90, 0}, {3, 19, 15, 554, 114, 13},
+    {4, 7, 8, 0, 0, 0},      {5, 9, 8, 0, 0, 0},     {6, 12, 8, 0, 0, 0},        {7, 9, 8, 0, 0, 0},
+}};
+} // namespace
+
+bool is_closed(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
+    if (map > 3 || stage > 1)
+        throw std::invalid_argument("Holiday map/stage is outside the original eight maps");
+    const auto weekday = calendar::weekday(date); // Also validates the date.
+    if (weekday == 0)
+        return true;
+    const auto row = find_row(date, map, stage);
+    return row && rules[stage * 4U + map][*row].flags != 0;
+}
+
+std::optional<Celebration> celebration(calendar::Date date, std::uint16_t map, std::uint16_t stage) {
+    if (map > 3 || stage > 1)
+        throw std::invalid_argument("Holiday map/stage is outside the original eight maps");
+    (void)calendar::weekday(date); // validates the date
+    const auto row = find_row(date, map, stage);
+    if (!row)
+        return std::nullopt;
+    const auto block = stage * 4U + map;
+    for (const auto &party : parties)
+        if (party.block == block && party.row == *row && (party.flags & 5U))
+            return Celebration{(party.flags & 1U) ? party.movie : std::uint16_t{0},
+                               (party.flags & 1U) ? party.sound : std::uint16_t{0},
+                               (party.flags & 4U) ? party.music : std::uint16_t{0}};
+    return std::nullopt;
 }
 
 calendar::Date loan_due_date(calendar::Date current, std::uint16_t map, std::uint16_t stage) {

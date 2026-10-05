@@ -16,6 +16,7 @@
 #include "rich4/game.hpp"
 #include "rich4/world.hpp"
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -36,8 +37,12 @@ struct SceneData {
         return {players, objects, lands, facilities, special_players, commercials};
     }
 };
-// Same sprite construction as the main board (no walking interpolation).
-SceneData make_scene(const World &world, std::uint64_t ticks);
+// Original board draw rule (fcn_0040829d): a player is drawn when placed and not away or confined
+// (hotel/UFO/prison/hospital), unless walking into the hotel (controller 0x20).
+[[nodiscard]] bool on_board(const World &world, std::size_t slot);
+// Same sprite construction as the main board (no walking interpolation). costumes: per-slot
+// GameSession::player_costume (gown/stripes pose), 0 = none.
+SceneData make_scene(const World &world, std::uint64_t ticks, const std::array<std::uint8_t, 4> &costumes = {});
 
 // Per-kind playback table (values from docs/ui/effects.md §1-§6).
 struct EffectSpec {
@@ -48,6 +53,12 @@ struct EffectSpec {
     int sound_frame = 0;       // frame whose start plays `sound`
     unsigned hold_ms = 0;      // after the last frame (fcn_0045285e)
     bool camera_on_target = true; // false: camera stays on the actor (demon puff, throws)
+    int x = 0, y = 40;         // screen top-left of the movie (fcn_0045144f x, y)
+    // How the acting player is drawn under the movie, whatever the (already mutated) world says:
+    // leave = at EffectEvent::from until the commit frame, then not at all; stay = at `from`
+    // throughout; arrive = hidden until the commit frame; hide = hidden throughout.
+    enum class Actor : std::uint8_t { world, leave, stay, arrive, hide } actor = Actor::world;
+    bool injured = false; // the overridden actor uses the grey injured pose
 };
 EffectSpec effect_spec(const EffectEvent &effect);
 
@@ -61,6 +72,8 @@ class EffectPlayer {
     // Call once per frame before any session mutation can happen (start of draw). Only
     // records while idle; `owner` identifies the session so a new game never reuses it.
     void remember(const World &world, const void *owner, std::uint64_t ticks);
+    // Per-slot gown/stripes poses for the boards this player draws (GameSession::player_costume).
+    void set_costumes(const std::array<std::uint8_t, 4> &costumes) noexcept { costumes_ = costumes; }
     void enqueue(std::vector<EffectEvent> effects, const void *owner);
     [[nodiscard]] bool active() const noexcept { return current_.has_value() || !queue_.empty(); }
     void clear();
@@ -92,6 +105,7 @@ class EffectPlayer {
     std::optional<SceneData> snapshot_;
     const void *snapshot_owner_ = nullptr;
     std::map<std::pair<char, int>, std::vector<std::uint8_t>> movies_;
+    std::array<std::uint8_t, 4> costumes_{};
 };
 
 } // namespace rich4::native

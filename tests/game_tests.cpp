@@ -124,6 +124,19 @@ void dice_and_paths() {
     require(fallback.world().players[0].state.node_id == 2 && fallback.random_state() == once.state(),
             "fallback must return to last node without consuming randomness");
 }
+void parachute_marks_a_spawned_player() {
+    auto value = world();
+    auto &state = value.players[0].state;
+    value.nodes[state.node_id].flags &= ~0x100U;
+    state.x = state.y = 0;
+    state.character = 7;
+    rich4::GameSession game(std::move(value), 1);
+    const auto effects = game.drain_effects();
+    const auto &placed = game.world().players[0].state;
+    require(placed.x != 0 && !effects.empty() && effects[0].kind == rich4::EffectKind::parachute &&
+                effects[0].object_kind == 7 && effects[0].target.x == placed.x && effects[0].target.y == placed.y,
+            "spawned player must parachute onto the chosen node (fcn_00418c55)");
+}
 void dice_effect_is_presentation_only() {
     rich4::GameSession game(world(), 1), silent(world(), 1);
     require(game.roll_dice(), "human roll rejected");
@@ -971,6 +984,7 @@ int main() {
     try {
         dice_and_paths();
         dice_effect_is_presentation_only();
+        parachute_marks_a_spawned_player();
         tool_and_card_effects();
         property_and_rent();
         alliance_rent();
