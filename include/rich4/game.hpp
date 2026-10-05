@@ -92,6 +92,12 @@ enum class Announcement : std::uint8_t {
                        // 3 hospital, 4 hibernating; value = days left.
 };
 
+// Which original per-character speech table a bubble line comes from (docs/ui/messages.md §1.4).
+// event: _rich4_event_strings (voice_category); card: _rich4_card_strings, slot = row*30 + card-1
+// with row 0 the user, 1 the user targeting itself, 2 the victim; tool: _tool_strings, slot =
+// tool-1 for tools 1..13, 14 roadblock hit, 15 mine hit, 16 time bomb picked up.
+enum class SpeechTable : std::uint8_t { event, card, tool };
+
 struct GameEvent {
     GameEventKind kind;
     std::size_t player;
@@ -107,6 +113,11 @@ struct GameEvent {
     std::array<std::int32_t, 4> player_amounts{};
     // Card id (1..30) when this event reports a card being used, for the card-art popup.
     std::optional<std::uint8_t> card = std::nullopt;
+    // Card/tool speech bubble (presentation only, never draws randomness): `player` speaks
+    // table[character][speech_slot] with portrait mood `speech_mood` (the original call-site
+    // argument). Event-table speech keeps using voice_category.
+    SpeechTable speech_table = SpeechTable::event;
+    std::uint8_t speech_slot = 0, speech_mood = 0;
 };
 
 // Presentation-only record of an original on-board animation (docs/ui/effects.md §9). The rule

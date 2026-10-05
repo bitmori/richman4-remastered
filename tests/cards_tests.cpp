@@ -5,6 +5,8 @@
 #include <bit>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace {
 using namespace rich4;
@@ -301,6 +303,60 @@ void inventory_objects_stocks_and_tax() {
                 w.players[1].status.hostility[0] == 40,
             "tax hostility precedes redirect");
 }
+// Speech lines follow the original handlers' _rich4_player_say call order (docs/ui/messages.md §1.4).
+void speech_order() {
+    std::vector<std::string> log;
+    CardCallbacks cb;
+    cb.say = [&](auto speaker, auto row, auto card, auto mood) {
+        log.push_back("say " + std::to_string(speaker) + "/" + std::to_string(row) + "/" +
+                      std::to_string(card) + "/" + std::to_string(mood));
+    };
+    cb.voice = [&](auto slot, auto category) {
+        log.push_back("voice " + std::to_string(slot) + "/" + std::to_string(category));
+    };
+    cb.turn_around = [&](auto slot) { log.push_back("turn " + std::to_string(slot)); };
+    cb.passive_card = [&](auto slot, auto card) {
+        log.push_back("popup " + std::to_string(slot) + "/" + std::to_string(card));
+    };
+    const auto expect = [&](std::vector<std::string> wanted, const char *message) {
+        require(log == wanted, message);
+        log.clear();
+    };
+    auto w = fixture();
+    require(play(w, 6, CardTarget{CardTargetKind::actor, 1}, cb).used(), "turn card used");
+    expect({"say 0/0/6/3", "turn 1", "say 1/2/6/2"}, "turn card: user, then victim");
+    require(play(w, 6, CardTarget{CardTargetKind::actor, 0}, cb).used(), "self turn used");
+    expect({"say 0/0/6/3", "turn 0", "say 0/1/6/0"}, "turn card on self uses row 1");
+    w = fixture();
+    w.nodes[1].type_and_index = 2002;
+    cb.pay = [&](auto, auto, auto, auto) { log.push_back("pay"); };
+    require(play(w, 3, {}, cb).used(), "purchase used");
+    expect({"say 0/0/3/3", "pay", "say 1/2/3/1"}, "purchase: user, payment, seller");
+    w = fixture();
+    require(play(w, 4, CardTarget{CardTargetKind::property, 2002}, cb).used(), "exchange used");
+    expect({"say 0/0/4/3", "say 1/2/4/2"}, "favourable exchange: user and loser");
+    w = fixture();
+    w.lands[2].economy.level = 0;
+    require(play(w, 4, CardTarget{CardTargetKind::property, 2002}, cb).used(), "bad exchange used");
+    expect({}, "unfavourable exchange is silent");
+    w = fixture();
+    require(play(w, 11, CardTarget{CardTargetKind::property, 2002}, cb).used(), "monster used");
+    expect({"say 0/0/11/0", "say 1/2/11/1"}, "monster: user, then owner");
+    require(play(w, 14, CardTarget{CardTargetKind::actor, 0}, cb).used(), "self stop used");
+    expect({"say 0/1/14/3"}, "self stop says only row 1");
+    require(play(w, 14, CardTarget{CardTargetKind::actor, 4}, cb).used(), "actor stop used");
+    expect({"say 0/0/14/3"}, "special actor target has no victim line");
+    w = fixture();
+    w.players[1].state.cards = {18};
+    cb.add_prison = [&](auto slot, auto) { log.push_back("prison " + std::to_string(slot)); };
+    require(play(w, 17, CardTarget{CardTargetKind::actor, 1}, cb).used(), "frame used");
+    expect({"say 0/0/17/3", "prison 1", "say 1/2/17/1", "popup 1/18", "say 1/0/18/0", "say 0/2/18/2",
+            "prison 0"},
+           "frame with revenge: victim, then revenge popup and lines, then the user is jailed");
+    w = fixture();
+    require(play(w, 16, CardTarget{CardTargetKind::actor, 1}, cb).used(), "sleepwalk used");
+    expect({"say 0/0/16/3", "voice 1/21"}, "sleepwalk victim says event line 21");
+}
 } // namespace
 int main() {
     try {
@@ -309,6 +365,7 @@ int main() {
         buildings_and_street_effects();
         statuses_and_defense();
         inventory_objects_stocks_and_tax();
+        speech_order();
         std::cout << "cards tests passed\n";
     } catch (const std::exception &e) {
         std::cerr << e.what() << '\n';

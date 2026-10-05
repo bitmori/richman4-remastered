@@ -56,6 +56,12 @@ struct CardCallbacks : EventCallbacks {
     // Original 0x40a45c scan order and packed instance codes. Used by nearest-god
     // selection and computer predicates; presentation must not draw gameplay RNG.
     std::function<std::vector<std::uint16_t>(std::size_t)> nearby_instances;
+    // Presentation only, never draws randomness. `speaker` says _rich4_card_strings[character]
+    // [row][card-1] (row 0 user, 1 user targeting itself, 2 victim) with portrait mood `mood`,
+    // at the point where the original rich4_card_*.asm handler calls _rich4_player_say.
+    std::function<void(std::size_t speaker, std::uint8_t row, std::uint8_t card, std::uint8_t mood)> say;
+    // Presentation only: a passive card fires inside a card rule (復仇卡 18), for the card-art popup.
+    std::function<void(std::size_t holder, std::uint8_t card)> passive_card;
 };
 
 [[nodiscard]] bool active_card(std::uint8_t id) noexcept;

@@ -66,6 +66,10 @@ struct GameSession::Impl {
     std::vector<EffectEvent> effects; // Presentation only; truncated with events on rule replay.
     std::optional<CardTarget> chosen_card_target; // Last card target answered through choose_target.
     bool mine_pending = false;                    // gods::touch is resolving a mine (explosion picture).
+    // Card being played (presentation only): its monster/demolish picture plays between the user's
+    // and the owner's speech bubbles (rich4_card_guaishouka/chaichuka), else after the rule.
+    std::optional<CardUse> card_in_use;
+    bool card_picture_shown = false;
     unsigned phase_elapsed = 0;
     int remaining = 0;
     std::uint16_t next_node = 0;
@@ -186,6 +190,34 @@ struct GameSession::Impl {
         event.announcement_id = id;
         events.push_back(std::move(event));
         return events.back();
+    }
+    // Card/tool speech bubble (_rich4_player_say with a card or tool table line). Like the
+    // original, an absent speaker (disappeared, sleepwalking, hibernating) says nothing.
+    void speak(std::size_t slot, SpeechTable table, unsigned line, std::uint8_t mood) {
+        if (slot >= world.players.size())
+            return;
+        const auto &value = world.players[slot].status;
+        if (value.days_disappearing || value.days_sleep_walking || value.days_sleeping)
+            return;
+        GameEvent event{GameEventKind::notice, slot, 0, world.players[slot].state.node_id, {}};
+        event.speech_table = table;
+        event.speech_slot = static_cast<std::uint8_t>(line);
+        event.speech_mood = mood;
+        events.push_back(std::move(event));
+    }
+    void card_speech(std::size_t slot, unsigned row, std::uint8_t card, std::uint8_t mood) {
+        speak(slot, SpeechTable::card, row * 30 + card - 1U, mood);
+    }
+    void begin_card(const CardUse &use) {
+        chosen_card_target.reset();
+        card_in_use = use;
+        card_picture_shown = false;
+    }
+    void card_picture() {
+        if (!card_in_use || card_picture_shown)
+            return;
+        card_picture_shown = true;
+        card_effect(card_in_use->card_id, card_in_use->target);
     }
     void voice(std::size_t slot, std::uint8_t category) {
         events.push_back(
@@ -487,12 +519,12 @@ struct GameSession::Impl {
                     const auto callbacks = card_callbacks();
                     if (const auto request =
                             choose_ai_card(world, random, actor(), callbacks, &card_ai_memory)) {
-                        chosen_card_target.reset();
+                        begin_card(*request);
                         const auto result = apply_card(world, random, actor(), *request, callbacks);
                         if (result.status == CardUseStatus::missing_callback)
                             throw UnsupportedRule{result.message};
                         if (result.status == CardUseStatus::used) {
-                            card_effect(request->card_id, request->target);
+                            card_picture();
                             emit(GameEventKind::notice,
                                  std::string("电脑使用") +
                                      std::string(services::card_names.at(request->card_id - 1)));
@@ -661,9 +693,16 @@ struct GameSession::Impl {
                         bool &flag;
                         ~ClearMine() { flag = false; }
                     } clear_mine{mine_pending};
+                    const auto kind = world.objects.at(object - 1).kind;
                     const auto result =
                         gods::touch(world, random, actor(), object, remaining == 0, god_callbacks());
                     check_god(result);
+                    // rich4_player_core_actions: roadblock hit says tool line 14 (mood 1), a time
+                    // bomb picked up says line 16 (mood 2); the mine's line 15 is in hospital below.
+                    if (result.applied && kind == 16)
+                        speak(actor(), SpeechTable::tool, 14, 1);
+                    if (result.applied && kind == 18)
+                        speak(actor(), SpeechTable::tool, 16, 2);
                     if (result.stop_movement)
                         remaining = 0;
                 }
@@ -1658,8 +1697,10 @@ struct GameSession::Impl {
             (void)consume_card(entry.state.cards, world.card_supply, 20);
             events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id, "使用免费卡"});
             events.back().card = 20;
+            // _rich4_try_use_card_mianfeika: holder (mood 0), then the recipient if any (mood 1).
+            card_speech(slot, 0, 20, 0);
+            card_speech(recipient, 2, 20, 1);
         }
-        (void)recipient;
         return accepted;
     }
     int try_frame_card(std::size_t slot, unsigned mode, std::int32_t amount = 0) {
@@ -1715,6 +1756,9 @@ struct GameSession::Impl {
             events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id,
                               "使用嫁祸卡，目标是" + player_name(static_cast<std::size_t>(target))});
             events.back().card = 19;
+            // _rich4_try_use_card_jiahuoka: holder (mood 0), then the framed player (mood 2).
+            card_speech(slot, 0, 19, 0);
+            card_speech(static_cast<std::size_t>(target), 2, 19, 2);
         }
         return target;
     }
@@ -1724,6 +1768,8 @@ struct GameSession::Impl {
             (void)consume_card(entry.state.cards, world.card_supply, 21);
             events.push_back({GameEventKind::notice, slot, 0, entry.state.node_id, "使用免罪卡"});
             events.back().card = 21;
+            card_speech(slot, 0, 21, 0); // _rich4_use_card_mianzuika
+
             return -1;
         }
         const auto redirected = try_frame_card(slot, 0);
@@ -2118,8 +2164,10 @@ struct GameSession::Impl {
         };
         callbacks.game_over = [this] { return phase == GamePhase::finished; };
         callbacks.hospital = [this](auto slot, auto amount) {
-            if (mine_pending) // core_actions loc_0041be5f: Data 525 after the mine is removed.
+            if (mine_pending) { // core_actions loc_0041be5f: Data 525 after the mine is removed,
                 effect(EffectKind::explosion, slot, actor_point(slot));
+                speak(slot, SpeechTable::tool, 15, 1); // then tool line 15 (mood 1), then hospital.
+            }
             injure(slot);
             add_confinement(slot, amount, true);
         };
@@ -2287,6 +2335,16 @@ struct GameSession::Impl {
             return choose_target(choices, "选择要取得的卡片或道具");
         };
         callbacks.choose_facility_type = [this](auto slot) { return choose_facility_type(slot); };
+        callbacks.say = [this](auto slot, auto row, auto card, auto mood) {
+            if (row == 2 && (card == 11 || card == 12))
+                card_picture(); // The owner complains after the monster/demolish picture.
+            card_speech(slot, row, card, mood);
+        };
+        callbacks.passive_card = [this](auto slot, auto card) {
+            events.push_back({GameEventKind::notice, slot, 0, world.players.at(slot).state.node_id,
+                              "使用" + std::string(services::card_names.at(card - 1U))});
+            events.back().card = card;
+        };
         callbacks.try_free = [this](auto victim, auto owner, auto amount) {
             return try_free_card(victim, owner, amount);
         };
@@ -2479,6 +2537,7 @@ struct GameSession::Impl {
     tools::Callbacks tool_callbacks() {
         tools::Callbacks callbacks;
         callbacks.robot = [this](auto slot) { robot(slot); };
+        callbacks.say = [this](auto slot, auto line) { speak(slot, SpeechTable::tool, line, 0); };
         callbacks.restore_last_state = [this] { return restore_last_state(); };
         callbacks.remote_dice = [this](auto, unsigned amount) {
             forced_roll = amount;
@@ -3224,14 +3283,14 @@ bool GameSession::use_card(const CardUse &request) {
     impl_->last_action_accepted = true;
     impl_->run_rule(
         [this, request] {
-            impl_->chosen_card_target.reset();
+            impl_->begin_card(request);
             const auto result =
                 apply_card(impl_->world, impl_->random, impl_->actor(), request, impl_->card_callbacks());
             impl_->last_action_accepted = result.used();
             if (result.status == CardUseStatus::missing_callback)
                 throw UnsupportedRule{result.message};
             if (result.used()) {
-                impl_->card_effect(request.card_id, request.target);
+                impl_->card_picture();
                 impl_->emit(GameEventKind::notice,
                             "使用" + std::string(services::card_names.at(request.card_id - 1)));
                 impl_->events.back().card = request.card_id;
