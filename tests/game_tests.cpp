@@ -161,6 +161,20 @@ void property_and_rent() {
                 rent.world().players[1].status.cumulative_income == 150,
             "rent accounting differs");
     require(rent.world().lands[1].removed_building == 150, "last requested toll was not preserved");
+    {
+        // The original toll box (presentation only) comes before the payer/owner speech.
+        const auto events = rent.drain_events();
+        const auto box = std::find_if(events.begin(), events.end(), [](const auto &event) {
+            return event.announcement == rich4::Announcement::toll;
+        });
+        require(box != events.end() && box->property == 2001 && box->subject == 1 && box->player == 0 &&
+                    box->amount == 150 && box->second_subject == -1,
+                "toll announcement lacks land, owner or amount");
+        const auto paid = std::find_if(events.begin(), events.end(), [](const auto &event) {
+            return event.kind == rich4::GameEventKind::rent_paid;
+        });
+        require(paid != events.end() && box < paid, "toll announcement must precede the payment");
+    }
     value = world();
     property_nodes(value);
     value.lands[1].economy.owner_code = 2;

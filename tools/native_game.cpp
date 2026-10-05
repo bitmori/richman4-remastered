@@ -4,6 +4,7 @@
 #include "native_stock_names.hpp"
 #include "native_ui.hpp"
 #include "rich4/assets.hpp"
+#include "screens/messages.hpp"
 #include "rich4/board_renderer.hpp"
 #include "rich4/game.hpp"
 #include "rich4/services.hpp"
@@ -32,6 +33,7 @@
 namespace {
 using namespace rich4;
 namespace fs = std::filesystem;
+namespace messages = native::messages;
 using native::Artwork;
 using native::Button;
 using native::map_names;
@@ -189,6 +191,7 @@ class Application {
             inputs_.open(options_.output / "inputs.jsonl");
         }
         audio_ = std::make_unique<audio::Audio>(options_.assets);
+        messages_.set_instant(options_.auto_rounds != 0); // Headless replay never waits on a bubble.
         if (!audio_->music_available())
             std::cerr << audio_->music_diagnostic() << '\n';
     }
@@ -242,6 +245,12 @@ class Application {
                     if (!motion)
                         frame_.pointer_down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
                 }
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_RIGHT &&
+                    screen_ == Screen::game && session_ && !messages_.active() && session_->pending_decision() &&
+                    messages::is_yes_no(*session_->pending_decision())) {
+                    buttons_.clear();
+                    respond(yes_no_index(0)); // Right-click answers NO, like _rich4_ui_yesno.
+                }
                 if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
                     const int x = int(event.button.x), y = int(event.button.y);
                     for (const auto &button : buttons_)
@@ -264,6 +273,12 @@ class Application {
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK)
                     event.key.key = SDLK_ESCAPE; // system Back behaves like Escape
 #endif
+                if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && screen_ == Screen::game &&
+                    messages_.active() && !editing_amount_) {
+                    buttons_.clear();
+                    messages_.skip(); // Any key skips a bubble/box/news, as in the original.
+                    continue;
+                }
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
                     buttons_.clear();
                     if (editing_amount_) {
@@ -314,7 +329,8 @@ class Application {
                                      : static_cast<unsigned>(std::min<Uint64>(now - last_tick, 100)) * speed_;
             last_tick = now;
             if (session_ && screen_ == Screen::game) {
-                session_->tick(elapsed);
+                if (!messages_.active()) // The original game loop is blocked by every popup.
+                    session_->tick(elapsed);
                 observe();
                 if (session_->can_save() && last_autosaved_day_ != session_->completed_days()) {
                     write_save(options_.save_directory / "Autosave.DAT");
@@ -462,6 +478,7 @@ class Application {
         screen_ = Screen::game;
         last_autosaved_day_ = UINT64_MAX;
         bank_done_for_visit_ = false;
+        messages_.clear();
         observe();
     }
     bool load(const fs::path &path) {
@@ -506,10 +523,9 @@ class Application {
             ++event_counts_[event.kind];
             if (event.kind == GameEventKind::dice_rolled && event.player < dice_by_player_.size())
                 ++dice_by_player_[event.player];
+            if (auto item = messages::from_event(event, session_->world()))
+                messages_.push(std::move(*item)); // Voices play when their bubble appears.
             if (sound_effects_) {
-                if (event.voice_category && event.player < session_->world().players.size())
-                    audio_->play_voice(session_->world().players[event.player].state.character,
-                                       *event.voice_category);
                 switch (event.kind) {
                 case GameEventKind::dice_rolled:
                     audio_->play_sound(10);
@@ -561,6 +577,7 @@ class Application {
     }
     void draw() {
         buttons_.clear();
+        messages_.retire();
         canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
         frame_.ticks = SDL_GetTicks();
         if (screen_ == Screen::menu || screen_ == Screen::new_game ||
@@ -632,6 +649,14 @@ class Application {
         } else if (screen_ == Screen::trading) {
             draw_trading();
         }
+        std::string overlay_key;
+        if (screen_ == Screen::game && session_ && messages_.active()) {
+            const auto kind = messages_.current()->kind;
+            if (messages_.draw(frame_)) {
+                static constexpr std::array<const char *, 5> kinds{"bubble", "box", "news", "fortune", "god"};
+                overlay_key = std::string("overlay-") + kinds.at(static_cast<std::size_t>(kind));
+            }
+        }
         if (!toast_.empty() && SDL_GetTicks() < toast_until_) {
             ui::fill(canvas_, {210, 439, 430, 474}, ui::paper);
             ui::border(canvas_, {210, 439, 430, 474}, ui::blue);
@@ -649,6 +674,8 @@ class Application {
             if (screen_ == Screen::game && session_ && session_->pending_decision())
                 key = "decision-" + std::to_string(static_cast<int>(session_->pending_decision()->kind)) +
                       (selected_target_ ? "-selected" : "");
+            if (!overlay_key.empty()) // First few of each overlay kind, for visual review.
+                key = overlay_key + "-" + std::to_string(std::min(++overlay_captures_[overlay_key], 4U));
             if (captured_frames_.insert(key).second)
                 graphics::write_ppm(canvas_, options_.output / (key + ".ppm"));
         }
@@ -696,6 +723,8 @@ class Application {
                 center = player.position;
         if (target_center_ && session_->pending_decision())
             center = *target_center_;
+        if (const auto speaker = messages_.focus(); speaker && *speaker < world.players.size())
+            center = {world.players[*speaker].state.x, world.players[*speaker].state.y}; // Bubble speaker.
         board::Camera camera{center, static_cast<std::uint8_t>(rotation_)};
         current_camera_ = camera;
         std::vector<board::ObjectSprite> objects;
@@ -815,7 +844,7 @@ class Application {
                 100, {184, 128, 256, 195}, [this] { session_->roll_dice(); },
                 session_->phase() == GamePhase::human_ready);
         }
-        if (screen_ == Screen::game && session_->pending_decision())
+        if (screen_ == Screen::game && session_->pending_decision() && !messages_.active())
             draw_decision();
         if (session_->phase() == GamePhase::finished) {
             buttons_.clear();
@@ -1147,6 +1176,13 @@ class Application {
             draw_map_decision();
             return;
         }
+        if (messages::is_yes_no(decision)) {
+            // Original §2.2 question box + Data.mkf 440 strip; ids stay 210+option index.
+            const auto yes = yes_no_index(1), no = yes_no_index(0);
+            messages::draw_yes_no(frame_, messages::yes_no_question(decision, session_->world()), 210 + int(yes),
+                                  [this, yes] { respond(yes); }, 210 + int(no), [this, no] { respond(no); });
+            return;
+        }
         constexpr std::size_t page_size = 8;
         const bool multiple = decision.options.size() > 3;
         const int top = multiple ? 52 : 115, bottom = multiple ? 438 : 360;
@@ -1197,6 +1233,13 @@ class Application {
                 first + page_size < decision.options.size());
         }
     }
+    std::size_t yes_no_index(std::int32_t value) const {
+        const auto &options = session_->pending_decision()->options;
+        for (std::size_t i = 0; i < options.size(); ++i)
+            if (options[i].value == value)
+                return i;
+        return 0;
+    }
     void respond(std::size_t index) {
         const auto &decision = session_->pending_decision();
         if (!decision)
@@ -1245,6 +1288,8 @@ class Application {
                 throw std::runtime_error("Native UI replay could not load its initial save");
             return;
         }
+        if (screen_ == Screen::game && messages_.active())
+            return; // An overlay is showing for exactly this frame (instant mode); controls are covered.
         if (test_cancel_pending_) {
             if (session_->phase() != GamePhase::human_ready || session_->pending_decision() ||
                 session_->world().export_save() != test_cancel_save_ ||
@@ -1621,6 +1666,9 @@ class Application {
     std::unique_ptr<GameSession> session_;
     std::unique_ptr<board::Renderer> board_;
     std::unique_ptr<audio::Audio> audio_;
+    messages::Overlay messages_{{[this](std::size_t entry) { return sound_effects_ ? audio_->play_speech(entry) : 0U; },
+                                 [this] { audio_->stop_voice(); }}};
+    std::map<std::string, unsigned> overlay_captures_;
     graphics::Image canvas_;
     std::vector<Button> buttons_;
     native::Frame frame_{canvas_, artwork_, font_, buttons_};

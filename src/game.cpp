@@ -352,6 +352,21 @@ struct GameSession::Impl {
         const auto &value = status();
         if (value.days_in_hotel || value.days_disappearing || value.days_in_prison ||
             value.days_in_hospital || value.days_sleeping) {
+            // Original turn-start status (rich4.asm:6600-6757): bubble 19/20/21, then the box.
+            const int status_kind = value.days_in_hotel        ? 0
+                                    : value.days_disappearing ? 1
+                                    : value.days_in_prison    ? 2
+                                    : value.days_in_hospital  ? 3
+                                                              : 4;
+            const unsigned raw = status_kind == 0   ? value.days_in_hotel
+                                 : status_kind == 1 ? value.days_disappearing & 0x3fU
+                                 : status_kind == 2 ? value.days_in_prison
+                                 : status_kind == 3 ? value.days_in_hospital
+                                                    : value.days_sleeping;
+            if (status_kind >= 2)
+                voice(actor(), status_kind == 2 ? 19 : status_kind == 3 ? 20 : 21);
+            announce(Announcement::absent_status, actor(), static_cast<std::uint8_t>(status_kind)).value =
+                static_cast<std::int32_t>(raw & 0x7fU);
             emit(GameEventKind::notice, player_name(actor()) + "本回合休息");
             finish_turn();
         } else if (human() && !value.days_sleep_walking)
@@ -2867,6 +2882,8 @@ struct GameSession::Impl {
         } else if (kind >= 10 && kind <= 12) {
             const auto amount = kind == 10 ? 50 : kind == 11 ? 30 : 10;
             player().points = static_cast<std::uint16_t>(player().points + amount);
+            // The original shows the coupon box before the speech bubble.
+            announce(Announcement::point_coupon, actor()).amount = amount;
             if (kind == 10)
                 voice(actor(), static_cast<std::uint8_t>(random.next() & 1U));
             else if (kind == 11)

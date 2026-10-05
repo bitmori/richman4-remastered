@@ -133,6 +133,18 @@ inline bool contains(graphics::Rect rect, int x, int y) {
     return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
 }
 
+// Original _rich4_create_font styles: weight 700 (bold) unless flags==2, flags&1 drop shadow
+// in `effect` at (+1,+1), flags&4 four-direction outline in `effect` with the text at (+1,+1).
+struct TextStyle {
+    int size = 16;
+    std::uint16_t color = 0;
+    bool bold = false;
+    bool shadow = false;
+    bool outline = false;
+    std::uint16_t effect = 0;
+    int line_gap = 2; // GDI lines are `size` apart; a small gap keeps CJK lines legible.
+};
+
 class Font {
   public:
     explicit Font(const std::filesystem::path &path) {
@@ -194,6 +206,63 @@ class Font {
                 }
             }
             x += bitmap.advance;
+        }
+    }
+
+    // Multi-line text block: explicit '\n' breaks only (no wrapping), like DrawTextA
+    // without DT_WORDBREAK. Width/height include the bold and shadow/outline pixels.
+    struct Extent {
+        int width = 0, height = 0;
+    };
+    Extent measure_block(std::string_view text, const TextStyle &style) {
+        Extent extent;
+        const int extra = (style.bold ? 1 : 0) + (style.shadow ? 1 : 0) + (style.outline ? 2 : 0);
+        std::size_t start = 0;
+        int lines = 0;
+        while (true) {
+            const auto end = text.find('\n', start);
+            const auto line = text.substr(start, end == std::string_view::npos ? end : end - start);
+            extent.width = std::max(extent.width, measure(line, style.size) + extra);
+            ++lines;
+            if (end == std::string_view::npos)
+                break;
+            start = end + 1;
+        }
+        extent.height = lines * (style.size + style.line_gap) - style.line_gap + (style.shadow || style.outline ? 2 : 0);
+        return extent;
+    }
+    // Draws a block with its top-left at (x,y); centred=true centres each line in the block
+    // (DT_CENTER), otherwise lines are left-aligned.
+    void draw_block(graphics::Image &image, std::string_view text, int x, int y, const TextStyle &style,
+                    bool centred = false) {
+        const int block_width = centred ? measure_block(text, style).width : 0;
+        const int bold_extra = style.bold ? 1 : 0;
+        std::size_t start = 0;
+        for (int line_y = y;; line_y += style.size + style.line_gap) {
+            const auto end = text.find('\n', start);
+            const auto line = text.substr(start, end == std::string_view::npos ? end : end - start);
+            int line_x = x;
+            if (centred)
+                line_x += (block_width - measure(line, style.size) - bold_extra -
+                           (style.shadow ? 1 : 0) - (style.outline ? 2 : 0)) /
+                          2;
+            const auto stroke = [&](int dx, int dy, std::uint16_t colour) {
+                draw(image, line, line_x + dx, line_y + dy, style.size, colour);
+                if (style.bold)
+                    draw(image, line, line_x + dx + 1, line_y + dy, style.size, colour);
+            };
+            if (style.outline) {
+                for (const auto [dx, dy] : {std::pair{0, 1}, std::pair{2, 1}, std::pair{1, 0}, std::pair{1, 2}})
+                    stroke(dx, dy, style.effect);
+                stroke(1, 1, style.color);
+            } else {
+                if (style.shadow)
+                    stroke(1, 1, style.effect);
+                stroke(0, 0, style.color);
+            }
+            if (end == std::string_view::npos)
+                break;
+            start = end + 1;
         }
     }
 
