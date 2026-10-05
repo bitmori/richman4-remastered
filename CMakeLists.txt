@@ -11,7 +11,8 @@ set(RICH4_ORACLE_DIR "" CACHE PATH "Optional original EXE capture for differenti
 
 add_library(rich4_core src/assets.cpp src/graphics.cpp src/save.cpp src/calendar.cpp src/direction.cpp
   src/inventory.cpp src/economy.cpp src/random.cpp src/terrain.cpp src/board_renderer.cpp src/world.cpp src/game.cpp src/events.cpp
-  src/stocks.cpp src/services.cpp src/auction.cpp src/tools.cpp src/lottery.cpp src/holidays.cpp src/cards.cpp src/cards_ai.cpp src/gods.cpp src/tools_ai.cpp)
+  src/stocks.cpp src/services.cpp src/auction.cpp src/tools.cpp src/lottery.cpp src/holidays.cpp src/cards.cpp src/cards_ai.cpp src/gods.cpp src/tools_ai.cpp src/special_actors.cpp src/stocks_ai.cpp
+  src/trading.cpp src/world_validation.cpp)
 target_include_directories(rich4_core PUBLIC include)
 target_compile_options(rich4_core PRIVATE
   $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wsign-conversion>)
@@ -65,7 +66,7 @@ if(BUILD_TESTING)
   endif()
   add_executable(rich4-graphics-oracle tools/oracle/native_graphics.cpp)
   target_link_libraries(rich4-graphics-oracle PRIVATE rich4_core)
-  foreach(module assets graphics save calendar direction inventory economy random terrain board_renderer world game services auction events stocks tools lottery holidays cards cards_ai numeric gods tools_ai)
+  foreach(module assets graphics save calendar direction inventory economy random terrain board_renderer world game services auction events stocks tools lottery holidays cards cards_ai numeric gods tools_ai special_actors stocks_ai trading world_validation)
     add_executable(${module}_tests tests/${module}_tests.cpp)
     target_link_libraries(${module}_tests PRIVATE rich4_core)
     add_test(NAME ${module} COMMAND ${module}_tests)
@@ -83,6 +84,8 @@ if(BUILD_TESTING)
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_playability_tests.py)
     add_test(NAME native_fixture_tests
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_fixture_tests.py $<TARGET_FILE:rich4-native-fixture>)
+    add_test(NAME native_acceptance_tests
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_acceptance_tests.py)
   endif()
   if(RICH4_ORACLE_DIR)
     if(NOT Python3_Interpreter_FOUND)

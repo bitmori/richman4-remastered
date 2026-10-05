@@ -41,7 +41,8 @@ def verify_result(result, turns):
 
 
 def run(*, binary=DEFAULT_BINARY, game=Path.home() / "Downloads/rich4-original-game", turns=30,
-        seed=42, map_id=0, timeout=180, load=None, output=None):
+        seed=42, map_id=0, timeout=180, load=None, output=None, exercise_card=0, exercise_tool=0,
+        exercise_recovery=False, exercise_trading=False):
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
     output = Path(output) if output else REPO / "artifacts/native-playability" / run_id
     output = output.expanduser().resolve()
@@ -68,6 +69,14 @@ def run(*, binary=DEFAULT_BINARY, game=Path.home() / "Downloads/rich4-original-g
             command += ["--load", str(Path(load).expanduser().resolve())]
         else:
             command += ["--start-new"]
+        if exercise_card:
+            command += ["--exercise-card", str(exercise_card)]
+        if exercise_tool:
+            command += ["--exercise-tool", str(exercise_tool)]
+        if exercise_recovery:
+            command += ["--exercise-recovery"]
+        if exercise_trading:
+            command += ["--exercise-trading"]
         environment = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}
         report["command"] = command
         with (output / "application.log").open("w") as log:
@@ -78,6 +87,16 @@ def run(*, binary=DEFAULT_BINARY, game=Path.home() / "Downloads/rich4-original-g
         if completed.returncode != 0:
             raise RuntimeError(f"Native application exited with {completed.returncode}; see application.log and gameplay evidence")
         verify_result(report["gameplay"], turns)
+        for requested, key in ((exercise_card, "card_ids_used"), (exercise_tool, "tool_ids_used")):
+            if requested and requested not in report["gameplay"].get(key, []):
+                raise RuntimeError(f"Requested interaction {key} ID {requested} was not performed")
+        if exercise_recovery and not all(report["gameplay"].get(key) is True for key in
+                                         ("invalid_load_recovered", "batched_cancel_recovered")):
+            raise RuntimeError("Invalid-load and batched-cancel recovery were not verified")
+        if exercise_trading:
+            for key in ("offers_posted", "offers_cancelled", "offers_bought"):
+                if type(report["gameplay"].get(key)) is not int or report["gameplay"][key] < 1:
+                    raise RuntimeError(f"Player trading action was not verified: {key}")
         for name in ("before.DAT", "after.DAT", "before.ppm", "after.ppm", "events.jsonl"):
             path = app_output / name
             if not path.is_file() or path.stat().st_size == 0:
@@ -115,11 +134,17 @@ def main():
     parser.add_argument("--map", type=int, choices=range(8), default=0)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--exercise-card", type=int, choices=range(1, 31), default=0)
+    parser.add_argument("--exercise-tool", type=int, choices=range(1, 14), default=0)
+    parser.add_argument("--exercise-recovery", action="store_true")
+    parser.add_argument("--exercise-trading", action="store_true")
     args = parser.parse_args()
     if args.turns < 1 or args.timeout < 1:
         parser.error("turns and timeout must be positive")
     return run(binary=args.binary, game=args.game, turns=args.turns, seed=args.seed, map_id=args.map,
-               timeout=args.timeout, load=args.load, output=args.output)
+               timeout=args.timeout, load=args.load, output=args.output,
+               exercise_card=args.exercise_card, exercise_tool=args.exercise_tool,
+               exercise_recovery=args.exercise_recovery, exercise_trading=args.exercise_trading)
 
 
 if __name__ == "__main__":
