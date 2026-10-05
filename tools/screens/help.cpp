@@ -48,7 +48,9 @@ const std::array<Category, 8> &categories() {
 constexpr int window_size = 400;
 constexpr std::size_t lines_per_page = 14; // fcn_0044dd9f stops after line index 13
 constexpr unsigned visible_topics = 8;
-const Style text_style{12, 0x101010, 0x101010, shadow}; // rich4_create_font(12, 101010, 101010, 1)
+// rich4_create_font(12, 101010, 101010, 1): the original same-colour 1 px shadow only thickened a
+// bitmap 細明體; with an outline font scaled 2-3x on a phone it reads as a blurry double image.
+const Style text_style{12, 0x101010, 0x101010, 0};
 const Style topic_style{15, 0x101010, 0x101010, bold};  // rich4_create_font(15, 101010, 101010, 2)
 
 } // namespace
