@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <string>
 #include <stdexcept>
 #include <vector>
 
@@ -47,6 +48,7 @@ class Archive {
   private:
     std::vector<std::uint8_t> bytes_;
     std::vector<EntryInfo> entries_;
+    std::string trace_name_; // archive file name, for the optional RICH4_ASSET_TRACE log
     void read_index();
 };
 

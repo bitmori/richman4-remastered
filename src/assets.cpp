@@ -9,8 +9,10 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -191,7 +193,9 @@ void check_output_limit(std::size_t size, std::size_t maximum) {
 
 } // namespace
 
-Archive::Archive(const std::filesystem::path &path) : Archive(read_file(path)) {}
+Archive::Archive(const std::filesystem::path &path) : Archive(read_file(path)) {
+    trace_name_ = path.filename().string();
+}
 
 Archive::Archive(std::vector<std::uint8_t> bytes) : bytes_(std::move(bytes)) {
     read_index();
@@ -235,6 +239,14 @@ const EntryInfo &Archive::metadata(std::size_t index) const {
 }
 
 std::vector<std::uint8_t> Archive::decode(std::size_t index, std::size_t max_output_bytes) const {
+    // Debug aid for asset-coverage audits: RICH4_ASSET_TRACE=FILE appends "archive entry" per decode.
+    static const char *trace_path = std::getenv("RICH4_ASSET_TRACE");
+    if (trace_path && !trace_name_.empty()) {
+        static std::mutex trace_mutex;
+        const std::lock_guard lock(trace_mutex);
+        static std::ofstream trace(trace_path, std::ios::app);
+        trace << trace_name_ << ' ' << index << '\n';
+    }
     const auto &entry = metadata(index);
     check_output_limit(entry.decoded_size, max_output_bytes);
     const auto stored = std::span<const std::uint8_t>(bytes_).subspan(
