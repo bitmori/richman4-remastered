@@ -96,6 +96,9 @@ EffectSpec effect_spec(const EffectEvent &effect) {
         return {'d', 526, 3, 95, 0, 0, false};
     case EffectKind::bankrupt: // §6 rich4_player_bankrupt.asm, flags 1
         return {'d', 555, 0, 100, 0, 0, true};
+    case EffectKind::money_spinner: // drawn by screens/spinners.cpp, never queued here
+    case EffectKind::roulette:
+        return {'p', -1, 0, -1, 0, 0, false};
     }
     return {};
 }

@@ -405,8 +405,20 @@ void facilities_events_and_rescue() {
     require(shopping.pending_decision()->kind == rich4::DecisionKind::roulette,
             "department roulette missing");
     const auto prior = shopping.random_state();
+    require(shopping.pending_decision()->spinner && shopping.pending_decision()->spinner->type == 2 &&
+                shopping.pending_decision()->spinner->subject == 1,
+            "mall wheel state missing");
     shopping.tick(350);
+    const auto stopped_at = shopping.pending_decision()->spinner->cursor;
     require(shopping.respond(0), "roulette stop rejected");
+    const auto wheel_effects = shopping.drain_effects();
+    require(std::any_of(wheel_effects.begin(), wheel_effects.end(),
+                        [&](const auto &effect) {
+                            return effect.kind == rich4::EffectKind::roulette && effect.spinner &&
+                                   effect.spinner->phase == 2 && effect.spinner->cursor == stopped_at &&
+                                   effect.spinner->result > 0;
+                        }),
+            "wheel slow-down effect must follow STOP");
     require(shopping.world().players[0].state.cash < 100000 &&
                 shopping.world().players[1].state.bank_balance > 10000,
             "roulette did not charge the selected original multiplier");
@@ -493,6 +505,105 @@ void service_and_auction_choices() {
     require(!auction.pending_decision() && auction.world().news_cursor == 1 &&
                 auction.world().players[0].state.cash == 100000,
             "nested auction replay duplicated economic state or failed to complete");
+}
+// Presentation emitted before a NeedChoice (god entrance movie, bad-god speech, arrival caption) must
+// be drained BEFORE the spinner decision is answered, exactly once, and the rule outcome (world, RNG,
+// full event/effect stream) must be identical to the pre-fix core. Baselines were recorded from the
+// core before the presentation change (commit 3010f94).
+std::uint64_t fnv(std::uint64_t hash, std::string_view text) {
+    for (const unsigned char c : text)
+        hash = (hash ^ c) * 1099511628211ULL;
+    return hash;
+}
+void god_spinner_presentation_order() {
+    for (const std::uint8_t kind : {std::uint8_t{1}, std::uint8_t{5}}) {
+        auto value = world();
+        value.objects[0].kind = kind;
+        value.objects[0].node_id = 2;
+        value.nodes[2].flags |= 1U << 16;
+        rich4::GameSession god(value, 0);
+        first_landing(god);
+        require(god.pending_decision() && god.pending_decision()->kind == rich4::DecisionKind::money_spinner,
+                "god spinner decision missing");
+        const auto before_events = god.drain_events();
+        const auto before_effects = god.drain_effects();
+        god.tick(330);
+        require(god.respond(0), "god spinner Stop failed");
+        for (unsigned i = 0; i < 1000 && god.pending_decision(); ++i)
+            god.tick(30);
+        require(!god.pending_decision(), "god spinner did not finish");
+        const auto after_events = god.drain_events();
+        const auto after_effects = god.drain_effects();
+        std::uint64_t hash = 1469598103934665603ULL;
+        std::size_t appear = 0, arrival = 0;
+        for (const auto *list : {&before_events, &after_events})
+            for (const auto &event : *list) {
+                hash = fnv(hash, std::to_string(int(event.kind)) + ':' + std::to_string(event.player) + ':' +
+                                     std::to_string(event.amount) + ':' + event.message + ':' +
+                                     std::to_string(event.voice_category.value_or(255)) + ':' +
+                                     std::to_string(int(event.announcement)) + ';');
+                arrival += event.announcement == rich4::Announcement::god_arrival;
+            }
+        for (const auto *list : {&before_effects, &after_effects})
+            for (const auto &effect : *list) {
+                hash = fnv(hash, std::to_string(int(effect.kind)) + ':' + std::to_string(effect.object_kind) + ';');
+                appear += effect.kind == rich4::EffectKind::god_appear;
+            }
+        hash = fnv(hash, std::to_string(god.random_state()));
+        for (const auto &player : god.world().players)
+            hash = fnv(hash, std::to_string(player.state.cash) + ',' + std::to_string(player.state.bank_balance));
+        require(hash == (kind == 1 ? 11138929515763228672ULL : 5082774162140978962ULL),
+                "god spinner outcome or presentation stream differs from the pre-fix core");
+        require(appear == 1 && arrival == 1, "god entrance movie/caption must be delivered exactly once");
+        const auto movie = std::find_if(before_effects.begin(), before_effects.end(), [](const auto &effect) {
+            return effect.kind == rich4::EffectKind::god_appear;
+        });
+        require(movie != before_effects.end() && movie->object_kind == kind,
+                "god entrance movie must be drained before the spinner decision is answered");
+        const auto caption = std::find_if(before_events.begin(), before_events.end(), [](const auto &event) {
+            return event.announcement == rich4::Announcement::god_arrival;
+        });
+        require(caption != before_events.end() &&
+                    movie->after_events <= std::size_t(caption - before_events.begin()),
+                "arrival caption must follow the entrance movie, before the spinner");
+        if (kind == 5) { // rich4_gods.asm fcn_0040ef1b: player_say(22) BEFORE the FLC and caption
+            const auto speech = std::find_if(before_events.begin(), before_events.end(), [](const auto &event) {
+                return event.voice_category == 22;
+            });
+            require(speech != before_events.end() &&
+                        std::size_t(speech - before_events.begin()) < movie->after_events,
+                    "bad-god speech must precede the entrance movie");
+        }
+    }
+    // The decision mirrors the slot machine's reels; the AI spin is a presentation effect.
+    auto value = world();
+    value.objects[0].kind = 2;
+    value.objects[0].node_id = 2;
+    value.nodes[2].flags |= 1U << 16;
+    rich4::GameSession human(value, 0);
+    first_landing(human);
+    require(human.pending_decision()->spinner && human.pending_decision()->spinner->type == 2 &&
+                human.pending_decision()->spinner->phase == 0,
+            "money spinner decision must carry the slot-machine state");
+    human.tick(300);
+    require(human.pending_decision()->spinner->phase == 1 && human.pending_decision()->spinner->digits[3] < 20,
+            "money spinner reels not mirrored");
+    // A sleep-walking human (like a computer) gets the self-stopping machine as an effect whose
+    // replay from `seed` reproduces the amount the rule applied.
+    value.players[0].status.days_sleep_walking = 3;
+    rich4::GameSession walker(value, 0);
+    (void)walker.roll_dice();
+    for (unsigned i = 0; i < 20000 && walker.world().players[0].status.god_info == 0; ++i)
+        walker.tick(1);
+    const auto effects = walker.drain_effects();
+    const auto spin = std::find_if(effects.begin(), effects.end(), [](const auto &effect) {
+        return effect.kind == rich4::EffectKind::money_spinner;
+    });
+    require(spin != effects.end() && spin->spinner && spin->spinner->type == 2, "auto money spinner effect missing");
+    rich4::Random replay(0);
+    replay.seed(spin->spinner->seed);
+    require(rich4::gods::auto_money(2, replay) == spin->spinner->result,
+            "money spinner effect must replay to the applied amount");
 }
 void native_actions_and_money_spinner() {
     auto value = world();
@@ -868,6 +979,7 @@ int main() {
         save_reload_and_deferred_spawn();
         facilities_events_and_rescue();
         service_and_auction_choices();
+        god_spinner_presentation_order();
         native_actions_and_money_spinner();
         loan_and_free_toll();
         special_financing();

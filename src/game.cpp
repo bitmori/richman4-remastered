@@ -1018,8 +1018,12 @@ struct GameSession::Impl {
         roulette_facility = id;
         roulette_cursor = random.next() % 12;
         roulette_elapsed = 0;
+        const SpinnerState wheel{static_cast<std::uint8_t>(entry.facility_type), {}, 1,
+                                 static_cast<std::uint8_t>(roulette_cursor), entry.owner_code - 1};
         if (!human() || status().days_sleep_walking) {
-            charge_facility(id, roulette_value(entry.facility_type, roulette_cursor + 51));
+            const auto multiplier = roulette_value(entry.facility_type, roulette_cursor + 51);
+            roulette_effect(wheel, multiplier); // fcn_0043f7c6 spins for computers too
+            charge_facility(id, multiplier);
             return;
         }
         decision = GameDecision{DecisionKind::roulette,
@@ -1029,6 +1033,7 @@ struct GameSession::Impl {
                                 entry.facility_type == 1 ? "转盘决定住宿天数，按停止选定"
                                                          : "转盘决定消费倍数，按停止选定",
                                 {{"停止转盘", 0}}};
+        decision->spinner = wheel;
         set_phase(GamePhase::awaiting_decision);
     }
     void rescue(std::size_t target, bool hospital, bool by_human) {
@@ -1108,10 +1113,30 @@ struct GameSession::Impl {
         }
         finish_turn();
     }
-    int choose_roulette(unsigned kind) {
+    // Presentation of a decided cupid wheel (fcn_0043f7c6): `wheel.phase` 1 = computer spin from
+    // `wheel.cursor`, 2 = slow-down after a human STOP at `wheel.cursor`. No randomness drawn.
+    void roulette_effect(SpinnerState wheel, int value) {
+        wheel.result = value;
+        effect(EffectKind::roulette, actor(), actor_point(actor()));
+        effects.back().spinner = wheel;
+    }
+    void stopped_roulette_effect(const GameDecision &stopped, int value) {
+        if (!stopped.spinner)
+            return;
+        auto wheel = *stopped.spinner;
+        wheel.cursor = static_cast<std::uint8_t>(roulette_cursor);
+        wheel.phase = 2; // STOP pressed: cupid shoots, the wheel slows down onto `value`
+        roulette_effect(wheel, value);
+    }
+    int choose_roulette(unsigned kind, std::size_t company) {
         const auto initial = random.next() % 12;
-        if (!human() || status().days_sleep_walking)
-            return roulette_value(kind, static_cast<unsigned>(initial) + 51);
+        const SpinnerState wheel{static_cast<std::uint8_t>(kind), {}, 1, static_cast<std::uint8_t>(initial),
+                                 static_cast<std::int32_t>(company)};
+        if (!human() || status().days_sleep_walking) {
+            const auto value = roulette_value(kind, static_cast<unsigned>(initial) + 51);
+            roulette_effect(wheel, value);
+            return value;
+        }
         const auto key = choice_sequence++;
         const auto answer = event_choices.find(key);
         if (answer != event_choices.end())
@@ -1119,9 +1144,9 @@ struct GameSession::Impl {
         roulette_kind = kind;
         roulette_cursor = static_cast<unsigned>(initial);
         roulette_elapsed = 0;
-        throw NeedChoice{
-            GameDecision{DecisionKind::roulette, actor(), 0, 0, "按停止选定转盘结果", {{"停止转盘", 0}}},
-            key};
+        GameDecision prompt{DecisionKind::roulette, actor(), 0, 0, "按停止选定转盘结果", {{"停止转盘", 0}}};
+        prompt.spinner = wheel;
+        throw NeedChoice{std::move(prompt), key};
     }
     std::uint16_t company_construction_target() {
         if (human()) {
@@ -1209,7 +1234,7 @@ struct GameSession::Impl {
             if (company.owner_code) {
                 const auto type = company.commerce_type;
                 if (type == 4) {
-                    const auto duration = choose_roulette(3);
+                    const auto duration = choose_roulette(3, id);
                     status().days_assurance =
                         static_cast<std::uint8_t>((status().days_assurance + duration) & 0x7f);
                     if (!own)
@@ -1228,7 +1253,7 @@ struct GameSession::Impl {
                         toll = multiply32(1000, world.header.price_index);
                 } else if (!own) {
                     if (type == 1) {
-                        absence = choose_roulette(0);
+                        absence = choose_roulette(0, id);
                         toll = multiply32(multiply32(company.toll_fee, absence), world.header.price_index);
                         if (!absence)
                             voice(actor(), 2);
@@ -2072,8 +2097,17 @@ struct GameSession::Impl {
             emit(GameEventKind::notice, result.message);
     }
     std::int32_t choose_god_money(std::uint8_t kind) {
-        if (!human() || status().days_sleep_walking)
-            return gods::auto_money(kind, random);
+        if (!human() || status().days_sleep_walking) {
+            // fcn_0043f23e also shows the slot machine for computer/sleep-walking players (it
+            // stops itself after 40 frames): the app replays it from the same random state.
+            SpinnerState shown{kind, {}, 1, 0, -1, random.state(), 0};
+            const auto amount = gods::auto_money(kind, random);
+            shown.result = amount;
+            effect(EffectKind::money_spinner, actor(), actor_point(actor()));
+            effects.back().object_kind = kind;
+            effects.back().spinner = shown;
+            return amount;
+        }
         const auto key = choice_sequence++;
         if (const auto answer = event_choices.find(key); answer != event_choices.end()) {
             random.seed(choice_random_states.at(key));
@@ -2082,8 +2116,9 @@ struct GameSession::Impl {
         money_spinner.emplace(kind);
         spinner_random.seed(random.state());
         spinner_elapsed = 0;
-        throw NeedChoice{
-            GameDecision{DecisionKind::money_spinner, actor(), 0, 0, "按停止决定金额", {{"停止", 1}}}, key};
+        GameDecision prompt{DecisionKind::money_spinner, actor(), 0, 0, "按停止决定金额", {{"停止", 1}}};
+        prompt.spinner = SpinnerState{kind, {}, 0}; // phase 0: machine drawn, reels not started
+        throw NeedChoice{std::move(prompt), key};
     }
     std::uint32_t upgrade_for_god(std::uint16_t code) {
         unsigned before = 0, after = 0, maximum = 5;
@@ -2504,8 +2539,45 @@ struct GameSession::Impl {
         };
         return callbacks;
     }
+    // ---- Pre-choice presentation (god entrance movie before the spinner, etc.) ----
+    // A rule that needs a human answer throws NeedChoice and is re-run from its checkpoint once the
+    // answer is known. Everything it emitted BEFORE the throw is deterministic (same world, same
+    // random state, answer not yet read), so it is delivered right away, ahead of the decision, as
+    // the original shows it; the re-run emits it again and those copies are dropped here.
+    struct DeliveredPresentation {
+        std::vector<GameEvent> events;
+        std::vector<EffectEvent> effects; // compared without after_events (drain-relative)
+    };
+    // Removes, from this attempt's output events[event_count..] / effects[effect_count..], the
+    // in-order copies of what earlier attempts already delivered. If the copies are not all found
+    // (a replay that diverged), nothing is removed: presentation may repeat but is never lost.
+    void drop_replayed(std::size_t event_count, std::size_t effect_count, const DeliveredPresentation &shown) {
+        std::vector<std::size_t> removed;
+        for (std::size_t i = event_count; i < events.size() && removed.size() < shown.events.size(); ++i)
+            if (events[i] == shown.events[removed.size()])
+                removed.push_back(i);
+        if (!removed.empty() && removed.size() == shown.events.size()) {
+            for (auto it = removed.rbegin(); it != removed.rend(); ++it)
+                events.erase(events.begin() + static_cast<std::ptrdiff_t>(*it));
+            for (std::size_t i = effect_count; i < effects.size(); ++i)
+                effects[i].after_events -= static_cast<std::size_t>(
+                    std::lower_bound(removed.begin(), removed.end(), effects[i].after_events) - removed.begin());
+        }
+        removed.clear();
+        const auto same = [](EffectEvent a, const EffectEvent &b) {
+            a.after_events = b.after_events;
+            return a == b;
+        };
+        for (std::size_t i = effect_count; i < effects.size() && removed.size() < shown.effects.size(); ++i)
+            if (same(effects[i], shown.effects[removed.size()]))
+                removed.push_back(i);
+        if (!removed.empty() && removed.size() == shown.effects.size())
+            for (auto it = removed.rbegin(); it != removed.rend(); ++it)
+                effects.erase(effects.begin() + static_cast<std::ptrdiff_t>(*it));
+    }
     void run_rule(std::function<void()> action, bool first_attempt = true, bool finish_after = true,
-                  std::function<void()> on_success = {}) {
+                  std::function<void()> on_success = {},
+                  std::shared_ptr<const DeliveredPresentation> shown = nullptr) {
         if (first_attempt) {
             event_choices.clear();
             choice_random_states.clear();
@@ -2528,6 +2600,8 @@ struct GameSession::Impl {
         };
         try {
             action();
+            if (shown)
+                drop_replayed(event_count, effect_count, *shown);
             pending_continuation = {};
             event_choices.clear();
             choice_random_states.clear();
@@ -2544,11 +2618,24 @@ struct GameSession::Impl {
         } catch (const NeedChoice &choice) {
             // Nested fortune/card/auction choices replay a transaction with its
             // answers, never its mutations or already-consumed random draws.
+            // Its pre-choice presentation is kept (see DeliveredPresentation).
+            if (shown)
+                drop_replayed(event_count, effect_count, *shown);
+            std::vector<GameEvent> fresh_events(events.begin() + static_cast<std::ptrdiff_t>(event_count),
+                                                events.end());
+            std::vector<EffectEvent> fresh_effects(effects.begin() + static_cast<std::ptrdiff_t>(effect_count),
+                                                   effects.end());
             restore();
+            events.insert(events.end(), fresh_events.begin(), fresh_events.end());
+            effects.insert(effects.end(), fresh_effects.begin(), fresh_effects.end());
+            auto delivered = std::make_shared<DeliveredPresentation>(shown ? *shown : DeliveredPresentation{});
+            delivered->events.insert(delivered->events.end(), fresh_events.begin(), fresh_events.end());
+            delivered->effects.insert(delivered->effects.end(), fresh_effects.begin(), fresh_effects.end());
             decision = choice.decision;
             pending_choice_key = choice.key;
-            pending_continuation = [this, action, finish_after, on_success] {
-                run_rule(action, false, finish_after, on_success);
+            pending_continuation = [this, action, finish_after, on_success,
+                                    delivered = std::shared_ptr<const DeliveredPresentation>(std::move(delivered))] {
+                run_rule(action, false, finish_after, on_success, delivered);
             };
             set_phase(GamePhase::awaiting_decision);
         } catch (const UnsupportedRule &missing) {
@@ -2575,11 +2662,27 @@ struct GameSession::Impl {
         events.insert(events.begin() + static_cast<std::ptrdiff_t>(std::min(position, events.size())),
                       std::move(event));
     }
+    // The news/fortune screen is inserted ahead of its handler's output only once the handler has
+    // returned, so a handler that stops for a choice must not deliver its output early: it is
+    // dropped here and re-emitted (after the screen) when the rule re-runs with the answer.
+    template <class Handler> EventResult screen_first(Handler handler) {
+        const auto event_count = events.size();
+        const auto effect_count = effects.size();
+        try {
+            return handler();
+        } catch (const NeedChoice &) {
+            events.resize(event_count);
+            effects.resize(effect_count, EffectEvent{EffectKind::dice_roll});
+            throw;
+        }
+    }
     void resolve_event(bool news) {
         run_rule([this, news] {
             const auto position = events.size();
-            const auto result = news ? apply_news(world, random, event_callbacks())
-                                     : apply_fortune(world, random, actor(), event_callbacks());
+            const auto result = screen_first([&] {
+                return news ? apply_news(world, random, event_callbacks())
+                            : apply_fortune(world, random, actor(), event_callbacks());
+            });
             if (!result.supported)
                 throw UnsupportedRule{result.message};
             announce_event(news, actor(), result, position);
@@ -2649,7 +2752,7 @@ struct GameSession::Impl {
         services::MagicCallbacks callbacks;
         callbacks.fortune = [this](auto slot) {
             const auto position = events.size();
-            const auto result = apply_fortune(world, random, slot, event_callbacks());
+            const auto result = screen_first([&] { return apply_fortune(world, random, slot, event_callbacks()); });
             if (!result.supported)
                 throw UnsupportedRule{result.message};
             announce_event(false, slot, result, position);
@@ -3376,8 +3479,10 @@ bool GameSession::respond(std::size_t option, std::int32_t amount) {
         return true;
     }
     if (impl_->pending_continuation) {
-        if (decision.kind == DecisionKind::roulette)
+        if (decision.kind == DecisionKind::roulette) {
             value = Impl::roulette_value(impl_->roulette_kind, impl_->roulette_cursor + 12);
+            impl_->stopped_roulette_effect(decision, value); // shown before the re-run's output
+        }
         if (decision.kind == DecisionKind::primary_stock && value) {
             if (amount <= 0 || amount > decision.max_amount)
                 return false;
@@ -3469,7 +3574,9 @@ bool GameSession::respond(std::size_t option, std::int32_t amount) {
         impl_->finish_turn();
     } else if (decision.kind == DecisionKind::roulette) {
         const auto kind = impl_->world.facilities.at(decision.land_id).facility_type;
-        impl_->charge_facility(decision.land_id, Impl::roulette_value(kind, impl_->roulette_cursor + 12));
+        const auto multiplier = Impl::roulette_value(kind, impl_->roulette_cursor + 12);
+        impl_->stopped_roulette_effect(decision, multiplier);
+        impl_->charge_facility(decision.land_id, multiplier);
     } else if (decision.kind == DecisionKind::buy_facility ||
                decision.kind == DecisionKind::construct_facility ||
                decision.kind == DecisionKind::upgrade_facility) {
@@ -3501,6 +3608,10 @@ void GameSession::tick(unsigned elapsed_ms) {
             impl_->money_spinner->tick(impl_->spinner_random);
         }
         impl_->decision->amount = impl_->money_spinner->amount();
+        if (impl_->decision->spinner) { // presentation mirror of the reels (docs/ui/messages.md §2.3)
+            impl_->decision->spinner->digits = impl_->money_spinner->digits();
+            impl_->decision->spinner->phase = static_cast<std::uint8_t>(impl_->money_spinner->phase());
+        }
         if (impl_->money_spinner->finished()) {
             impl_->event_choices[impl_->pending_choice_key] = impl_->money_spinner->amount();
             impl_->choice_random_states[impl_->pending_choice_key] = impl_->spinner_random.state();
@@ -3513,10 +3624,14 @@ void GameSession::tick(unsigned elapsed_ms) {
     }
     if (impl_->phase == GamePhase::awaiting_decision && impl_->decision &&
         impl_->decision->kind == DecisionKind::roulette) {
+        // fcn_0043f7c6 advances the wheel one sector per 36 ms (0x24) frame until STOP. Timing only:
+        // the spin draws no randomness.
         impl_->roulette_elapsed += elapsed_ms;
-        impl_->roulette_cursor = (impl_->roulette_cursor + impl_->roulette_elapsed / 100) % 12;
-        impl_->roulette_elapsed %= 100;
+        impl_->roulette_cursor = (impl_->roulette_cursor + impl_->roulette_elapsed / 36) % 12;
+        impl_->roulette_elapsed %= 36;
         impl_->decision->amount = Impl::roulette_value(impl_->roulette_kind, impl_->roulette_cursor);
+        if (impl_->decision->spinner)
+            impl_->decision->spinner->cursor = static_cast<std::uint8_t>(impl_->roulette_cursor);
         return;
     }
     // Consume only as much elapsed time as the current animation needs. The

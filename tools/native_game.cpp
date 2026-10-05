@@ -18,6 +18,7 @@
 #include "rich4/world.hpp"
 #include "rich4/world_validation.hpp"
 #include "screens/effects.hpp" // EFFECTS: original board animations
+#include "screens/spinners.hpp" // SPINNERS: god slot machine / cupid wheels
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -41,6 +42,7 @@ namespace {
 using namespace rich4;
 namespace fs = std::filesystem;
 namespace messages = native::messages;
+namespace spinners = native::spinners;
 using native::Artwork;
 using native::Button;
 using native::map_names;
@@ -230,6 +232,7 @@ class Application {
         audio_ = std::make_unique<audio::Audio>(options_.assets);
         pad_.set_scale(options_.touch ? 2 : 1);
         effects_.set_skip(options_.auto_rounds && !options_.play_effects); // EFFECTS: replays stay zero-duration
+        spinners_.set_skip(options_.auto_rounds && !options_.play_effects); // SPINNERS: same as effects
         messages_.set_instant(options_.auto_rounds != 0); // Headless replay never waits on a bubble.
         main_screen_.set_skip_toss(options_.auto_rounds && !options_.play_effects); // replays stay fast
         items_.sound = [this](std::size_t effect) {
@@ -393,7 +396,8 @@ class Application {
                         screen_ == Screen::game && session_) {
                         if (session_->phase() == GamePhase::human_ready)
                             session_->roll_dice();
-                        else if (session_->pending_decision()) {
+                        else if (session_->pending_decision() && presentation_.empty() &&
+                                 !presenting()) { // never answer a decision that is not shown yet
                             if (map_decision()) {
                                 if (selected_target_)
                                     respond(*selected_target_);
@@ -416,8 +420,9 @@ class Application {
             const auto now = SDL_GetTicks();
             const unsigned elapsed =
                 options_.auto_rounds
-                    ? (options_.play_effects && session_ && // dev: real-time toss/dice frame strips
-                               (main_screen_.dice_busy() || session_->phase() == GamePhase::rolling)
+                    ? (options_.play_effects && session_ && // dev: real-time toss/dice/spinner frame strips
+                               (main_screen_.dice_busy() || session_->phase() == GamePhase::rolling ||
+                                (session_->pending_decision() && spinners::handles(*session_->pending_decision())))
                            ? 40
                            : 500)
                                      : static_cast<unsigned>(std::min<Uint64>(now - last_tick, 100)) * speed_;
@@ -740,6 +745,7 @@ class Application {
         last_autosaved_day_ = UINT64_MAX;
         bank_done_for_visit_ = false;
         messages_.clear();
+        spinners_.clear();
         presentation_.clear();
         presented_player_.reset();
         items_.reset();
@@ -791,13 +797,15 @@ class Application {
         std::optional<EffectEvent> effect;
     };
     bool presenting() const {
-        return main_screen_.dice_busy() || effects_.active() || messages_.active();
+        return main_screen_.dice_busy() || effects_.active() || messages_.active() || spinners_.active();
     }
     void pump_presentation() {
         while (session_ && !presentation_.empty() && !presenting()) {
             auto step = std::move(presentation_.front());
             presentation_.pop_front();
-            if (step.effect)
+            if (step.effect && spinners::handles(*step.effect))
+                spinners_.enqueue(std::move(*step.effect)); // SPINNERS: computer spin / wheel slow-down
+            else if (step.effect)
                 effects_.enqueue({std::move(*step.effect)}, session_.get()); // EFFECTS
             else
                 present(*step.event);
@@ -908,8 +916,11 @@ class Application {
                 picture(artwork_.frame('d', 1, 0), 0, 0);
         } else if (session_ && screen_ != Screen::new_game)
             draw_board();
-        if (session_ && screen_ == Screen::game && !items_.popup_active()) // card art plays before its movie
+        if (session_ && screen_ == Screen::game && !items_.popup_active()) { // card art plays before its movie
             draw_effects(); // EFFECTS: overlay after the board, before toasts
+            if (!effects_.active()) // SPINNERS: computer spins / wheel slow-down, in presentation order
+                spinners_.draw_effect(frame_, session_->world(), spinner_elapsed(), spinners::skip_button);
+        }
         if (screen_ == Screen::menu) {
             main_menu_.draw(host, {[this] {
                                        if (session_ && session_->phase() != GamePhase::finished)
@@ -978,6 +989,7 @@ class Application {
             ui::border(canvas_, {210, 439, 430, 474}, ui::blue);
             font_.draw(canvas_, toast_, 320 - font_.measure(toast_) / 2, 447);
         }
+        spinners_.finish_frame(); // SPINNERS: rattle loop only while a reel/wheel is visibly spinning
         const auto pixels = graphics::to_argb8888(canvas_);
         require(SDL_UpdateTexture(texture_.get(), nullptr, pixels.data(), 640 * 4));
         require(SDL_SetRenderDrawColor(renderer_.get(), 0, 0, 0, 255));
@@ -1026,6 +1038,12 @@ class Application {
             graphics::write_ppm(canvas_, options_.output / ("effect-" + std::to_string(effect_frames_++) + ".ppm"));
             effect_capture_ = now + 300;
         }
+    }
+    unsigned spinner_elapsed() { // SPINNERS: real time between frames (replays: 40 ms per frame)
+        const auto now = SDL_GetTicks();
+        const auto elapsed = spinner_ticks_ ? static_cast<unsigned>(std::min<Uint64>(now - spinner_ticks_, 100)) : 0;
+        spinner_ticks_ = now;
+        return options_.auto_rounds ? 40U : elapsed;
     }
     void draw_board() {
         const auto &world = session_->world();
@@ -1153,7 +1171,10 @@ class Application {
         actions.can_save = session_->can_save();
         actions.can_load = fs::exists(load_path());
         main_screen_.draw(frame_, *session_, rotation_, actions);
-        if (screen_ == Screen::game && session_->pending_decision() && !messages_.active())
+        // A decision appears only after everything emitted before it (e.g. a god's entrance movie and
+        // caption before its spinner) has been shown, as the original blocks until then.
+        if (screen_ == Screen::game && session_->pending_decision() && !messages_.active() &&
+            presentation_.empty() && !presenting())
             draw_decision();
         if (session_->phase() == GamePhase::finished) {
             buttons_.clear();
@@ -1358,6 +1379,10 @@ class Application {
         }
         if (items_.draw_decision(frame_, *session_, item_host()))
             return;
+        if (spinners::handles(decision)) { // SPINNERS: slot machine / cupid wheel; STOP keeps id 210
+            spinners_.draw_decision(frame_, session_->world(), decision, 210, [this] { respond(0); });
+            return;
+        }
         if (messages::is_yes_no(decision)) {
             // Original §2.2 question box + Data.mkf 440 strip; ids stay 210+option index.
             const auto yes = yes_no_index(1), no = yes_no_index(0);
@@ -1477,6 +1502,12 @@ class Application {
         }
         if (screen_ == Screen::game && messages_.active())
             return; // An overlay is showing for exactly this frame (instant mode); controls are covered.
+        if (session_->pending_decision() && (!presentation_.empty() || presenting()))
+            return; // The decision is not shown until its preceding presentation has played.
+        if (options_.play_effects && session_->pending_decision() && // dev strips: let the reels spin
+            spinners::handles(*session_->pending_decision()) && ++test_spinner_frames_ < 30)
+            return;
+        test_spinner_frames_ = 0;
         if (test_cancel_pending_) {
             if (session_->phase() != GamePhase::human_ready || session_->pending_decision() ||
                 session_->world().export_save() != test_cancel_save_ ||
@@ -2185,6 +2216,17 @@ class Application {
     std::unique_ptr<board::Renderer> board_;
     std::unique_ptr<audio::Audio> audio_;
     native::EffectPlayer effects_{artwork_}; // EFFECTS
+    spinners::Spinners spinners_{{[this](std::size_t id) { // SPINNERS
+                                      if (sound_effects_)
+                                          audio_->play_sound(id);
+                                  },
+                                  [this](std::size_t id) {
+                                      if (sound_effects_)
+                                          audio_->play_loop(id);
+                                  },
+                                  [this] { audio_->stop_loop(); }}};
+    Uint64 spinner_ticks_ = 0; // SPINNERS: last spinner effect draw time
+    unsigned test_spinner_frames_ = 0; // SPINNERS (--play-effects): frames shown before the replay STOP
     std::deque<PresentationStep> presentation_; // see observe()
     std::optional<std::size_t> presented_player_;
     Uint64 effect_ticks_ = 0;                // EFFECTS: last draw_effects() time

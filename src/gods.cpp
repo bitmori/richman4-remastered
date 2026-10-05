@@ -208,19 +208,17 @@ Result attach(World &world, Random &random, std::size_t actor, std::uint16_t id,
     player.status.god_luck_modifier = add16(player.status.god_luck_modifier, luck[kind]);
     player.status.money_fortune_modifier = add16(player.status.money_fortune_modifier, money[kind]);
     player.status.other_fortune_modifier = add16(player.status.other_fortune_modifier, physical[kind]);
+    // rich4_gods.asm jump table: bad gods (5..8, 15) first say line 22 (_rich4_player_say), THEN
+    // play the appearance FLC and the arrival caption (fcn_0040ef1b, 0040efe4, 0040f083, 0040f155,
+    // 0040f2eb); every other god plays FLC then caption. Presentation only: no randomness drawn.
+    const bool bad = kind == 5 || kind == 6 || kind == 7 || kind == 8 || kind == 15;
+    if (bad)
+        voice(callbacks, actor, 22);
     if (callbacks.appeared)
         callbacks.appeared(actor, kind);
-    const auto arrive = [&] {
-        if (callbacks.arrival)
-            callbacks.arrival(actor, kind);
-    };
-    if (kind != 5 && kind != 6 && kind != 7 && kind != 8 && kind != 15)
-        arrive();
+    if (callbacks.arrival)
+        callbacks.arrival(actor, kind);
     if (kind == 1 || kind == 5) {
-        if (kind == 5) {
-            voice(callbacks, actor, 22);
-            arrive();
-        }
         const auto amount = callbacks.choose_money(kind);
         for (std::size_t other = 0; other < world.players.size() && !ended(callbacks); ++other) {
             if (other == actor || !world.players[other].state.controller_flags)
@@ -248,24 +246,16 @@ Result attach(World &world, Random &random, std::size_t actor, std::uint16_t id,
         // Original speaks for current_player even when attach was called on another slot.
         prize_voice(random, callbacks, world.header.current_player, worth);
     } else if (kind == 6) {
-        voice(callbacks, actor, 22);
-        arrive();
         callbacks.pay(static_cast<std::int32_t>(actor), -1, callbacks.choose_money(kind), 0);
     } else if (kind == 7) {
-        voice(callbacks, actor, 22);
-        arrive();
         const auto count = card_count(player.state.cards);
         if (count) {
             const auto card = player.state.cards[random.next() % count];
             (void)consume_card(player.state.cards, world.card_supply, card);
         }
     } else if (kind == 8) {
-        voice(callbacks, actor, 22);
-        arrive();
         (void)drop_half_cards(player.state.cards, world.card_supply);
     } else if (kind == 15) {
-        voice(callbacks, actor, 22);
-        arrive();
         const auto traffic = player.state.traffic_method & 3U;
         if (traffic)
             ++player.state.tool_amounts[traffic == 3 ? 11 : traffic + 3];

@@ -237,7 +237,32 @@ The text style is the same for all three: `create_font(0x10, 0xf0f0f0, 0x101010,
   - `fcn_00440706`: slot machine `Panel.mkf 67` at (220,320).
   - `fcn_0044090e`: cupid wheel `Panel.mkf 68+k` at (220,320) and (265,230).
   - Both show texts such as `"%s附身\n\n送您..."` or `"%s的旅館\n\n請進來休息..."` in the box.
-  - Details belong to the god/service spinner spec (native `DecisionKind::money_spinner` / `roulette`).
+  - Native: `DecisionKind::money_spinner` / `roulette` (human) and `EffectKind::money_spinner` /
+    `roulette` (computer or sleep-walking spins, and the wheel's slow-down after STOP), drawn by
+    `tools/screens/spinners.cpp`.
+- **Slot machine** (`fcn_00440706(kind−1)` + loop `fcn_0043f23e`). Gods 小財神 1, 大財神 2,
+  小窮神 5, 大窮神 6 (rich4_gods.asm:582/667/863/932), after the appearance FLC and caption.
+  - Box 517:5 at (220,140), text mode 4: `"%s附身\n\n向所有對手收..."` (1), `"…送您..."` (2),
+    `"…付給每個人..."` (5), `"…損失..."` (6); `%s` = `_rich4_god_names[kind−1]`.
+  - Machine Panel 67 frame v opaque at (220,320), v = ((kind−1)&1)^1: frame 1 (3 reels) for kinds
+    1/5, frame 0 (4 reels) for 2/6. Lever 67:2 at (x,240), x = 317 (v 0) / 298 (v 1) (`0x475ce0`).
+  - Reels 67:(4+pos) opaque at y 320, x = 145,182,219,256 (v 0) / –,163,200,237 (v 1) (`0x475ce8`);
+    pos 0..19 = digit·2, odd = between digits.
+  - 30 ms frames. Every 10th frame while spinning re-randomises all reels (`rand()%10*2+1`). STOP =
+    any L/R mouse-up or key-up in phase 1 (human, not sleep-walking); computers stop at frame 40.
+    STOP draws the pulled lever 67:3 and plays Effect 1; phase 3 frame 4 restores 67:2. The reels
+    then stop right to left (slowing periods). Rattle: Effect 51 looped from start until the last
+    reel stops; then the box shows `"%d元"` for 40 frames (no skip).
+- **Cupid wheel** (`fcn_0044090e(type, name)` + loop `fcn_0043f7c6`). Types: 0 travel (company,
+  `"%s\n\n送您出國旅遊..."`), 1 hotel (`"%s的旅館\n\n請進來休息..."`, owner), 2 department store
+  (`"%s的購物中心\n\n您的消費倍數為..."`, owner), 3 insurance (`"%s\n\n您的投保天數為..."`, company).
+  - Wheel Panel (68+type):(2+cursor) at (220,320) (transparent), cupid frame 0 at (265,230).
+  - Initial cursor `rand()%12`; 36 ms frames, one sector per frame; Effect 52 looped.
+  - STOP (human click; computers at frame 40): cupid frame 1 (arrow shot) drawn over the wheel,
+    Effect 1. Slow-down: 3 sectors each every 1, 2, 3, 4 frames, then (period ≥ 5) stop on the first
+    non-empty sector of table `0x475d0c` (= core `roulette_value`); the loop sound stops; the result
+    holds 40 frames, a human click ends it. The caller then shows the toll box.
+  - Computers see both spinners as well; only a human (not sleep-walking) can stop or skip them.
 
 ### 2.4 Message box texts in normal play (all 1500 ms unless noted)
 
