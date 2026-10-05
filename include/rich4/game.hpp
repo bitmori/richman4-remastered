@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "rich4/save.hpp"
+
+namespace rich4 {
+
+class World;
+
+enum class GamePhase { human_ready, rolling, moving, awaiting_decision, advancing_turn, finished };
+enum class DecisionKind { buy_land, upgrade_land, bank, card_target, choose_card, rescue, buy_facility, construct_facility, upgrade_facility, roulette, shop, magic_category, magic_effect, auction, notice };
+enum class GameEventKind {
+    turn_started, dice_rolled, moved, land_purchased, land_upgraded, rent_paid,
+    bank_transfer, date_changed, points_received, player_bankrupt, game_finished,
+    unsupported_event, notice
+};
+
+struct DecisionOption {
+    std::string label;
+    std::int32_t value;
+};
+
+struct GameDecision {
+    DecisionKind kind;
+    std::size_t player;
+    std::uint16_t land_id = 0;
+    std::int32_t amount = 0;
+    std::string prompt;
+    std::vector<DecisionOption> options;
+};
+
+struct GameEvent {
+    GameEventKind kind;
+    std::size_t player;
+    std::int32_t amount = 0;
+    std::uint16_t node = 0;
+    std::string message;
+    std::optional<std::uint8_t> voice_category = std::nullopt;
+};
+
+struct MoveAnimation {
+    std::size_t player;
+    std::int32_t from_x, from_y, to_x, to_y;
+    unsigned elapsed_ms, duration_ms;
+};
+
+// Owns a portable World and a Watcom random stream. Window/audio code never
+// participates in the rule implementation. tick() changes animation timing;
+// rolling and path selection consume randomness only once per rule action.
+class GameSession {
+public:
+    explicit GameSession(World world, std::uint32_t seed = 1);
+    ~GameSession();
+    GameSession(GameSession&&) noexcept;
+    GameSession& operator=(GameSession&&) noexcept;
+    GameSession(const GameSession&) = delete;
+    GameSession& operator=(const GameSession&) = delete;
+
+    [[nodiscard]] const World& world() const noexcept;
+    [[nodiscard]] GamePhase phase() const noexcept;
+    [[nodiscard]] const std::optional<GameDecision>& pending_decision() const noexcept;
+    [[nodiscard]] const std::optional<MoveAnimation>& animation() const noexcept;
+    [[nodiscard]] const std::vector<std::uint8_t>& dice() const noexcept;
+    [[nodiscard]] std::uint32_t random_state() const noexcept;
+    [[nodiscard]] int steps_remaining() const noexcept;
+    [[nodiscard]] std::uint64_t completed_days() const noexcept;
+
+    // Returns false for input that does not apply to the current phase. option
+    // is an index into pending_decision().options. Bank amount must be positive.
+    bool roll_dice();
+    bool respond(std::size_t option, std::int32_t amount = 0);
+    void tick(unsigned elapsed_ms);
+    [[nodiscard]] std::vector<GameEvent> drain_events();
+
+    // Saving during an animation/decision is rejected, so a reload never loses
+    // an in-flight action. World handles all original byte-layout serialization.
+    [[nodiscard]] bool can_save() const noexcept;
+    [[nodiscard]] SaveFile export_save() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace rich4
