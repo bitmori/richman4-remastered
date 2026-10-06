@@ -1924,7 +1924,14 @@ class Application {
             auto host = make_host();
             const auto answer = [this](std::size_t index) { respond(index); };
             if (decision.kind == DecisionKind::lottery)
-                screens::draw_lottery(host, session_->world(), decision, answer);
+                screens::draw_lottery(host, session_->world(), decision, answer, &lottery_farewell_,
+                                      [this](bool picked) -> std::uint32_t { // ui_letou.asm:1227
+                                          if (!sound_effects_)
+                                              return 0;
+                                          if (picked)
+                                              audio_->play_sound(31);
+                                          return audio_->play_speech(picked ? 14 : 16);
+                                      });
             else
                 auction_room_.draw(host, session_->world(), decision, answer);
             return;
@@ -2033,20 +2040,12 @@ class Application {
                 : 0;
         const auto kind = decision->kind; // AUDIO: answer sounds below
         const auto value = index < decision->options.size() ? decision->options[index].value : 0;
-        const bool can_buy = std::any_of(decision->options.begin(), decision->options.end(),
-                                         [](const auto &option) { return option.value > 0; });
         if (!session_->respond(index, amount)) {
             toast_ = "金額、點數或持有數量不足";
             toast_until_ = SDL_GetTicks() + 2200;
             return false;
         }
-        if (sound_effects_ && kind == DecisionKind::lottery) { // ui_letou.asm:1227 pick 31, 拜拜！ 14 / 下次再來吧！ 16
-            if (value > 0) {
-                audio_->play_sound(31);
-                speak(14, false);
-            } else if (can_buy)
-                speak(16, false);
-        } else if (sound_effects_ && kind == DecisionKind::auction && value >= 1 && value <= 5)
+        if (sound_effects_ && kind == DecisionKind::auction && value >= 1 && value <= 5)
             audio_->play_sound(29); // ui_auction.asm:1776 bid
         return true;
     }
@@ -2680,6 +2679,18 @@ class Application {
         point(30 + 64 * 4 + 20, 271 + 48 + 20);
         decision_shot(world, lottery, "lottery");
         point(-1, -1);
+        { // after a pick: ring, wink and 拜拜！祝您中獎！ until the line is said
+            screens::LotteryFarewell farewell;
+            for (std::size_t i = 0; i < lottery.options.size(); ++i)
+                if (lottery.options[i].value == 14)
+                    farewell = {i, 13, SDL_GetTicks(), 0};
+            buttons_.clear();
+            canvas_ = graphics::make_canvas(640, 480, 0);
+            frame_.ticks = SDL_GetTicks();
+            auto host = make_host();
+            screens::draw_lottery(host, world, lottery, [](std::size_t) {}, &farewell);
+            graphics::write_ppm(canvas_, options_.gallery / "lottery-farewell.ppm");
+        }
         GameDecision auction{DecisionKind::auction, slot, 2001, 2500, "", {}};
         for (std::int32_t action = 0; action <= 6; ++action)
             auction.options.push_back({"", action});
@@ -3194,6 +3205,7 @@ class Application {
                                   },
                                   [this] { audio_->stop_loop(); }}};
     Uint64 spinner_ticks_ = 0; // SPINNERS: last spinner effect draw time (MONTHLY shares this clock)
+    screens::LotteryFarewell lottery_farewell_; // the bar stays up for 拜拜！祝您中獎！ after a pick
     Uint64 stock_card_hold_until_ = 0; // 紅卡 / 黑卡: market page held after the card took effect
     std::size_t stock_card_player_ = 0;
     Uint64 monthly_ticks_ = 0; // MONTHLY: last draw_monthly() time

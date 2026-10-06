@@ -232,8 +232,19 @@ class TradingBoard {
 
 // DecisionKind::lottery: Panel 12 bar with the 36-number board. Options are the free
 // numbers plus 离开 (value 0); hit ids stay 210 + option index.
+// After a pick (or leaving with a ticket still affordable) the original keeps the bar up: ring on
+// the number, the cat girl's wink (12:2) and 「拜拜！祝您中獎！」 (#0014) / 「下次再來吧！」 (#0016),
+// and only then closes. `farewell` holds that state; `goodbye(picked)` starts the sound/voice and
+// returns the voice length. Without them (or with host.instant) the answer is sent at once.
+struct LotteryFarewell {
+    std::optional<std::size_t> option;
+    int number = -1; // picked cell 0..35, -1 when leaving
+    std::uint64_t started = 0;
+    std::uint32_t voice_ms = 0;
+};
 void draw_lottery(Host &host, const World &world, const GameDecision &decision,
-                  const std::function<void(std::size_t)> &respond);
+                  const std::function<void(std::size_t)> &respond, LotteryFarewell *farewell = nullptr,
+                  const std::function<std::uint32_t(bool picked)> &goodbye = {});
 // DecisionKind::auction: Panel 26 room. Options are the legal AuctionAction values 0..6;
 // all seven original buttons are shown and illegal ones are ignored, as in the original.
 // Bidders show the original poses: 27+3c (bidding; frames 1..4,0 with the 26:1 starburst for about

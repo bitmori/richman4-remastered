@@ -422,13 +422,20 @@ const std::vector<graphics::Image> &neon_frames(Artwork &artwork) {
 } // namespace
 
 void draw_lottery(Host &host, const World &world, const GameDecision &decision,
-                  const std::function<void(std::size_t)> &respond) {
+                  const std::function<void(std::size_t)> &respond, LotteryFarewell *farewell,
+                  const std::function<std::uint32_t(bool picked)> &goodbye) {
     auto &frame = host.frame;
+    if (farewell && farewell->option && *farewell->option >= decision.options.size())
+        *farewell = {};
+    const bool leaving = farewell && farewell->option.has_value();
     backdrop(frame, 'p', 12, 0);
     if (const auto &neon = neon_frames(frame.artwork); !neon.front().pixels.empty())
         graphics::blit(frame.canvas, neon[(frame.ticks / 100) % neon.size()], 8, 8);
-    frame.picture('p', 12, 1, 210, -5);
-    if ((frame.ticks / 100) % 35 < 3) {
+    if (leaving)
+        frame.picture('p', 12, 2, 154, -8); // the wink (LT:1227)
+    else
+        frame.picture('p', 12, 1, 210, -5);
+    if (!leaving && (frame.ticks / 100) % 35 < 3) {
         constexpr std::array<std::size_t, 3> blink{3, 4, 3};
         frame.picture('p', 12, blink[(frame.ticks / 100) % 35], 273, 63);
     }
@@ -446,7 +453,9 @@ void draw_lottery(Host &host, const World &world, const GameDecision &decision,
     const auto slot = decision.player;
     const bool can_buy = std::any_of(decision.options.begin(), decision.options.end(),
                                      [](const auto &option) { return option.value > 0; });
-    const std::string line = can_buy ? "請圈選您的\n幸運號碼～" : "太可惜了！\n您的現金不足～";
+    std::string line = can_buy ? "請圈選您的\n幸運號碼～" : "太可惜了！\n您的現金不足～";
+    if (leaving)
+        line = farewell->number >= 0 ? "拜拜！\n祝您中獎！" : "下次再來吧！";
     frame.picture('p', 12, 8, 360, 20);
     text(frame, line, 498, 116, 4, {20, 0x101010, 0, bold});
     if ((frame.ticks / 150) % 2)
@@ -457,9 +466,29 @@ void draw_lottery(Host &host, const World &world, const GameDecision &decision,
         const auto owner = world.lottery_tickets[std::size_t(n)];
         if (owner)
             darken(frame.canvas, {31 + 64 * column, 272 + 48 * row, 93 + 64 * column, 318 + 48 * row}, -10);
-        if (owner == slot + 1)
+        if (owner == slot + 1 || (leaving && farewell->number == n))
             graphics::blit(frame.canvas, frame.artwork.frame('p', 12, 7), x + 32, y + 24);
     }
+    if (leaving) { // hold until the line is said (at least 2 s, fcn_0044ee18); a tap ends it early
+        const auto finish = [respond, farewell] {
+            const auto index = *farewell->option;
+            *farewell = {};
+            respond(index);
+        };
+        if (frame.ticks >= farewell->started + std::max<std::uint32_t>(2000, farewell->voice_ms)) {
+            finish();
+            return;
+        }
+        hit(host, 210 + int(*farewell->option), {0, 0, 640, 480}, click_sound, finish);
+        return;
+    }
+    const auto choose = [respond, farewell, goodbye, instant = host.instant, &frame](std::size_t index, int number) {
+        if (!farewell || instant) {
+            respond(index);
+            return;
+        }
+        *farewell = {index, number, frame.ticks, goodbye ? goodbye(number >= 0) : 0U};
+    };
     if (frame.pointer_in({30, 271, 606, 463})) {
         const int n = (frame.pointer_y - 271) / 48 * 9 + (frame.pointer_x - 30) / 64;
         if (n >= 0 && n < 36 && !world.lottery_tickets[std::size_t(n)] && can_buy)
@@ -475,10 +504,16 @@ void draw_lottery(Host &host, const World &world, const GameDecision &decision,
         }
         const int n = value - 1;
         hit(host, 210 + int(index), {30 + 64 * (n % 9), 271 + 48 * (n / 9), 94 + 64 * (n % 9), 319 + 48 * (n / 9)},
-            click_sound, [respond, index] { respond(index); });
+            click_sound, [choose, index, n] { choose(index, n); });
     }
     if (leave) // Tapping anywhere else leaves, like the original right-click (下次再來吧！).
-        hit(host, 210 + int(*leave), {0, 0, 640, 480}, cancel_sound, [respond, index = *leave] { respond(index); });
+        hit(host, 210 + int(*leave), {0, 0, 640, 480}, cancel_sound,
+            [choose, respond, index = *leave, can_buy] {
+                if (can_buy)
+                    choose(index, -1);
+                else
+                    respond(index); // 太可惜了！ is already on screen
+            });
 }
 
 // ---------------------------------------------------------------------------------------
