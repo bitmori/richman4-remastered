@@ -14,13 +14,45 @@ iPhone** 上执行原版的规则、画面、动画、音乐与语音。原版�
 > 只限你本人在自己的装置上使用，不得散布或上架。完整说明见 **[法律声明 NOTICE.md](NOTICE.md)**；
 > 第三方元件授权见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；引擎代码为 GPL-3.0-or-later（[LICENSE](LICENSE)）。
 
+## 致谢 / Acknowledgements
+
+**本项目建立在 [Iru Cai](https://github.com/mytbk)（mytbk / vimacs）的 [mytbk/rich4](https://github.com/mytbk/rich4)
+逆向工程之上，没有他的工作就不可能有这个移植。** 他从 2018 年起逆向《大富翁4》v3.11：找出数据文件的解压算法
+与存档格式，2021 年用 [r2dumpbin](https://github.com/mytbk/r2dumpbin) 把 `rich4.exe` 转成可修改、可重新链接的
+汇编，2025 年在 [rich4_asm](https://codeberg.org/vimacs/rich4_asm) 中加注解，并把 Watcom 运行库剥离到能用 MinGW
+重新生成可用的游戏。本项目的每一条规则、每个画面与动画时序，都是对照他公开的反汇编（GPL-3.0）逐一重写的。
+欢迎到 Matrix 聊天室 `#rich4re:matrixim.cc` 交流。
+
+**This port is built on [Iru Cai](https://github.com/mytbk)'s reverse-engineering work in
+[mytbk/rich4](https://github.com/mytbk/rich4) — it would not exist without it.** Since 2018 he decoded
+Richman 4 v3.11's archive compression and save format, turned `rich4.exe` into relinkable, modifiable
+assembly with r2dumpbin, annotated it in [rich4_asm](https://codeberg.org/vimacs/rich4_asm), and
+separated the Watcom runtime so the game rebuilds with MinGW. Every rule, screen and animation timing here
+was reimplemented by reading his published (GPL-3.0) disassembly. Thank you!
+
+## 状态与参与
+
+游戏**已可完整游玩**，但仍可能缺少部分原版动画序列、对白或其他游戏内容，或与原版有细微差异。欢迎提交
+Pull Request；合并前必须**实际试玩并附上可重现的结果**（地图、seed、测试存档与步骤、测试报告），规则见
+**[CONTRIBUTING.md](CONTRIBUTING.md)**。
+
+| 平台 | 测试状态 |
+| --- | --- |
+| macOS（Apple Silicon） | ✅ 已测试 |
+| Android | ✅ 真机（OnePlus 8）与模拟器 |
+| iOS | ✅ 模拟器（真机尚未测试） |
+| Windows | ⚠️ 尚未测试 Windows 建置 |
+
 目前状态、已知差异与验证证据见 **[项目状态](docs/STATUS.md)**；每个原版画面的规格见 [`docs/ui/`](docs/ui/)，
 素材覆盖审计见 [`docs/audit/`](docs/audit/)，规则迁移记录见 [迁移记录](docs/migrations/README.md)。
 
 ## 取得游戏素材
 
+**建置任何平台之前**，先把游戏文件放进 `game-assets/`。详细清单、目录示意与各平台指令见
+**[`game-assets/README.md`](game-assets/README.md)**。
+
 1. 在 Steam 购买并安装《大富翁4》（或使用你已拥有的原版光盘版）。
-2. 把游戏安装文件夹里的文件复制到本仓库根目录的 `game-assets/`（此目录已被 gitignore，绝不会提交）：
+2. 把游戏安装文件夹里的文件直接复制到本仓库根目录的 `game-assets/`（除了其中的 README，此目录内容已被 gitignore，绝不会提交）：
    - 必需：所有 `*.mkf`（`Data`、`Panel`、`map`、`Effect`、`Speaking`、`jump`、`help`）、`*.mid` 音乐、`*.wav`；
    - 建议：`rich4.exe`（只在建置时读取它的图标作为 App 图标；不会被执行，也不会打包）。
    - `*.avi` 过场不需要。

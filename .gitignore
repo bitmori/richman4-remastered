@@ -9,4 +9,5 @@ artifacts/
 __pycache__/
 /build/
 /CMakeUserPresets.json
-/game-assets
+/game-assets/*
+!/game-assets/README.md
