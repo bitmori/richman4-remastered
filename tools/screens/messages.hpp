@@ -68,6 +68,9 @@ struct Audio {
 // Draws the question box plus the Data.mkf 440 strip; registers YES/NO hits by id.
 void draw_yes_no(Frame &frame, std::string_view question, int yes_id, std::function<void()> yes, int no_id,
                  std::function<void()> no);
+// _rich4_ui_yesno(x, y) alone: the Data.mkf 440 strip centred at (x, y), the touched half lit.
+void draw_yes_no_strip(Frame &frame, int centre_x, int centre_y, int yes_id, std::function<void()> yes, int no_id,
+                       std::function<void()> no);
 // Original text modes of _rich4_draw_text: 0 top-left, 4 centre, 5 left/v-centre, 7 bottom-centre.
 void draw_text(Frame &frame, std::string_view text, int x, int y, int mode, const ui::TextStyle &style);
 

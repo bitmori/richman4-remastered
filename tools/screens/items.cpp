@@ -1359,22 +1359,19 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
         centred(frame, name_of(slot), text_x, ty + 26, 16, dark, false, dark, true);
         centred(frame, "保釋點數", text_x, ty + 48, 16, dark, false, dark, true);
         centred(frame, std::to_string(slot < 4 ? 30 : 300) + "點", text_x, ty + 70, 16, dark, false, dark, true);
-        // Touch stand-in for ui_yesno(320,240): a confirm strip.
-        const Rect panel = hospital ? Rect{20, 330, 280, 424} : Rect{190, 392, 530, 474};
-        frame.dialog(panel, "");
-        frame.centered((hospital ? "替" : "保釋") + name_of(slot) + (hospital ? "辦理出院？" : "？"),
-                       (panel.left + panel.right) / 2, panel.top + 10, 18, ui::ink);
-        const int mid = (panel.left + panel.right) / 2;
-        const auto index = option_of(decision, slot);
-        if (index)
-            frame.button(yes_id, {mid - 120, panel.top + 40, mid - 10, panel.bottom - 10}, "是",
-                         [confirm, slot, index = *index] { confirm(slot, index); });
-        frame.button(no_id, {mid + 10, panel.top + 40, mid + 120, panel.bottom - 10}, "否",
-                     [this] { rescue_.selected = -1; });
+        // _rich4_ui_yesno(320,240) (ui_hospital.asm:1313, ui_prison.asm:699): the YES/NO strip alone.
+        if (const auto index = option_of(decision, slot))
+            messages::draw_yes_no_strip(frame, 320, 240, yes_id, [confirm, slot, index = *index] { confirm(slot, index); },
+                                        no_id, [this] { rescue_.selected = -1; });
     }
-    if (leave)
-        frame.button(option_id + int(*leave), hospital ? Rect{110, 440, 260, 474} : Rect{20, 440, 170, 474},
-                     "離開", [host, index = *leave] { host.respond(index); });
+    if (leave) {
+        // The original leaves on a right-click; a phone has none, so the game's own EXIT button
+        // (Panel 10:35, pressed 10:36, as in the shops) stands in for it.
+        const Rect exit = hospital ? Rect{150, 436, 230, 476} : Rect{55, 436, 135, 476};
+        const bool down = frame.pointer_down && frame.pointer_in(exit);
+        keyed(frame, art(frame, 'p', 10, down ? 36 : 35), exit.left, exit.top);
+        frame.hit(option_id + int(*leave), exit, [host, index = *leave] { host.respond(index); });
+    }
     frame.hit(63, {0, 0, 640, 480}, [this] { rescue_.selected = -1; });
 }
 
