@@ -1,14 +1,71 @@
-# 大富翁 4：原生 C++ 移植
+# 大富翁 4（Richman 4）：原生 C++ 移植
 
-**2026-10-05 晚间更新：** 原版 UI 主要画面（工具栏、分页、小地图、气泡、选单、银行、股市、卡片道具、棋盘特效）已复刻，Android APK 可通过 `scripts/build_android.sh` 生成并侧载。
+把 1998 年的《大富翁4》重写成不依赖 Windows 的原生 C++20 引擎，在 **Mac（Apple Silicon）、Android 手机与
+iPhone** 上执行原版的规则、画面、动画、音乐与语音。原版的工具列、分页面板、小地图、对话气泡、银行、股市、
+卡片道具、神明、新闻、每月结算、三个小游戏与结局画面都已按原版程序与素材复刻，并针对触控做了少量调整
+（例如“点一下选择、再点一下确认”，以及原版只能用鼠标悬停或右键的地方）。
 
-完整状态与未完成项见 **[项目状态](docs/STATUS.md)**；当前 45/45 代码检查、30 天回放与 20/20 验收矩阵通过。
+> **⚠️ 本仓库不含游戏素材文件**（资源包、图片、音乐、语音、执行档）；只为重现原版界面而收录了对白与名称等文字摘录，
+> 其权利仍属大宇资讯。你必须自己合法拥有《大富翁4》才能执行本程序。
+> 请到 Steam 购买大宇资讯官方发行的正版：
+> **<https://store.steampowered.com/app/2059810/Richman_4/?l=tchinese>**
+>
+> 本项目与大宇资讯（SOFTSTAR ENTERTAINMENT INC.）无关。由本项目建置、内含你自己游戏素材的 APK / App
+> 只限你本人在自己的装置上使用，不得散布或上架。完整说明见 **[法律声明 NOTICE.md](NOTICE.md)**；
+> 第三方元件授权见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；引擎代码为 GPL-3.0-or-later（[LICENSE](LICENSE)）。
 
-双击 **`Play Rich4 Native.command`** 可构建并查看当前原生原型。原版 v3.11 的 Wine 环境保留作参考；Android 当前仍是早期核心测试，没有可玩的 APK。暂停期间不自动继续实现或重跑测试。
+目前状态、已知差异与验证证据见 **[项目状态](docs/STATUS.md)**；每个原版画面的规格见 [`docs/ui/`](docs/ui/)，
+素材覆盖审计见 [`docs/audit/`](docs/audit/)，规则迁移记录见 [迁移记录](docs/migrations/README.md)。
 
-新 `rich4_core` 使用 C++20，不依赖 Win32、x86 汇编、32 位进程或原版 EXE。已迁移资源、世界/存档、场景、回合、事件、卡片/道具效果、股票、商店、拍卖、彩票、假日与原版随机数；原版机器码仅供独立测试工具生成对照结果。
+## 取得游戏素材
 
-每个模块的来源、原地址、保持的行为、明确修正和验收证据见 [迁移记录](docs/migrations/README.md)。提交直接保存在本地 `main`，不推送、不创建 PR。
+1. 在 Steam 购买并安装《大富翁4》（或使用你已拥有的原版光盘版）。
+2. 把游戏安装文件夹里的文件复制到本仓库根目录的 `game-assets/`（此目录已被 gitignore，绝不会提交）：
+   - 必需：所有 `*.mkf`（`Data`、`Panel`、`map`、`Effect`、`Speaking`、`jump`、`help`）、`*.mid` 音乐、`*.wav`；
+   - 建议：`rich4.exe`（只在建置时读取它的图标作为 App 图标；不会被执行，也不会打包）。
+   - `*.avi` 过场不需要。
+3. 本项目以原版 v3.11 光盘版的文件验证（`scripts/audit_assets.py` 可检查）。Steam 版的文件尚未逐一比对；
+   若有不同，请回报。
+
+## 在 Mac 上玩
+
+```sh
+brew install cmake sdl3 freetype fluid-synth
+```
+
+双击 **`Play Rich4 Native.command`**（或执行 `./scripts/run_native_mac.sh`）。存档在
+`~/Library/Application Support/Rich4Native/saves`。空格/Enter 掷骰，F5 存档，F9 读档。
+Mac 会优先使用本机 Microsoft Office 的细明体，没有时使用 Noto Serif CJK TC。
+
+## Android（仅侧载到自己的手机）
+
+需要 Android SDK/NDK（Android Studio 自带）、Java 17。手机打开“开发者选项 → USB 调试”，用线连接后：
+
+```sh
+~/Library/Android/sdk/platform-tools/adb devices        # 取得序号
+scripts/build_android.sh <序号>                          # 建置并安装；省略序号则只建置
+```
+
+第一次建置会下载 SDL3、FreeType、FluidSynth、libiconv、GeneralUser GS 音色库与 Noto 字体（校验 SHA-256，
+放在 gitignored 的 `android/third_party/`）。APK 约 190 MB（含你的游戏素材），只能侧载，**绝不要上传
+Google Play 或分享给他人**。App 名称“大富翁4”，图标取自你的 `rich4.exe`。切到后台会自动写入
+`Autosave.DAT`；标题画面的 EXIT 会结束 App。
+
+## iOS（仅安装到自己的 iPhone / iPad）
+
+需要 Xcode。模拟器：`scripts/build_ios.sh --run "iPhone 16 Pro"`。真机：
+
+```sh
+xcrun devicectl list devices                                   # 取得设备 ID
+RICH4_IOS_TEAM=<10 位团队 ID> scripts/build_ios.sh --device <设备 ID>
+```
+
+iPhone 需已“信任此电脑”并开启“开发者模式”（设置 › 隐私与安全性）。免费个人团队的签名 7 天后过期，
+重新执行即可。**不要上传 App Store 或 TestFlight。** 详见下文“iOS”一节。
+
+---
+
+以下是开发者说明。
 
 ## 编译原生核心与 Mac 查看器
 
@@ -27,7 +84,7 @@ build/native/rich4-resource-viewer.app/Contents/MacOS/rich4-resource-viewer \
   game-assets/Data.mkf 1 0
 ```
 
-左右键切换帧，PageUp/PageDown 切换资源，Escape 退出。这个窗口是资源检查工具，背景中的原版菜单按钮尚不执行游戏动作。
+左右键切换帧，PageUp/PageDown 切换资源，Escape 退出。这是资源检查工具，不是游戏本身。
 
 命令行工具可以检查所有图片、导出资源/帧、读取并无损重写存档。例如：
 
@@ -88,7 +145,7 @@ python3 scripts/test_android_core.py --serial emulator-5554 \
   --oracle .local/oracle/latest --game game-assets
 ```
 
-这是原生库/命令行测试，不会安装 APK。报告位于 `artifacts/android-core/`。后续 Android 应用仍需要 SDL 窗口集成、素材导入、触摸输入、音频与生命周期处理。
+这是原生库/命令行测试，不会安装 APK；完整 App 的建置见上文“Android”。报告位于 `artifacts/android-core/`。
 
 ## iOS（iPhone / iPad，仅本机安装）
 
@@ -112,11 +169,9 @@ xcodebuild test -project build/ios-uitests/rich4_ios.xcodeproj -scheme rich4 \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -resultBundlePath /tmp/rich4-touch.xcresult
 ```
 
-## 运行当前原型与原版参考
+## 原版参考（Wine）
 
-原生版本双击 **`Play Rich4 Native.command`**，或执行 `./scripts/run_native_mac.sh`。新存档在 `~/Library/Application Support/Rich4Native/saves`，不会覆盖原版。空格/Enter掷骰，F5保存，F9读档；顶部按钮可用卡片、道具、股票等功能。
-
-原版参考程序仍可双击 **`Play Rich4.command`**。也可以在终端执行：
+原版参考程序可双击 **`Play Rich4.command`**。也可以在终端执行：
 
 ```sh
 ./scripts/run_mac.sh rich4.exe
@@ -149,7 +204,7 @@ python3 scripts/setup_mac.py game-assets
 Boxedwine 官方 Mac 应用启用了沙盒，因此游戏、字体、Wine 文件系统均放在其容器内；不需要关闭系统或应用沙盒。
 原始素材文件夹保持不变。安装脚本不覆盖已有游戏素材或存档。
 
-## 存档位置
+## 原版（Wine）存档位置
 
 ```text
 ~/Library/Containers/org.boxedwine/Data/Library/Application Support/Boxedwine/Rich4/game/
@@ -177,17 +232,19 @@ Boxedwine 官方 Mac 应用启用了沙盒，因此游戏、字体、Wine 文件
 
 这一组 Wine 基准只验证列出的基础流程，没有覆盖其他地图、全部卡片道具、小游戏或完整结局。Mac 原生版本的独立验收范围见上方和[验收记录](docs/migrations/validation.md)，不能把两套程序的证据混用。
 
-## 后续原生化
+## 素材覆盖与工具
 
-上游并非已完成的跨平台引擎：构建仍使用 101 个 x86 汇编文件（157,977 行）、16 个 C 文件（3,185 行），
-并依赖 Win32、DirectDraw、DirectSound、WinMM。新核心与SDL3应用已经独立于这些依赖。迁移的规则、原地址、差分证据、保留的历史缺陷和未验证范围，逐项保存在 `docs/migrations/`；过场视频和Android应用层尚需后续完成。
-
-恢复工作后应优先建立原版与原生的页面/交互对照，补齐小地图、右侧分页、原图标工具栏和各功能界面，保持已获得的原生流畅度；具体缺口和验收边界见 [交接记录](docs/STATUS.md)。[移植调查](docs/porting.md) 保留最初的源码与路线研究，不是当前完成度声明。
+`RICH4_ASSET_TRACE=FILE` 会记录游戏读取的每个 MKF 条目，用于找出尚未使用的原版素材（见 `docs/audit/`）。
+`build/native/rich4-contact-sheet ARCHIVE FIRST LAST OUT.ppm` 把 MKF 条目画成带编号的总览图；
+`build/native/rich4-tool flc` 可导出 FLC 动画帧；`rich4-native` 另有 `--gallery`、`--items-gallery`、
+`--overlay-gallery`、`--monthly-gallery` 等开发用画廊参数，可一次输出各画面截图。
 
 ## 来源
 
 - [mytbk/rich4](https://github.com/mytbk/rich4)，固定版本 `ec7d70e693059d1e781d9d1cc2ad7f36d360d39e`，GPL-3.0。
 - [Boxedwine 26R1.0](https://github.com/danoon2/Boxedwine/releases/tag/26R1.0)，官方 Mac 应用；Wine 11.0 的 32 位文件系统。
-- [Noto CJK](https://github.com/notofonts/noto-cjk)，仅在缺少本机细明体时用作替代，SIL Open Font License。
+- [Noto CJK](https://github.com/notofonts/noto-cjk)，手机版与缺少本机细明体时使用，SIL Open Font License 1.1。
+- 其余第三方元件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-游戏资源、游戏二进制、第三方字体和运行时均保留在本机，不提交到仓库。
+游戏资源、游戏二进制、第三方字体和运行时均保留在本机，不提交到仓库。《大富翁4》© 1998–2022 SOFTSTAR
+ENTERTAINMENT INC.，请购买正版：<https://store.steampowered.com/app/2059810/Richman_4/?l=tchinese>
