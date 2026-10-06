@@ -43,6 +43,33 @@ Pull Request；合并前必须**实际试玩并附上可重现的结果**（地�
 | iOS | ✅ 模拟器（真机尚未测试） |
 | Windows | ⚠️ 尚未测试 Windows 建置 |
 
+## 移植规模 / Migration scale
+
+约 **15.8 万行 x86 汇编**被重写成约 **3.2 万行 C++**（游戏本身约为原来的五分之一）。统计于 2026-10-06：
+
+| 旧代码（上游 [mytbk/rich4](https://github.com/mytbk/rich4)） | 行数 |
+| --- | --- |
+| `rich4.exe` 的 x86 反汇编（101 个 `.asm`） | 157,977（去除空行与注释约 147,600） |
+| 上游已部分反编译的 C | 11,452 |
+
+| 新代码（本仓库） | 行数 |
+| --- | --- |
+| 规则核心 `src/` + `include/`（C++20，不依赖 Windows） | 18,174（含 1,553 行生成的表） |
+| 游戏应用：画面、UI、动画、音频（`tools/`，不含开发工具） | 约 15,700 |
+| 测试、开发工具与对照脚本（`tests/` 9,753 + `scripts/` 3,542 等） | 约 13,300 |
+| Android / iOS 外壳 | 约 770 |
+| **代码合计** | **约 51,600** |
+| 文档（规格、审计、迁移记录） | 约 8,900 |
+
+去除空行与注释后，游戏本身约 3.1 万行 C++，对照约 14.8 万行汇编，约 5:1，这是从编译后的机器码回到高阶语言常见的比例。
+新代码约三分之一用于验证（单元测试、自动对局、在 Wine 下执行原版做对照），也加入了原版没有的部分：触控、三个平台、新的音频管线与手机外壳。
+
+About **158k lines of x86 assembly** were rewritten as about **32k lines of C++** for the game itself (roughly 5:1
+non-blank). Including tests, tooling and the mobile shells the new code is ~51.6k lines, plus ~8.9k lines of docs.
+
+重现统计 / Reproduce: `find .local/upstream/asm -name '*.asm' | xargs cat | wc -l`（上游需先由
+`scripts/build_upstream.sh` 下载）与 `git ls-files src include tools | grep -E '\.(cpp|hpp)$' | xargs cat | wc -l`。
+
 目前状态、已知差异与验证证据见 **[项目状态](docs/STATUS.md)**；每个原版画面的规格见 [`docs/ui/`](docs/ui/)，
 素材覆盖审计见 [`docs/audit/`](docs/audit/)，规则迁移记录见 [迁移记录](docs/migrations/README.md)。
 
