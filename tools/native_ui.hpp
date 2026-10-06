@@ -56,18 +56,33 @@ inline void write_file(const std::filesystem::path &path, const std::vector<std:
     std::filesystem::rename(temporary, path);
 }
 
+// The original data is Windows Big5 (code page 950): e.g. 張恒市 on the China map uses the ETEN
+// extension 0xF9DA, which strict "BIG5" (GNU libiconv on Android) rejects. Convert as CP950, falling
+// back to BIG5 where CP950 is unavailable, and replace only an undecodable character with "?".
 inline std::string big5(std::string_view input) {
-    iconv_t converter = iconv_open("UTF-8", "BIG5");
+    iconv_t converter = iconv_open("UTF-8", "CP950");
+    if (converter == (iconv_t)-1)
+        converter = iconv_open("UTF-8", "BIG5");
     if (converter == (iconv_t)-1)
         throw std::runtime_error("Big5 conversion is unavailable");
     std::string result(input.size() * 4 + 4, '\0');
     char *source = const_cast<char *>(input.data());
     char *destination = result.data();
     std::size_t source_left = input.size(), destination_left = result.size();
-    const auto converted = iconv(converter, &source, &source_left, &destination, &destination_left);
+    while (source_left > 0) {
+        if (iconv(converter, &source, &source_left, &destination, &destination_left) != std::size_t(-1))
+            break;
+        if (destination_left < 1)
+            break;
+        // Skip the offending character (a lead byte takes its trail byte with it) and mark it.
+        const auto skip = static_cast<unsigned char>(*source) >= 0x81 && source_left >= 2 ? 2U : 1U;
+        source += skip;
+        source_left -= skip;
+        *destination++ = '?';
+        --destination_left;
+        iconv(converter, nullptr, nullptr, nullptr, nullptr); // reset the shift state
+    }
     iconv_close(converter);
-    if (converted == std::size_t(-1))
-        return "?";
     result.resize(result.size() - destination_left);
     return result;
 }
