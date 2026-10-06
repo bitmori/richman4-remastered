@@ -191,6 +191,8 @@ EffectSpec effect_spec(const EffectEvent &effect) {
         return {'d', 554, 0, 114, 0, 0, false};
     case EffectKind::pause: // a timed hold, run by the app's presentation queue (never queued here)
         return {'p', -1, 0, -1, 0, 0, false};
+    case EffectKind::god_leave: // rich4_gods.asm:239-419: sprite rise, no movie; sound 54 is cued before
+        return {'d', -1, 0, -1, 0, 0, false};
     }
     return {};
 }
@@ -247,7 +249,7 @@ void EffectPlayer::enqueue(std::vector<EffectEvent> effects, const void *owner) 
         return;
     for (auto &effect : effects)
         if (effect.kind == EffectKind::object_throw || effect.kind == EffectKind::card_throw ||
-            effect_spec(effect).entry >= 0)
+            effect.kind == EffectKind::god_leave || effect_spec(effect).entry >= 0)
             queue_.push_back(std::move(effect));
 }
 
@@ -356,6 +358,14 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
                 play.sounded = true;
             }
             committed = frame_index >= play.spec.commit_frame;
+        } else if (event.kind == EffectKind::god_leave) {
+            // 24 steps of 60 ms (fcn_0045285e(0x3c)), each 10 px higher and one facing frame on; it
+            // ends early once the sprite's bottom clears the board's top edge (y < 40).
+            frame_index = static_cast<int>(std::min(play.elapsed / 60U, 23U));
+            committed = true;
+            finished = play.elapsed >= 24U * 60U;
+            if (const auto start = board::project(actor, camera); !start)
+                finished = true;
         } else { // object/card throw: one step per 8 screen px, >= 24 ms per step
             if (play.path.empty()) {
                 const auto from = board::project(actor, camera);
@@ -456,6 +466,24 @@ void EffectPlayer::draw(graphics::Image &canvas, board::Renderer &board, const W
         board.render(canvas, scene.view(), camera);
 
         // ---- picture ----
+        if (event.kind == EffectKind::god_leave) {
+            const auto start = board::project(actor, camera);
+            if (!start || event.object_kind == 0 || event.object_kind > 20)
+                return;
+            // The carried god's spot (board renderer `near` trailing offset) and frame (d + 4) & 7.
+            static constexpr std::array<std::pair<int, int>, 8> near{
+                {{-10, -22}, {-22, -10}, {-22, 10}, {-10, 22}, {10, 22}, {22, 10}, {22, -10}, {10, -22}}};
+            const auto d = std::size_t((event.direction + 8 - rotation) & 7U);
+            const auto frame = (d + 4 + std::size_t(frame_index) + 1) & 7U;
+            const auto &sprite = artwork_.frame('d', 0x18c + event.object_kind - 1U, frame);
+            const int x = start->x + near[d].first, y = start->y + near[d].second - 10 * (frame_index + 1);
+            if (y - sprite.origin_y + sprite.height < 40) { // the original stops once the god left the board
+                play.elapsed = 24U * 60U; // finishes through the normal path on the next draw
+                return;
+            }
+            graphics::blit(canvas, sprite, x, y, viewport);
+            return;
+        }
         if (!play.movie) {
             const auto &point = play.path[static_cast<std::size_t>(frame_index)];
             if (event.kind == EffectKind::card_throw) { // Data 415 frame 0

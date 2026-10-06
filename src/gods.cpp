@@ -176,6 +176,8 @@ Result detach(World &world, std::size_t actor, const Callbacks &callbacks) {
     callbacks.remove_object(status.god_info);
     if (callbacks.sound)
         callbacks.sound(actor, 54); // rich4_gods.asm:238 board preset [19]
+    if (callbacks.leaving)
+        callbacks.leaving(actor, kind); // rich4_gods.asm:239-419: the god rises off the board
     if (!absent && ((kind >= 5 && kind <= 8) || kind == 15))
         voice(callbacks, actor, 23);
     return {true, true, false, "神明离开"};

@@ -24,6 +24,8 @@ struct Callbacks {
     std::function<void(std::size_t, std::uint8_t)> appeared;
     // Presentation only: the god's arrival caption (object kind), after any bad-god speech.
     std::function<void(std::size_t, std::uint8_t)> arrival;
+    // Presentation only: the carried god (object kind) is leaving the player (rising animation).
+    std::function<void(std::size_t, std::uint8_t)> leaving;
     // Optional, presentation only: Effect.mkf cue for the player (54 god leaves, 35/36 gift pickup).
     std::function<void(std::size_t, std::uint8_t)> sound;
     // Presentation only: the dog (kind 11) was met, on foot (fight, then hospital) or riding.

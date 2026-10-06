@@ -2388,6 +2388,11 @@ struct GameSession::Impl {
         };
         callbacks.arrival = [this](auto slot, auto kind) { announce(Announcement::god_arrival, slot, kind); };
         callbacks.sound = [this](auto slot, auto sound) { cue(slot, sound); }; // AUDIO: 54 / 35 / 36
+        callbacks.leaving = [this](auto slot, auto kind) {
+            effect(EffectKind::god_leave, slot, actor_point(slot));
+            effects.back().object_kind = kind;
+            effects.back().direction = world.players.at(slot).state.direction;
+        };
         callbacks.dog = [this](auto slot, bool on_foot) { // Data 532 dust fight / Data 552 vehicle
             board_movie(on_foot ? EffectKind::dog_fight : EffectKind::dog_vehicle, slot, actor_point(slot),
                         on_foot ? std::optional<EffectPoint>(actor_point(slot)) : std::nullopt);

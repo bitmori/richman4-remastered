@@ -90,6 +90,10 @@ int main(int argc, char **argv) {
         } else if (kind == "god") {
             event.kind = EffectKind::god_appear;
             event.object_kind = static_cast<std::uint8_t>(argument.empty() ? 1 : std::stoi(argument));
+        } else if (kind == "godleave") { // the carried god rises and spins away (rich4_gods.asm:239-419)
+            event.kind = EffectKind::god_leave;
+            event.object_kind = static_cast<std::uint8_t>(argument.empty() ? 1 : std::stoi(argument));
+            event.direction = actor.direction;
         } else if (kind == "demon") {
             event = {EffectKind::demon_puff, 0, actor.node_id, plot};
             set_level(before, 3);

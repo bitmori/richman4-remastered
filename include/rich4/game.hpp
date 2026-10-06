@@ -231,7 +231,11 @@ enum class EffectKind : std::uint8_t {
     // counts byte 0x498ea5 down once per game tick before acting. `object_kind` = ticks (80 ms at the
     // default speed): 5 between the last step and the landing handler (loc_0040d916), 8 after a
     // property landing (core_actions:2347 `mov byte [esp+0xf4], 0x88`) before the next player.
-    pause
+    pause,
+    // _rich4_detach_god (rich4_gods.asm:138-420): the carried god (object_kind) rises 10 px per
+    // 60 ms step for up to 24 steps, turning one facing frame per step, from its trailing spot
+    // behind the carrier at `target` facing `direction`. Before the god-left speech (slot 23).
+    god_leave
 };
 
 // Figures of the monthly-cycle screens (docs/ui/finance-menus.md §4 dividend, §7.2 lottery draw,
@@ -283,6 +287,7 @@ struct EffectEvent {
     // truck_demolish: `property` level and type (land chain flag / facility type) shown until the
     // commit frame, i.e. the building before the rule demolished it.
     std::uint8_t previous_level = 0, previous_type = 0;
+    std::uint8_t direction = 0; // god_leave: the carrier's heading (sprite frame and trailing offset)
     bool operator==(const EffectEvent &) const = default;
 };
 
