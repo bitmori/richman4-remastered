@@ -278,5 +278,5 @@ Boxedwine 官方 Mac 应用启用了沙盒，因此游戏、字体、Wine 文件
 - [Noto CJK](https://github.com/notofonts/noto-cjk)，手机版与缺少本机细明体时使用，SIL Open Font License 1.1。
 - 其余第三方元件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-游戏资源、游戏二进制、第三方字体和运行时均保留在本机，不提交到仓库。《大富翁4》© 1998–2022 SOFTSTAR
+《大富翁4》© 1998–2022 SOFTSTAR
 ENTERTAINMENT INC.，请购买正版：<https://store.steampowered.com/app/2059810/Richman_4/?l=tchinese>
