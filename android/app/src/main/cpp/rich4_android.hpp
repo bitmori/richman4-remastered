@@ -12,7 +12,7 @@ struct Paths {
 
 // Call once from arguments(), before SDL_Init. Routes stdout/stderr to logcat,
 // extracts the game files packaged in the APK to internal storage when the
-// packaged manifest stamp changes, and points FluidSynth at the bundled bank
+// packaged manifest stamp changes, and points the MIDI synthesizer at the bundled bank
 // through RICH4_SOUNDFONT. Throws std::runtime_error on failure.
 Paths prepare();
 

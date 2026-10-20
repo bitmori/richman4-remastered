@@ -23,9 +23,9 @@ Do not rebuild either executable or edit the runner scripts during a matrix;
 the final integrity check rejects such a run.
 
 ```sh
-cmake --build build/native --target rich4-native rich4-native-fixture
+cmake --build build/native --target rich4-portable rich4-native-fixture
 python3 scripts/run_native_acceptance.py \
-  --binary build/native/rich4-native.app/Contents/MacOS/rich4-native \
+  --binary build/native/rich4-portable.app/Contents/MacOS/rich4-portable \
   --fixture-binary build/native/rich4-native-fixture \
   --game "game-assets" \
   --output artifacts/native-acceptance/my-new-run \

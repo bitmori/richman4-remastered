@@ -3,9 +3,11 @@
 The Richman 4 (大富翁4) engine in this repository is GPL-3.0-or-later (see [`LICENSE`](LICENSE)). Game
 content is **not** included and is not covered by any license here; see [`NOTICE.md`](NOTICE.md).
 
-No third-party source code, binaries, fonts or sound banks are committed to this repository. The build
-scripts download the components below into gitignored directories (`android/third_party/`,
-`ios/third_party/`) and verify each download by SHA-256, or the Mac build links the Homebrew copies.
+The only third-party code committed to this repository is TinySoundFont (two MIT-licensed headers in
+`third_party/TinySoundFont/`, with its `LICENSE`). No third-party binaries, fonts or sound banks are
+committed. The build scripts and CMake download the other components below into gitignored directories
+(`android/third_party/`, `ios/third_party/`, the CMake build directory) and verify each download by
+SHA-256, or the Mac build links the Homebrew copies.
 
 ## Source and format knowledge
 
@@ -19,23 +21,22 @@ scripts download the components below into gitignored directories (`android/thir
 | --- | --- | --- | --- |
 | [SDL](https://libsdl.org) | 3.4.x (3.4.16 on Android/iOS) | all | zlib |
 | [FreeType](https://freetype.org) | 2.14.x (2.14.3 on Android/iOS) | all | FreeType License (FTL), used under the FTL option |
-| [FluidSynth](https://www.fluidsynth.org) | 2.6.x (2.6.1 on Android/iOS; no glib, no audio backends) | all | LGPL-2.1-or-later |
-| [gcem](https://github.com/kthohr/gcem) @ `012ae73` | FluidSynth build dependency | Android, iOS | Apache-2.0 |
+| [TinySoundFont](https://github.com/schellingb/TinySoundFont) (`tsf.h`, `tml.h`) @ `853a0a1` | SF2 synthesizer and MIDI loader for the original music | all | MIT |
 | [GNU libiconv](https://www.gnu.org/software/libiconv/) | 1.18 | Android (statically linked; Android's own iconv has no Big5) | LGPL-2.1-or-later |
 | System iconv | — | macOS, iOS | part of the OS |
 
 FreeType requires this credit: *Portions of this software are copyright © The FreeType Project
 (https://freetype.org). All rights reserved.*
 
-FluidSynth and GNU libiconv are LGPL-licensed. The combined program is distributed under the GPL-3.0,
-whose terms satisfy the LGPL; the complete corresponding source is this repository plus the pinned
-upstream releases fetched by `scripts/build_android.sh` and `scripts/build_ios.sh`.
+GNU libiconv is LGPL-licensed. The combined program is distributed under the GPL-3.0, whose terms
+satisfy the LGPL; the complete corresponding source is this repository plus the pinned upstream releases
+fetched by `scripts/build_android.sh` and `scripts/build_ios.sh`.
 
-## Bundled data (phone builds)
+## Bundled data
 
 | Component | Use | License |
 | --- | --- | --- |
-| [GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS) by S. Christian Collins | General MIDI sound bank for the original MIDI music on Android/iOS (the Mac build uses the system's `gs_instruments.dls` and bundles nothing). | GeneralUser GS License (see its repository). The author notes that the provenance of every sample cannot be fully guaranteed. |
+| TimGM6mb (`TimGM6mb.sf2`, 5.7 MB) by Tim Brechbill, 2010 revision by David Bolton; fetched from [Debian's pristine upstream tarball](https://deb.debian.org/debian/pool/main/t/timgm6mb-soundfont/) `timgm6mb-soundfont_1.3.orig.tar.gz` | General MIDI sound bank for the original MIDI music on every platform (macOS: the app's `Resources`; Android/iOS: the app package). Loaded at run time as a separate data file. | GPL-2.0 (per Debian's `copyright`: samples are the author's own, public domain, or GPL) |
 | [Noto Serif CJK TC](https://github.com/notofonts/noto-cjk) | Traditional Chinese text on Android/iOS, and the fallback when the original 細明體 is unavailable. | SIL Open Font License 1.1 |
 
 The Mac build can use 細明體 (`mingliu.ttc`) from a locally installed Microsoft Office; that font is

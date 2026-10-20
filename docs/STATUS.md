@@ -93,7 +93,7 @@
 
 这些命令供用户自行运行或恢复工作后使用；暂停期间不自动执行。
 
-- 原生原型：根目录 `Play Rich4 Native.command` 或 `./scripts/run_native_mac.sh`。实际 Release 程序在 `build/mac-native/rich4-native.app`；构建依赖本机 Homebrew SDL3、FreeType、FluidSynth 等，并非可直接分发的自包含应用。
+- 原生原型：根目录 `Play Rich4 Native.command` 或 `./scripts/run_native_mac.sh`。实际 Release 程序在 `build/mac-native/rich4-portable.app`；构建依赖本机 Homebrew SDL3、FreeType；GitHub Actions（`.github/workflows/macos.yml`）会把 dylib 打包进 app，产出可直接分发的 zip。
 - 原版参考：`Play Rich4.command` / `./scripts/run_mac.sh rich4.exe`。
 - 原始资源：`game-assets`，只读使用。
 - 原生存档：`~/Library/Application Support/Rich4Native/saves`，与 Wine 分开。

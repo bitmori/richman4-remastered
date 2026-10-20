@@ -33,7 +33,7 @@ endif()
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 # iOS defaults every executable to an app bundle; only the game is one (dependencies declare
-# helper executables, e.g. the fluidsynth CLI, whose install() rules reject bundles).
+# helper executables whose install() rules reject bundles).
 set(CMAKE_MACOSX_BUNDLE OFF)
 
 # SDL3, static (an iOS app is a single executable; SDL_main.h supplies UIApplicationMain).
@@ -48,18 +48,6 @@ foreach(dependency ZLIB BZIP2 PNG HARFBUZZ BROTLI)
   set(FT_DISABLE_${dependency} ON CACHE BOOL "" FORCE)
 endforeach()
 add_subdirectory("${THIRD_PARTY}/freetype-2.14.3" freetype EXCLUDE_FROM_ALL)
-
-# FluidSynth 2.6 with the C++11 OS abstraction: no glib, every optional backend off (the game
-# renders MIDI itself into an SDL audio stream), no macOS framework packaging.
-set(osal cpp11 CACHE STRING "" FORCE)
-foreach(feature alsa aufile dbus ipv6 jack ladspa libsndfile midishare network oss sdl3 pulseaudio
-        pipewire readline openmp opensles oboe signalsmith systemd portaudio coreaudio coremidi framework)
-  set(enable-${feature} OFF CACHE BOOL "" FORCE)
-endforeach()
-add_subdirectory("${THIRD_PARTY}/fluidsynth-2.6.1" fluidsynth EXCLUDE_FROM_ALL)
-# The Xcode generator writes no archive for a library made only of $<TARGET_OBJECTS:...>.
-file(WRITE "${CMAKE_BINARY_DIR}/fluidsynth_xcode_source.c" "/* lets Xcode archive libfluidsynth */\n")
-target_sources(libfluidsynth PRIVATE "${CMAKE_BINARY_DIR}/fluidsynth_xcode_source.c")
 
 # Portable game core from the repository root (tests and desktop tools excluded).
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
@@ -96,7 +84,7 @@ endif()
 
 add_executable(rich4 MACOSX_BUNDLE ${sources})
 target_include_directories(rich4 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${RICH4_REPO}/tools")
-target_link_libraries(rich4 PRIVATE rich4_core SDL3::SDL3-static freetype libfluidsynth iconv
+target_link_libraries(rich4 PRIVATE rich4_core rich4_tinysoundfont SDL3::SDL3-static freetype iconv
   "-framework UIKit")
 set_source_files_properties(rich4_ios.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 set_target_properties(rich4 PROPERTIES
@@ -118,7 +106,7 @@ endif()
 # Xcode signs it. Saves live outside the bundle (SDL_GetPrefPath).
 add_custom_command(TARGET rich4 POST_BUILD
   COMMAND "${CMAKE_COMMAND}" "-DGAME_ASSETS=${RICH4_GAME_ASSETS}" "-DFONT=${RICH4_FONT}"
-    "-DSOUNDFONT=${THIRD_PARTY}/downloads/GeneralUser-GS.sf2"
+    "-DSOUNDFONT=${THIRD_PARTY}/downloads/TimGM6mb.sf2"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/copy_resources.cmake"
   VERBATIM)
 

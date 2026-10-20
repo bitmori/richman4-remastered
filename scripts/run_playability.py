@@ -109,7 +109,7 @@ def main():
     parser.add_argument("--turns", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--native-tool", type=Path, default=REPO / "build/native/rich4-state-check")
-    parser.add_argument("--native-game", type=Path, default=REPO / "build/native/rich4-native.app/Contents/MacOS/rich4-native")
+    parser.add_argument("--native-game", type=Path, default=REPO / "build/native/rich4-portable.app/Contents/MacOS/rich4-portable")
     args = parser.parse_args()
     if not 0 <= args.slot <= 5 or not 1 <= args.turns <= 20 or not 30 <= args.timeout <= 600:
         parser.error("slot must be 0..5, turns 1..20, timeout 30..600 seconds; slots 8/9 are reserved for capture")

@@ -61,13 +61,9 @@ fetch https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.
     SDL3-3.4.16.tar.gz 7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68
 fetch https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.xz \
     freetype-2.14.3.tar.xz 36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f
-fetch https://github.com/FluidSynth/fluidsynth/archive/refs/tags/v2.6.1.tar.gz \
-    fluidsynth-2.6.1.tar.gz 3d258a3bf97cc20c59eeebfe62c2432fae88adda74d3ad098681c76e0ebf446b
-fetch https://github.com/kthohr/gcem/archive/012ae73c6d0a2cb09ffe86475f5c6fba3926e200.tar.gz \
-    gcem-012ae73.tar.gz 34ab0ee87a9eb26d3087fa9b49c2572ea8ee03db0c9705b83648301a3a3fc172
-# General MIDI bank for FluidSynth (iOS has no system DLS bank).
-fetch https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2 \
-    GeneralUser-GS.sf2 9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe
+# General MIDI bank for TinySoundFont (TimGM6mb, GPL-2; Debian's pristine upstream tarball).
+fetch https://deb.debian.org/debian/pool/main/t/timgm6mb-soundfont/timgm6mb-soundfont_1.3.orig.tar.gz \
+    timgm6mb-soundfont_1.3.orig.tar.gz af8f3a00e416dfb262bcaa904a1c84df04a51b72bbc1313aed012bc754bdf99b
 # iOS keeps its CJK system fonts in private paths, so the app bundles Noto Serif CJK TC (OFL).
 # (No libiconv download: the iOS system libiconv converts BIG5; ios/rich4_ios.mm self-tests it.)
 fetch https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/OTF/TraditionalChinese/NotoSerifCJKtc-Regular.otf \
@@ -75,10 +71,9 @@ fetch https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/OTF/Tradit
 
 unpack SDL3-3.4.16.tar.gz SDL3-3.4.16
 unpack freetype-2.14.3.tar.xz freetype-2.14.3
-unpack fluidsynth-2.6.1.tar.gz fluidsynth-2.6.1
-mkdir -p "$THIRD_PARTY/fluidsynth-2.6.1/gcem"
-if [[ ! -f "$THIRD_PARTY/fluidsynth-2.6.1/gcem/include/gcem.hpp" ]]; then
-    tar -xf "$THIRD_PARTY/downloads/gcem-012ae73.tar.gz" -C "$THIRD_PARTY/fluidsynth-2.6.1/gcem" --strip-components 1
+if [[ ! -f "$THIRD_PARTY/downloads/TimGM6mb.sf2" ]]; then
+    tar -xzf "$THIRD_PARTY/downloads/timgm6mb-soundfont_1.3.orig.tar.gz" -C "$THIRD_PARTY/downloads" \
+        --strip-components 1 timgm6mb-soundfont_1.3/TimGM6mb.sf2
 fi
 
 # Original game files (never committed). Override with RICH4_GAME_ASSETS, e.g. from a worktree.

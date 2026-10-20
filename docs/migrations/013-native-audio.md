@@ -93,3 +93,14 @@ FluidSynth 默认加载器在成功以 DLS 回退之前可能记录 `Not a Sound
 - 完成计数表示样本已交给 SDL 队列；只有队列清空才说明 dummy/设备完成消耗。游戏回合规则不应依赖该诊断计数阻塞运行。
 
 Apple DLS 只是当前 Mac 的默认资源选择。Android 的可分发音色库、依赖打包与设备音质验证仍需单独完成。
+
+## 更新：改用 TinySoundFont（2026-10-12）
+
+FluidSynth 与系统 DLS 已移除。MIDI 现在由 `third_party/TinySoundFont` 的 `tml.h` 解析、`tsf.h` 合成，所有平台共用自带的 TimGM6mb.sf2（5.7 MB，GPL-2；macOS 在 app 的 `Resources`，Android/iOS 在 app 包内；`RICH4_SOUNDFONT` 仍可覆盖）。行为保持不变：
+
+- MIDI 在启动时一次解析成事件链表，音频线程只遍历链表，不做 IO、不分配内存（`tsf_set_max_voices(128)` 预先配置）。
+- 每 64 帧套用一次到期事件，播放时间由已渲染的样本推进（取代 `player.timing-source=sample`）。第 10 声道固定为鼓组（bank 128）。
+- push/pop 记录的位置由 MIDI tick 改为毫秒；恢复时重放该位置之前的音色与控制器事件，跳过音符。
+- 情境音乐播完从头循环；播放清单播完进入下一首。
+- 增益 −12.5 dB：以同一首原版 MIDI 量测，与旧的 FluidSynth（gain 0.28）+ macOS `gs_instruments.dls` 响度相差约 1 dB。
+

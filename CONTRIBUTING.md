@@ -30,7 +30,7 @@ still be missing or differ slightly from the original. Known gaps are listed in
    ```sh
    cmake --build build/native --parallel && ctest --test-dir build/native --output-on-failure
    python3 scripts/run_native_playability.py --turns 30 --seed 42
-   python3 scripts/run_native_acceptance.py --binary build/native/rich4-native.app/Contents/MacOS/rich4-native \
+   python3 scripts/run_native_acceptance.py --binary build/native/rich4-portable.app/Contents/MacOS/rich4-portable \
      --fixture-binary build/native/rich4-native-fixture --workers 2
    ```
 

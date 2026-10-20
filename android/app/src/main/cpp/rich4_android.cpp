@@ -152,7 +152,7 @@ Paths prepare() {
     if (paths.font.empty())
         throw std::runtime_error("No Chinese font found on this device");
 
-    const auto soundfont = data / "GeneralUser-GS.sf2";
+    const auto soundfont = data / "TimGM6mb.sf2";
     if (fs::is_regular_file(soundfont) && !std::getenv("RICH4_SOUNDFONT"))
         setenv("RICH4_SOUNDFONT", soundfont.c_str(), 1);
 

@@ -8,7 +8,11 @@
 #include "rich4/assets.hpp"
 
 #include <SDL3/SDL.h>
-#include <fluidsynth.h>
+// TinySoundFont (third_party/TinySoundFont): SF2 synthesizer and MIDI loader, implemented here.
+#define TSF_IMPLEMENTATION
+#include <tsf.h>
+#define TML_IMPLEMENTATION
+#include <tml.h>
 
 #include <algorithm>
 #include <array>
@@ -36,6 +40,7 @@ namespace {
 constexpr int sample_rate = 48000;
 constexpr int channels = 2;
 constexpr int block_frames = 512;
+constexpr int event_frames = 64; // MIDI events are applied at this granularity inside a block
 constexpr int bytes_per_frame = channels * int(sizeof(float));
 // Mix levels. Every Effect.mkf / Speaking.mkf clip is normalised to ~0 dBFS (median peak 0.83 /
 // 0.99, RMS about -16 dBFS) while the General MIDI render at the old synth gain 0.4 peaks around
@@ -43,7 +48,8 @@ constexpr int bytes_per_frame = channels * int(sizeof(float));
 // clipped constantly; these gains keep a single clip plus music under the limiter ceiling and
 // keep music within ~1 dB of its old balance against effects and voices.
 constexpr float clip_gain = 0.6F;   // effects and voices (-4.4 dB)
-constexpr double music_gain = 0.28; // FluidSynth synth.gain (was 0.4)
+constexpr float music_gain_db = -12.5F; // TinySoundFont gain: matches the old FluidSynth + macOS DLS music level
+constexpr std::string_view bundled_soundfont = "TimGM6mb.sf2";
 constexpr SDL_AudioSpec mixer_format{SDL_AUDIO_F32, channels, sample_rate};
 constexpr std::array<std::string_view, 8> music_files{"rich08.mid", "rich16.mid", "rich17.mid", "rich18.mid",
                                                       "rich19.mid", "rich20.mid", "rich21.mid", "rich22.mid"};
@@ -98,6 +104,17 @@ struct AudioSubsystem {
     }
 };
 
+struct TsfClose {
+    void operator()(tsf *synth) const {
+        tsf_close(synth);
+    }
+};
+struct TmlFree {
+    void operator()(tml_message *song) const {
+        tml_free(song);
+    }
+};
+
 struct SdlFree {
     void operator()(void *pointer) const {
         SDL_free(pointer);
@@ -145,7 +162,7 @@ std::string_view music_file(Music music) noexcept {
 //  * SDL's audio device thread calls feed() whenever the device needs samples and mixes exactly
 //    that much, so a stalled main thread (archive open, FLC decode, map load, slow software
 //    canvas) can no longer starve the device.
-//  * Everything slow -- archive IO, WAV decode, MIDI file reads, soundbank loading -- happens on
+//  * Everything slow -- archive IO, WAV decode, MIDI parsing, soundbank loading -- happens on
 //    the main thread (or the startup archive loader) *outside* `mutex`; the main thread then
 //    takes `mutex` only to swap pointers / small structs.
 //  * Fields marked [shared] are guarded by `mutex`. Fields marked [main] are only touched by the
@@ -156,14 +173,15 @@ struct Audio::Impl {
     // [const]
     bool enabled{};
     std::filesystem::path directory;
-    std::map<std::string, std::vector<std::uint8_t>, std::less<>> midi_cache; // every original MIDI, read at startup
+    // Every original MIDI, parsed at startup; the audio thread only walks these lists.
+    std::map<std::string, std::unique_ptr<tml_message, TmlFree>, std::less<>> midi_cache;
     // [main]
     Trace trace;
     std::array<std::optional<std::size_t>, std::size_t(Loop::count)> loops{};
     struct Saved {
         std::optional<Music> context; // nullopt = board playlist track
         unsigned track{1};
-        int tick{};
+        unsigned position_ms{};
     };
     std::vector<Saved> music_stack; // pushed contexts save what was under them
     std::optional<assets::Archive> effects;
@@ -182,12 +200,12 @@ struct Audio::Impl {
     unsigned track{1};
     std::optional<Music> context; // what the MIDI player plays: a context (looped) or playlist `track`
     bool player_stale{};          // music was off when the track changed: (re)start when on
-    int resume_tick{};            // position to seek to when a stale track is started
+    unsigned resume_ms{};         // position to seek to when a stale track is started
     Statistics stats;
-    std::unique_ptr<fluid_settings_t, decltype(&delete_fluid_settings)> settings{nullptr,
-                                                                                 delete_fluid_settings};
-    std::unique_ptr<fluid_synth_t, decltype(&delete_fluid_synth)> synth{nullptr, delete_fluid_synth};
-    std::unique_ptr<fluid_player_t, decltype(&delete_fluid_player)> player{nullptr, delete_fluid_player};
+    std::unique_ptr<tsf, TsfClose> synth;
+    const tml_message *song{};       // first event of the playing MIDI; null = no music
+    const tml_message *next_event{}; // next event to apply; null = the MIDI has ended
+    double song_ms{};                // playback position, advanced by rendered samples
     struct Clip {
         const std::vector<float> *samples;
         std::size_t position{};
@@ -246,8 +264,7 @@ struct Audio::Impl {
     }
 
     ~Impl() {
-        // Stop the only hardware-facing object before releasing the software mixer and its
-        // banks. No FluidSynth audio driver is ever constructed.
+        // Stop the only hardware-facing object before releasing the software mixer and its bank.
         if (stream) {
             SDL_RemoveEventWatch(lifecycle_watch, this);
             stream.reset(); // after this the device thread no longer calls feed()
@@ -255,9 +272,6 @@ struct Audio::Impl {
         write_capture();
         if (archive_loader.valid())
             archive_loader.wait();
-        player.reset();
-        synth.reset();
-        settings.reset();
     }
 
     // Android/iOS: stop pulling samples while backgrounded and continue exactly where the music
@@ -277,50 +291,51 @@ struct Audio::Impl {
                 bank = environment;
             }
         }
-#ifdef __APPLE__
-        if (bank.empty()) {
-            bank = "/System/Library/Components/CoreAudio.component/Contents/Resources/"
-                   "gs_instruments.dls";
+        // The bank ships next to the program (macOS: the app's Resources folder).
+        if (const auto *base = SDL_GetBasePath(); bank.empty() && base) {
+            if (const auto bundled = std::filesystem::path(base) / bundled_soundfont;
+                std::filesystem::is_regular_file(bundled))
+                bank = bundled;
+        }
+#ifdef RICH4_DEFAULT_SOUNDFONT
+        if (bank.empty() && std::filesystem::is_regular_file(RICH4_DEFAULT_SOUNDFONT)) {
+            bank = RICH4_DEFAULT_SOUNDFONT; // the build tree's download (tests, unbundled tools)
         }
 #endif
         if (bank.empty() || !std::filesystem::is_regular_file(bank)) {
-            diagnostic = "MIDI soundbank unavailable; set RICH4_SOUNDFONT to a General MIDI SF2/DLS file";
+            diagnostic = "MIDI soundbank unavailable; set RICH4_SOUNDFONT to a General MIDI SF2 file";
             return;
         }
-        // All MIDIs are tiny (~0.5 MB together): read them now so neither a context push nor the
+        // All MIDIs are tiny (~0.5 MB together): parse them now so neither a context push nor the
         // playlist advancing on the audio thread ever touches the file system. The playlist files
         // stay mandatory; a missing context MIDI only keeps that screen silent.
+        const auto parse = [this](std::string_view file) {
+            const auto bytes = read_bytes(asset_path(directory, file));
+            std::unique_ptr<tml_message, TmlFree> parsed(tml_load_memory(bytes.data(), int(bytes.size())));
+            if (!parsed) {
+                throw std::runtime_error("cannot load original MIDI " + std::string(file));
+            }
+            midi_cache.emplace(file, std::move(parsed));
+        };
         for (const auto file : music_files)
-            midi_cache.emplace(file, read_bytes(asset_path(directory, file)));
+            parse(file);
         for (const auto file : context_files) {
             if (file == "silence")
                 continue;
             try {
-                midi_cache.emplace(file, read_bytes(asset_path(directory, file)));
+                parse(file);
             } catch (const std::exception &error) {
                 diagnostic = error.what();
             }
         }
-        // The original MIDIs carry meta events FluidSynth only warns about; keep stderr for errors.
-        fluid_set_log_function(FLUID_WARN, nullptr, nullptr);
-        fluid_set_log_function(FLUID_INFO, nullptr, nullptr);
-        settings.reset(new_fluid_settings());
-        if (!settings) {
-            throw std::runtime_error("cannot create FluidSynth settings");
-        }
-        fluid_settings_setnum(settings.get(), "synth.sample-rate", sample_rate);
-        fluid_settings_setnum(settings.get(), "synth.gain", music_gain);
-        fluid_settings_setstr(settings.get(), "player.timing-source", "sample");
-        fluid_settings_setint(settings.get(), "synth.reverb.active", 0);
-        fluid_settings_setint(settings.get(), "synth.chorus.active", 0);
-        synth.reset(new_fluid_synth(settings.get()));
-        if (!synth || fluid_synth_sfload(synth.get(), bank.string().c_str(), 1) < 0) {
-            synth.reset();
-            diagnostic = "FluidSynth could not load MIDI soundbank: " + bank.string();
+        synth.reset(tsf_load_filename(bank.string().c_str()));
+        if (!synth) {
+            diagnostic = "could not load MIDI soundbank: " + bank.string();
             return;
         }
-        if (const auto error = start_track_locked(); !error.empty()) // no device yet: no lock needed
-            throw std::runtime_error(error);
+        tsf_set_output(synth.get(), TSF_STEREO_INTERLEAVED, sample_rate, music_gain_db);
+        tsf_set_max_voices(synth.get(), 128); // preallocated: note-ons never allocate on the audio thread
+        start_track_locked(); // no device yet: no lock needed
     }
 
     void log(std::string_view what, std::string_view detail) const {
@@ -334,81 +349,86 @@ struct Audio::Impl {
         const std::lock_guard lock(mutex);
         return std::string(current_file_locked());
     }
-    // (Re)starts whatever `context`/`track` select, from `tick`. With music switched off the
-    // start is deferred (player_stale) so a muted game never renders MIDI. Cheap (no IO): the
-    // MIDI bytes were read at startup. Returns an error message instead of throwing because the
-    // audio thread calls it when the playlist advances. Caller holds `mutex`.
-    std::string start_track_locked(int tick = 0) {
+    // (Re)starts whatever `context`/`track` select, from `position_ms`. With music switched off
+    // the start is deferred (player_stale) so a muted game never renders MIDI. Cheap (no IO):
+    // the MIDIs were parsed at startup. Caller holds `mutex`.
+    void start_track_locked(unsigned position_ms = 0) {
         if (!synth) {
-            return {};
+            return;
         }
-        player.reset();
-        fluid_synth_system_reset(synth.get());
+        song = next_event = nullptr;
+        song_ms = 0;
+        tsf_reset(synth.get());
+        tsf_channel_set_bank_preset(synth.get(), 9, 128, 0); // General MIDI: channel 10 is drums
         if (!music_on) {
             player_stale = true;
-            resume_tick = tick;
-            return {};
+            resume_ms = position_ms;
+            return;
         }
         player_stale = false;
         if (context == Music::silence) {
-            return {}; // no player: silence until popped
+            return; // no song: silence until popped
         }
-        const auto file = current_file_locked();
-        const auto cached = midi_cache.find(file);
+        const auto cached = midi_cache.find(current_file_locked());
         if (cached == midi_cache.end()) {
-            return {}; // missing context MIDI (reported at startup): silent, game keeps running
+            return; // missing context MIDI (reported at startup): silent, game keeps running
         }
-        const auto &bytes = cached->second;
-        player.reset(new_fluid_player(synth.get()));
-        if (!player || fluid_player_add_mem(player.get(), bytes.data(), bytes.size()) != FLUID_OK) {
-            player.reset();
-            return "cannot load original MIDI " + std::string(file);
-        }
-        if (context) {
-            fluid_player_set_loop(player.get(), -1); // context MIDIs loop until popped (fcn_00454d2c)
-        }
-        if (fluid_player_play(player.get()) != FLUID_OK) {
-            player.reset();
-            return "cannot start original MIDI " + std::string(file);
-        }
-        if (tick > 0) {
-            fluid_player_seek(player.get(), tick); // resume where push_music left it
-        }
-        return {};
+        song = next_event = cached->second.get();
+        // Resume where push_music left it: replay programs and controllers, skip the notes.
+        for (; next_event && next_event->time < position_ms; next_event = next_event->next)
+            if (next_event->type != TML_NOTE_ON && next_event->type != TML_NOTE_OFF)
+                apply_event_locked(*next_event);
+        song_ms = position_ms;
     }
-    void start_track(int tick = 0) { // main thread
-        std::string error;
-        {
-            const std::lock_guard lock(mutex);
-            error = start_track_locked(tick);
+    void apply_event_locked(const tml_message &event) noexcept {
+        auto *const f = synth.get();
+        const int channel = event.channel;
+        switch (event.type) {
+        case TML_PROGRAM_CHANGE:
+            tsf_channel_set_presetnumber(f, channel, event.program, channel == 9);
+            break;
+        case TML_NOTE_ON:
+            if (event.velocity > 0) {
+                tsf_channel_note_on(f, channel, event.key, float(event.velocity) / 127.0F);
+                break;
+            }
+            [[fallthrough]]; // velocity 0 is a note-off
+        case TML_NOTE_OFF:
+            tsf_channel_note_off(f, channel, event.key);
+            break;
+        case TML_PITCH_BEND:
+            tsf_channel_set_pitchwheel(f, channel, event.pitch_bend);
+            break;
+        case TML_CONTROL_CHANGE:
+            tsf_channel_midi_control(f, channel, event.control, event.control_value);
+            break;
+        default:
+            break;
         }
-        if (!error.empty())
-            throw std::runtime_error(error);
     }
-    int current_tick_locked() {
+    void start_track(unsigned position_ms = 0) { // main thread
+        const std::lock_guard lock(mutex);
+        start_track_locked(position_ms);
+    }
+    unsigned current_position_locked() const {
         if (player_stale)
-            return resume_tick;
-        return player ? std::max(0, fluid_player_get_current_tick(player.get())) : 0;
+            return resume_ms;
+        return song ? unsigned(song_ms) : 0;
     }
     void push(Music music, bool save) {
         log(save ? "music_push" : "music_replace", music_file(music));
-        std::string error;
-        {
-            const std::lock_guard lock(mutex);
-            if (save || music_stack.empty())
-                music_stack.push_back({context, track, current_tick_locked()});
-            context = music;
-            error = start_track_locked();
-        }
-        if (!error.empty())
-            throw std::runtime_error(error);
+        const std::lock_guard lock(mutex);
+        if (save || music_stack.empty())
+            music_stack.push_back({context, track, current_position_locked()});
+        context = music;
+        start_track_locked();
     }
     void pop() {
         if (music_stack.empty())
             return;
         const auto saved = music_stack.back();
         music_stack.pop_back();
-        std::string file, error;
+        std::string file;
         {
             const std::lock_guard lock(mutex);
             context = saved.context;
@@ -416,7 +436,7 @@ struct Audio::Impl {
             file = current_file_locked();
         }
         log("music_pop", file);
-        start_track(saved.tick);
+        start_track(saved.position_ms);
     }
 
     // Main thread only; may block on the startup archive loader (normally long finished).
@@ -506,20 +526,28 @@ struct Audio::Impl {
 
     void render_block_locked(std::span<float> output) noexcept {
         std::fill(output.begin(), output.end(), 0.0F);
-        if (music_on && player) {
-            if (fluid_player_get_status(player.get()) == FLUID_PLAYER_DONE && !context) {
-                track = track % 8 + 1;
-                pending_log.emplace_back("music_next", current_file_locked());
-                if (auto error = start_track_locked(); !error.empty())
-                    render_error = std::move(error);
+        if (music_on && song) {
+            if (!next_event) {
+                if (context) {
+                    next_event = song; // context MIDIs loop until popped (fcn_00454d2c)
+                    song_ms = 0;
+                } else {
+                    track = track % 8 + 1;
+                    pending_log.emplace_back("music_next", current_file_locked());
+                    start_track_locked();
+                }
             }
-            if (player && fluid_synth_write_float(synth.get(), block_frames, output.data(), 0, 2, output.data(), 1,
-                                                  2) != FLUID_OK) {
-                render_error = "MIDI software rendering failed";
-                player.reset(); // keep effects and voices going without music
+        }
+        if (music_on && song) {
+            constexpr double event_ms = event_frames * 1000.0 / sample_rate;
+            for (int offset = 0; offset < block_frames; offset += event_frames) {
+                const double until = song_ms + event_ms;
+                for (; next_event && next_event->time < until; next_event = next_event->next)
+                    apply_event_locked(*next_event);
+                tsf_render_float(synth.get(), output.data() + std::ptrdiff_t(offset) * channels, event_frames, 0);
+                song_ms = until;
             }
-            if (player)
-                stats.music_frames += block_frames;
+            stats.music_frames += block_frames;
         }
         for (auto &clip : clips) {
             std::size_t written = 0;
@@ -711,18 +739,15 @@ bool Audio::voice_active() const noexcept {
 }
 
 void Audio::set_music(bool enabled) {
-    std::string error;
     {
         const std::lock_guard lock(impl_->mutex);
         if (impl_->music_on == enabled)
             return;
         impl_->music_on = enabled;
         if (enabled && impl_->player_stale)
-            error = impl_->start_track_locked(impl_->resume_tick); // resume what changed while muted
+            impl_->start_track_locked(impl_->resume_ms); // resume what changed while muted
     }
     impl_->log("music_enabled", enabled ? "on" : "off");
-    if (!error.empty())
-        throw std::runtime_error(error);
 }
 
 void Audio::select_music(unsigned track) {

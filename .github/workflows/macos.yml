@@ -1,0 +1,59 @@
+# Builds the native macOS app (Apple Silicon) and uploads a self-contained zip:
+# Homebrew dylibs are copied into the bundle so it runs without Homebrew installed.
+# Game assets are never part of the build; players pass their own with --assets.
+name: macOS build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # macOS 14 bottles keep the app runnable on Sonoma and later.
+    runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      APP: build/mac-native/rich4-portable.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install sdl3 freetype dylibbundler
+
+      - name: Configure
+        run: >
+          cmake -S . -B build/mac-native -DCMAKE_BUILD_TYPE=Release
+          -DRICH4_SANITIZERS=OFF -DRICH4_BUILD_VIEWER=OFF -DRICH4_BUILD_GAME=ON -DBUILD_TESTING=OFF
+
+      - name: Build
+        run: cmake --build build/mac-native --target rich4-portable --parallel
+
+      - name: Bundle dylibs
+        run: |
+          dylibbundler --bundle-deps --overwrite-dir --create-dir \
+            --fix-file "$APP/Contents/MacOS/rich4-portable" \
+            --dest-dir "$APP/Contents/Frameworks" \
+            --install-path @executable_path/../Frameworks/
+          # Fail if anything still points into Homebrew.
+          if otool -L "$APP/Contents/MacOS/rich4-portable" "$APP"/Contents/Frameworks/*.dylib | grep -E '/(opt|usr/local)/'; then
+            echo "Unbundled Homebrew dependency found" >&2
+            exit 1
+          fi
+          # install_name_tool invalidates signatures; Apple Silicon refuses unsigned code.
+          codesign --force --deep --sign - "$APP"
+
+      - name: Smoke test
+        run: "\"$APP/Contents/MacOS/rich4-portable\" --help"
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent "$APP" dist/rich4-portable-macos-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rich4-portable-macos-arm64
+          path: dist/rich4-portable-macos-arm64.zip

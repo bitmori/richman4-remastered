@@ -173,7 +173,7 @@ void check_limiter() {
 
 int main(int argc, char **argv) {
     if (argc > 3) {
-        std::cerr << "usage: native_audio_tests [original-asset-directory [soundbank.sf2-or-dls]]\n";
+        std::cerr << "usage: native_audio_tests [original-asset-directory [soundbank.sf2]]\n";
         return 1;
     }
     // Force the device before constructing the mixer, even if the parent shell

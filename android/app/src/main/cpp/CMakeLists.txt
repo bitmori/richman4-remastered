@@ -28,15 +28,6 @@ foreach(dependency ZLIB BZIP2 PNG HARFBUZZ BROTLI)
 endforeach()
 add_subdirectory("${THIRD_PARTY}/freetype-2.14.3" freetype EXCLUDE_FROM_ALL)
 
-# FluidSynth 2.6 with the C++11 OS abstraction: no glib, every optional backend off.
-# The game renders MIDI itself into an SDL audio stream, so no FluidSynth driver is needed.
-set(osal cpp11 CACHE STRING "" FORCE)
-foreach(feature alsa aufile dbus ipv6 jack ladspa libsndfile midishare network oss sdl3 pulseaudio
-        pipewire readline openmp opensles oboe signalsmith systemd portaudio)
-  set(enable-${feature} OFF CACHE BOOL "" FORCE)
-endforeach()
-add_subdirectory("${THIRD_PARTY}/fluidsynth-2.6.1" fluidsynth EXCLUDE_FROM_ALL)
-
 # GNU libiconv: bionic's iconv only knows UTF/ASCII/Latin-1, but the game decodes Big5.
 # Its iconv.h maps iconv_open/iconv/iconv_close to libiconv_* so it never clashes with bionic.
 include(ExternalProject)
@@ -82,5 +73,5 @@ add_library(main SHARED
   rich4_android.cpp)
 add_dependencies(main libiconv_build)
 target_include_directories(main PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${RICH4_REPO}/tools" "${ICONV_PREFIX}/include")
-target_link_libraries(main PRIVATE rich4_core SDL3::SDL3 freetype libfluidsynth
+target_link_libraries(main PRIVATE rich4_core rich4_tinysoundfont SDL3::SDL3 freetype
   "${ICONV_PREFIX}/lib/libiconv.a" android log)

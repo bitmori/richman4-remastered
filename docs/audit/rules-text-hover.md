@@ -3,7 +3,7 @@
 Audit date 2026-10-05, run against the working tree with a merge in progress. Research only; no code was changed.
 Priority: **P1** = dad will probably hit it in his first few games. **P2** = he will notice it eventually. **P3** = polish, or not reachable.
 
-**Frequency sweep.** `build/native/rich4-native.app` with `--headless --start-new`, maps 0-7 × seeds 1/2/3/5 at 40 rounds, plus map 7 seed 12. That is 33 games, and they produced two kinds of dialog:
+**Frequency sweep.** `build/native/rich4-portable.app` with `--headless --start-new`, maps 0-7 × seeds 1/2/3/5 at 40 rounds, plus map 7 seed 12. That is 33 games, and they produced two kinds of dialog:
 - `这个设施的规则尚未完成` once, on map 2 seed 5 (node 84, code 8002 = the prison building).
 - The English news-15 text twice, both on map 7 seed 12.
 

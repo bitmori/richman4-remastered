@@ -29,6 +29,10 @@ target_link_libraries(rich4-state-check PRIVATE rich4_core)
 add_executable(rich4-native-fixture tools/playability/native_fixture.cpp)
 target_link_libraries(rich4-native-fixture PRIVATE rich4_core)
 
+# TinySoundFont renders the original MIDI music (header-only, implemented in tools/native_audio.cpp).
+add_library(rich4_tinysoundfont INTERFACE)
+target_include_directories(rich4_tinysoundfont SYSTEM INTERFACE third_party/TinySoundFont)
+
 if(RICH4_BUILD_VIEWER OR RICH4_BUILD_GAME)
   find_package(SDL3 3.2 CONFIG REQUIRED)
 endif()
@@ -46,13 +50,23 @@ endif()
 if(RICH4_BUILD_GAME)
   find_package(Freetype REQUIRED)
   find_package(Iconv REQUIRED)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(FLUIDSYNTH REQUIRED IMPORTED_TARGET fluidsynth)
+  # General MIDI bank for the music (TimGM6mb, GPL-2; Debian's pristine upstream tarball).
+  set(RICH4_SOUNDFONT_FILE "" CACHE FILEPATH "TimGM6mb.sf2 to bundle (downloaded when empty)")
+  if(NOT RICH4_SOUNDFONT_FILE)
+    set(soundfont_archive "${CMAKE_BINARY_DIR}/downloads/timgm6mb-soundfont_1.3.orig.tar.gz")
+    set(RICH4_SOUNDFONT_FILE "${CMAKE_BINARY_DIR}/downloads/timgm6mb-soundfont_1.3/TimGM6mb.sf2")
+    if(NOT EXISTS "${RICH4_SOUNDFONT_FILE}")
+      file(DOWNLOAD https://deb.debian.org/debian/pool/main/t/timgm6mb-soundfont/timgm6mb-soundfont_1.3.orig.tar.gz
+        "${soundfont_archive}" TLS_VERIFY ON
+        EXPECTED_HASH SHA256=af8f3a00e416dfb262bcaa904a1c84df04a51b72bbc1313aed012bc754bdf99b)
+      file(ARCHIVE_EXTRACT INPUT "${soundfont_archive}" DESTINATION "${CMAKE_BINARY_DIR}/downloads")
+    endif()
+  endif()
   add_executable(rich4-contact-sheet tools/contact_sheet.cpp)
   target_link_libraries(rich4-contact-sheet PRIVATE rich4_core Freetype::Freetype Iconv::Iconv)
   add_executable(rich4-effect-preview tools/screens/effect_preview.cpp tools/screens/effects.cpp)
   target_link_libraries(rich4-effect-preview PRIVATE rich4_core Freetype::Freetype Iconv::Iconv)
-  add_executable(rich4-native tools/native_game.cpp tools/native_audio.cpp tools/platform_desktop.cpp
+  add_executable(rich4-portable tools/native_game.cpp tools/native_audio.cpp tools/platform_desktop.cpp
     tools/screens/main_screen.cpp
     tools/screens/effects.cpp tools/screens/intro.cpp
     tools/screens/messages.cpp tools/screens/draw.cpp tools/screens/finance.cpp
@@ -60,11 +74,16 @@ if(RICH4_BUILD_GAME)
     tools/screens/items.cpp tools/screens/spinners.cpp tools/screens/facility.cpp tools/screens/endgame.cpp tools/screens/help.cpp
     tools/screens/monthly.cpp tools/screens/minigames.cpp
     tools/screens/tile_popup.cpp tools/screens/ai_settings.cpp)
-  target_link_libraries(rich4-native PRIVATE rich4_core SDL3::SDL3 Freetype::Freetype Iconv::Iconv PkgConfig::FLUIDSYNTH)
-  target_compile_options(rich4-native PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic>)
+  target_link_libraries(rich4-portable PRIVATE rich4_core rich4_tinysoundfont SDL3::SDL3 Freetype::Freetype Iconv::Iconv)
+  target_compile_options(rich4-portable PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic>)
   if(APPLE)
-    set_target_properties(rich4-native PROPERTIES MACOSX_BUNDLE TRUE
+    set_target_properties(rich4-portable PROPERTIES MACOSX_BUNDLE TRUE
       MACOSX_BUNDLE_GUI_IDENTIFIER org.rich4.Native MACOSX_BUNDLE_BUNDLE_NAME "大富翁 4")
+    target_sources(rich4-portable PRIVATE "${RICH4_SOUNDFONT_FILE}")
+    set_source_files_properties("${RICH4_SOUNDFONT_FILE}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  else()
+    add_custom_command(TARGET rich4-portable POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${RICH4_SOUNDFONT_FILE}" "$<TARGET_FILE_DIR:rich4-portable>/TimGM6mb.sf2")
   endif()
 endif()
 
@@ -73,7 +92,8 @@ if(BUILD_TESTING)
   if(RICH4_BUILD_GAME)
     add_executable(native_audio_tests tests/native_audio_tests.cpp tools/native_audio.cpp)
     target_include_directories(native_audio_tests PRIVATE tools)
-    target_link_libraries(native_audio_tests PRIVATE rich4_core SDL3::SDL3 PkgConfig::FLUIDSYNTH)
+    target_link_libraries(native_audio_tests PRIVATE rich4_core rich4_tinysoundfont SDL3::SDL3)
+    target_compile_definitions(native_audio_tests PRIVATE RICH4_DEFAULT_SOUNDFONT="${RICH4_SOUNDFONT_FILE}")
     add_test(NAME native_audio COMMAND native_audio_tests)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/game-assets/effect.mkf" OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/game-assets/Effect.mkf")
       add_test(NAME native_audio_original_assets COMMAND native_audio_tests "${CMAKE_CURRENT_SOURCE_DIR}/game-assets")

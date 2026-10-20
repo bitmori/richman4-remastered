@@ -54,7 +54,7 @@ android {
 val prepareRich4Assets by tasks.registering {
     val source = providers.gradleProperty("rich4.gameAssets").orElse(rootProject.file("../game-assets").path)
     val font = providers.gradleProperty("rich4.font")
-    val soundfont = File(thirdParty, "downloads/GeneralUser-GS.sf2")
+    val soundfont = File(thirdParty, "downloads/TimGM6mb.sf2")
     val output = layout.buildDirectory.dir("generated/rich4Assets/rich4-data")
     inputs.dir(source)
     inputs.property("font", font.orElse(""))
@@ -74,7 +74,7 @@ val prepareRich4Assets by tasks.registering {
             .filter { it.isFile && it.extension.lowercase() in setOf("mkf", "mid", "wav") }
             .forEach { add(it, "game/${it.name}") }
         require(names.any { it.equals("game/Data.mkf", ignoreCase = true) }) { "No Data.mkf in ${source.get()}" }
-        add(soundfont, "GeneralUser-GS.sf2")
+        add(soundfont, "TimGM6mb.sf2")
         if (font.isPresent) add(File(font.get()), "font.otf")
         val stamp = digest.digest().joinToString("") { "%02x".format(it) }.take(16)
         File(target, "manifest.txt").writeText((listOf(stamp) + names).joinToString("\n", postfix = "\n"))

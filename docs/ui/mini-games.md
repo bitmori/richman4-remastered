@@ -193,5 +193,5 @@ The look, timing, rules and scoring are unchanged. The input changes:
 - Native-only option toggle: Options "動畫過程" now switches the interactive mini-games (cfg+1).
   The on mark is Data 3:9 at (98, 50) in the window (ui_options `ref_00474c22/26`). It defaults to
   on. Other cfg+1 effects (god/shop animations) are not tied to it yet.
-- Dev: `rich4-native --minigame penguin|balloon|catch` launches a game directly. With `--headless
+- Dev: `rich4-portable --minigame penguin|balloon|catch` launches a game directly. With `--headless
   --output DIR` it auto-plays and writes start/mid/result frames.

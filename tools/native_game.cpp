@@ -113,10 +113,82 @@ struct Options {
     std::uint32_t seed = static_cast<std::uint32_t>(std::time(nullptr));
 };
 
+#ifndef RICH4_MOBILE
+bool has_game_files(const fs::path &directory) {
+    std::error_code error;
+    if (directory.empty() || !fs::is_directory(directory, error))
+        return false;
+    try {
+        ui::asset_path(directory, "data.mkf");
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+// Asks for the Richman 4 install folder (the one holding rich4.exe and Data.mkf); empty if cancelled.
+fs::path choose_game_folder() {
+    require(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS));
+    const char *title = "大富翁 4";
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, title,
+                             "找不到遊戲檔案。\n請選擇《大富翁4》的安裝資料夾（含 rich4.exe 與 Data.mkf）。", nullptr);
+    struct Choice {
+        bool done = false;
+        fs::path folder;
+    };
+    for (;;) {
+        Choice choice;
+        SDL_ShowOpenFolderDialog(
+            [](void *data, const char *const *files, int) {
+                auto &result = *static_cast<Choice *>(data);
+                if (files && files[0])
+                    result.folder = files[0];
+                result.done = true;
+            },
+            &choice, nullptr, nullptr, false);
+        while (!choice.done) {
+            SDL_Event event{};
+            SDL_WaitEventTimeout(&event, 50);
+        }
+        if (choice.folder.empty() || has_game_files(choice.folder))
+            return choice.folder;
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, title,
+                                 "這個資料夾裡沒有 Data.mkf。\n請選擇《大富翁4》的安裝資料夾（含 rich4.exe）。",
+                                 nullptr);
+    }
+}
+
+// --assets, then $RICH4_ASSETS, ~/.local/share/rich4, the last folder picked, the build's game-assets/;
+// otherwise ask (interactive runs only) and remember the answer.
+fs::path find_game_folder(const fs::path &home, bool interactive) {
+    const auto remembered = home / "Library/Application Support/Rich4Native/assets-path.txt";
+    std::vector<fs::path> candidates;
+    if (const auto *environment = std::getenv("RICH4_ASSETS"))
+        candidates.emplace_back(environment);
+    candidates.push_back(home / ".local/share/rich4");
+    if (std::ifstream file{remembered}; file) {
+        std::string line;
+        if (std::getline(file, line))
+            candidates.emplace_back(line);
+    }
+    candidates.emplace_back(RICH4_DEFAULT_ASSETS);
+    for (const auto &candidate : candidates)
+        if (has_game_files(candidate))
+            return candidate;
+    if (!interactive)
+        return RICH4_DEFAULT_ASSETS;
+    const auto chosen = choose_game_folder();
+    if (chosen.empty())
+        throw std::runtime_error("No game folder chosen; pass --assets DIR or put the game in ~/.local/share/rich4");
+    fs::create_directories(remembered.parent_path());
+    std::ofstream(remembered) << chosen.string() << '\n';
+    return chosen;
+}
+#endif
+
 Options arguments(int argc, char **argv) {
     const fs::path home = std::getenv("HOME") ? std::getenv("HOME") : ".";
     Options options;
-    options.assets = RICH4_DEFAULT_ASSETS;
     options.save_directory = home / "Library/Application Support/Rich4Native/saves";
 #ifdef RICH4_MOBILE
     // Android: extracted APK assets; iOS: the app bundle. Bundled/system font, SDL pref path.
@@ -206,6 +278,10 @@ Options arguments(int argc, char **argv) {
     }
     if (options.headless && options.output.empty() && options.gallery.empty())
         throw std::invalid_argument("Headless testing requires --output DIR");
+#ifndef RICH4_MOBILE
+    if (options.assets.empty())
+        options.assets = find_game_folder(home, !options.headless && !options.hidden_window);
+#endif
     if (options.font.empty()) {
         const std::array candidates{
             fs::path("/Applications/Microsoft Word.app/Contents/Resources/DFonts/mingliu.ttc"),
@@ -3329,8 +3405,9 @@ class Application {
 
 int main(int argc, char **argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--help") {
-        std::cout << "rich4-native [--assets DIR] [--font FONT] [--load SAVE.DAT] [--save-dir DIR]\n"
-                     "  --headless --auto-rounds N --output DIR [--start-new] [--seed N] [--overlay-gallery]\n";
+        std::cout << "rich4-portable [--assets DIR] [--font FONT] [--load SAVE.DAT] [--save-dir DIR]\n"
+                     "  --headless --auto-rounds N --output DIR [--start-new] [--seed N] [--overlay-gallery]\n"
+                     "Without --assets: $RICH4_ASSETS, ~/.local/share/rich4, the last chosen folder, else ask.\n";
         return 0;
     }
     int status = 0;
@@ -3347,7 +3424,7 @@ int main(int argc, char **argv) {
             throw;
         }
     } catch (const std::exception &error) {
-        std::cerr << "rich4-native: " << error.what() << '\n';
+        std::cerr << "rich4-portable: " << error.what() << '\n';
         status = 1;
     }
 #if defined(TARGET_OS_IOS) && TARGET_OS_IOS

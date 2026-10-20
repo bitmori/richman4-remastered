@@ -13,7 +13,7 @@ struct Paths {
 
 // Call once from arguments(), before SDL_Init. Game files, font and soundfont are read straight
 // from the app bundle (no extraction); saves go to SDL_GetPrefPath (Library/Application Support).
-// Sets landscape/home-indicator hints, points FluidSynth at the bundled bank through
+// Sets landscape/home-indicator hints, points the MIDI synthesizer at the bundled bank through
 // RICH4_SOUNDFONT and logs a Big5 self-test of the system iconv. Throws std::runtime_error.
 Paths prepare();
 

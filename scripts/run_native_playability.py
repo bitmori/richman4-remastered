@@ -10,7 +10,7 @@ import time
 import uuid
 
 REPO = Path(__file__).resolve().parent.parent
-DEFAULT_BINARY = REPO / "build/native/rich4-native.app/Contents/MacOS/rich4-native"
+DEFAULT_BINARY = REPO / "build/native/rich4-portable.app/Contents/MacOS/rich4-portable"
 
 
 def sha256(path):

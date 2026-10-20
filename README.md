@@ -89,7 +89,7 @@ non-blank). Including tests, tooling and the mobile shells the new code is ~51.6
 ## 在 Mac 上玩
 
 ```sh
-brew install cmake sdl3 freetype fluid-synth
+brew install cmake sdl3 freetype
 ```
 
 双击 **`Play Rich4 Native.command`**（或执行 `./scripts/run_native_mac.sh`）。存档在
@@ -105,7 +105,7 @@ Mac 会优先使用本机 Microsoft Office 的细明体，没有时使用 Noto S
 scripts/build_android.sh <序号>                          # 建置并安装；省略序号则只建置
 ```
 
-第一次建置会下载 SDL3、FreeType、FluidSynth、libiconv、GeneralUser GS 音色库与 Noto 字体（校验 SHA-256，
+第一次建置会下载 SDL3、FreeType、libiconv、TimGM6mb 音色库与 Noto 字体（校验 SHA-256，
 放在 gitignored 的 `android/third_party/`）。APK 约 190 MB（含你的游戏素材），只能侧载，**绝不要上传
 Google Play 或分享给他人**。App 名称“大富翁4”，图标取自你的 `rich4.exe`。切到后台会自动写入
 `Autosave.DAT`；标题画面的 EXIT 会结束 App。
@@ -129,7 +129,7 @@ iPhone 需已“信任此电脑”并开启“开发者模式”（设置 › �
 ## 编译原生核心与 Mac 查看器
 
 ```sh
-brew install cmake sdl3 freetype fluid-synth
+brew install cmake sdl3 freetype
 cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Debug -DRICH4_SANITIZERS=ON
 cmake --build build/native --parallel
 ctest --test-dir build/native --output-on-failure
@@ -208,7 +208,7 @@ python3 scripts/test_android_core.py --serial emulator-5554 \
 
 ## iOS（iPhone / iPad，仅本机安装）
 
-`ios/` 是 CMake（Xcode 生成器，`CMAKE_SYSTEM_NAME=iOS`）工程，直接编译仓库根目录的源码，加上 SDL3 3.4.16、FreeType、FluidSynth（无 glib、无后端）；Big5 用 iOS 系统 libiconv。第三方源码由脚本下载到 `ios/third_party/`（gitignored，SHA-256 校验，版本同 Android）。`game-assets/` 的 mkf/mid/wav、GeneralUser GS 音色库与 Noto Serif CJK TC 字体在编译时复制进 app 包（不进 Git），游戏直接从包内读取；存档在 app 的 `Library/Application Support/divby0/rich4/saves`，切到后台写入 `Autosave.DAT`。图标由 `scripts/make_ios_icon.py` 从 rich4.exe 生成。Bundle id `io.divby0.rich4`，仅横屏、全屏、隐藏状态栏。**不要上传 App Store / TestFlight。**
+`ios/` 是 CMake（Xcode 生成器，`CMAKE_SYSTEM_NAME=iOS`）工程，直接编译仓库根目录的源码，加上 SDL3 3.4.16、FreeType；MIDI 由仓库内的 TinySoundFont 合成；Big5 用 iOS 系统 libiconv。第三方源码由脚本下载到 `ios/third_party/`（gitignored，SHA-256 校验，版本同 Android）。`game-assets/` 的 mkf/mid/wav、TimGM6mb 音色库与 Noto Serif CJK TC 字体在编译时复制进 app 包（不进 Git），游戏直接从包内读取；存档在 app 的 `Library/Application Support/divby0/rich4/saves`，切到后台写入 `Autosave.DAT`。图标由 `scripts/make_ios_icon.py` 从 rich4.exe 生成。Bundle id `io.divby0.rich4`，仅横屏、全屏、隐藏状态栏。**不要上传 App Store / TestFlight。**
 
 ```sh
 scripts/build_ios.sh                                   # 模拟器版（ad-hoc 签名）
@@ -295,7 +295,7 @@ Boxedwine 官方 Mac 应用启用了沙盒，因此游戏、字体、Wine 文件
 
 `RICH4_ASSET_TRACE=FILE` 会记录游戏读取的每个 MKF 条目，用于找出尚未使用的原版素材（见 `docs/audit/`）。
 `build/native/rich4-contact-sheet ARCHIVE FIRST LAST OUT.ppm` 把 MKF 条目画成带编号的总览图；
-`build/native/rich4-tool flc` 可导出 FLC 动画帧；`rich4-native` 另有 `--gallery`、`--items-gallery`、
+`build/native/rich4-tool flc` 可导出 FLC 动画帧；`rich4-portable` 另有 `--gallery`、`--items-gallery`、
 `--overlay-gallery`、`--monthly-gallery` 等开发用画廊参数，可一次输出各画面截图。
 
 ## 来源

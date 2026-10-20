@@ -72,9 +72,8 @@ enum class Music : std::uint8_t {
 // music position, on SDL_EVENT_DID_ENTER_FOREGROUND.
 class Audio {
   public:
-    // Optional bank: SF2 or DLS supported by the installed FluidSynth. Otherwise
-    // consult RICH4_SOUNDFONT, then the macOS system General MIDI bank. Never
-    // copies or redistributes the platform's soundbank.
+    // Optional General MIDI SF2 bank for TinySoundFont. Otherwise consult RICH4_SOUNDFONT,
+    // then TimGM6mb.sf2 next to the program (the macOS app's Resources), then the build's copy.
     Audio(const std::filesystem::path &asset_directory, bool enabled = true,
           const std::filesystem::path &soundbank = {});
     ~Audio();
