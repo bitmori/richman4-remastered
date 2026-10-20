@@ -122,6 +122,16 @@ xattr -d com.apple.quarantine ~/depotdownloader/DepotDownloader   # 解除 Gatek
 
 ## 在 Mac 上玩
 
+**直接下载（Apple Silicon，macOS 14 以上）：** 到本仓库的 GitHub Releases 下载 `rich4-portable-macos-arm64.zip`，
+解压后执行一次下面的命令解除下载隔离（App 没有经过 Apple 公证），再双击 `rich4-portable.app`，
+第一次启动时选择游戏目录（见上文“Steam 版的目录”）：
+
+```sh
+xattr -dr com.apple.quarantine rich4-portable.app
+```
+
+**自己编译：**
+
 ```sh
 brew install cmake sdl3 freetype
 ```

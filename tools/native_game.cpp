@@ -286,7 +286,8 @@ Options arguments(int argc, char **argv) {
         options.assets = find_game_folder(home, !options.headless && !options.hidden_window);
 #endif
     if (options.font.empty()) {
-        // --font, then $RICH4_FONT, then the first line of font-path.txt, then the known MingLiU copies.
+        // --font, then $RICH4_FONT, then the first line of font-path.txt, then the known MingLiU copies,
+        // then Hiragino Sans GB, which every macOS ships (PingFang moved into downloadable assets).
         std::vector<fs::path> candidates;
         if (const auto *environment = std::getenv("RICH4_FONT"); environment && *environment)
             candidates.emplace_back(environment);
@@ -297,9 +298,12 @@ Options arguments(int argc, char **argv) {
         }
         for (const auto &path : {
             fs::path("/Applications/Microsoft Word.app/Contents/Resources/DFonts/mingliu.ttc"),
+            fs::path("/Applications/Microsoft Excel.app/Contents/Resources/DFonts/mingliu.ttc"),
+            fs::path("/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts/mingliu.ttc"),
             home / "Library/Containers/org.boxedwine/Data/Library/Application "
                    "Support/Boxedwine/Rich4/root/home/username/.wine/drive_c/windows/Fonts/mingliu.ttc",
-            fs::path("/System/Library/Fonts/PingFang.ttc")})
+            fs::path("/System/Library/Fonts/PingFang.ttc"),
+            fs::path("/System/Library/Fonts/Hiragino Sans GB.ttc")})
             candidates.push_back(path);
         for (const auto &path : candidates)
             if (fs::is_regular_file(path)) {
@@ -3421,7 +3425,7 @@ int main(int argc, char **argv) {
         std::cout << "rich4-portable [--assets DIR] [--font FONT] [--load SAVE.DAT] [--save-dir DIR]\n"
                      "  --headless --auto-rounds N --output DIR [--start-new] [--seed N] [--overlay-gallery]\n"
                      "Without --assets: $RICH4_ASSETS, ~/.local/share/rich4, the last chosen folder, else ask.\n"
-                     "Without --font: $RICH4_FONT, ~/Library/Application Support/Rich4Native/font-path.txt, MingLiU.\n";
+                     "Without --font: $RICH4_FONT, ~/Library/Application Support/Rich4Native/font-path.txt, MingLiU, Hiragino Sans GB.\n";
         return 0;
     }
     int status = 0;

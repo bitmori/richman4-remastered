@@ -1,14 +1,24 @@
 # Builds the native macOS app (Apple Silicon) and uploads a self-contained zip:
 # Homebrew dylibs are copied into the bundle so it runs without Homebrew installed.
 # Game assets are never part of the build; players pass their own with --assets.
+# A pushed v* tag also publishes the zip as a GitHub Release; every push to steam-ogg-support
+# replaces the rolling prerelease steam-ogg-support-latest.
 name: macOS build
 
 on:
   push:
-    branches: [main]
+    branches: [main, steam-ogg-support]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write # gh release create/upload/delete
+
+# A newer push to the same branch supersedes a running build (and its rolling release).
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -57,3 +67,33 @@ jobs:
         with:
           name: rich4-portable-macos-arm64
           path: dist/rich4-portable-macos-arm64.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/steam-ogg-support'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          Apple Silicon Mac (macOS 14 or later). Game files are not included: buy Richman 4 on
+          [Steam](https://store.steampowered.com/app/2059810/Richman_4/?l=tchinese) and choose its
+          install folder when the app asks (see the README).
+
+          The app is not notarized. After unzipping, clear the download quarantine once:
+
+          ```sh
+          xattr -dr com.apple.quarantine rich4-portable.app
+          ```
+          NOTES
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+            # Re-running the job for the same tag replaces the zip instead of failing.
+            gh release view "$tag" >/dev/null 2>&1 ||
+              gh release create "$tag" --title "$tag" --notes-file notes.md
+          else
+            # Rolling prerelease: one per branch, recreated on the newest commit at every push.
+            tag="$GITHUB_REF_NAME-latest"
+            gh release delete "$tag" --cleanup-tag --yes >/dev/null 2>&1 || true
+            gh release create "$tag" --target "$GITHUB_SHA" --prerelease \
+              --title "$GITHUB_REF_NAME (${GITHUB_SHA::7})" --notes-file notes.md
+          fi
+          gh release upload "$tag" dist/rich4-portable-macos-arm64.zip --clobber
