@@ -78,13 +78,47 @@ non-blank). Including tests, tooling and the mobile shells the new code is ~51.6
 **建置任何平台之前**，先把游戏文件放进 `game-assets/`。详细清单、目录示意与各平台指令见
 **[`game-assets/README.md`](game-assets/README.md)**。
 
-1. 在 Steam 购买并安装《大富翁4》（或使用你已拥有的原版光盘版）。
+1. 在 Steam 购买并安装《大富翁4》（或使用你已拥有的原版光盘版）。没有 Windows 也能下载 Steam 版，见下文“不装 Steam 客户端下载”。
 2. 把游戏安装文件夹里的文件直接复制到本仓库根目录的 `game-assets/`（除了其中的 README，此目录内容已被 gitignore，绝不会提交）：
-   - 必需：所有 `*.mkf`（`Data`、`Panel`、`map`、`Effect`、`Speaking`、`jump`、`help`）、`*.mid` 音乐、`*.wav`；
-   - 建议：`rich4.exe`（只在建置时读取它的图标作为 App 图标；不会被执行，也不会打包）。
+   - 必需：所有 `*.mkf`（`Data`、`Panel`、`map`、`Effect`、`Speaking`、`jump`、`help`）；
+   - 音乐：光盘版的 `*.mid`，或 Steam 版 `Media/Music/` 里的 `track02.ogg`…`track26.ogg`（原版 CD 音轨，有它就不需要 `.mid`）；
+   - 建议：`*.wav`、`rich4.exe`（只在建置时读取它的图标作为 App 图标；不会被执行，也不会打包）。
    - `*.avi` 过场不需要。
 3. 本项目以原版 v3.11 光盘版的文件验证（`scripts/audit_assets.py` 可检查）。Steam 版的文件尚未逐一比对；
    若有不同，请回报。
+
+### Steam 版的目录
+
+Steam 版同时装了两个版本，要用 **`MultiverseJourney/`（V3.11）**：
+
+| 目录 | 内容 |
+| --- | --- |
+| `MultiverseJourney/` | V3.11 的 `*.mkf` 与 `rich4.exe`，本项目使用这一份 |
+| `Game/` | 较旧的 V2.06（主菜单没有 NEW STAGE），不能用 |
+| `Media/Music/` | 背景音乐 `track02.ogg`…`track26.ogg` |
+
+Mac 版可以不复制文件：第一次启动时在选择框里选 Steam 的安装目录（选根目录即可，会自动改用 `MultiverseJourney/`），
+音乐会从旁边的 `Media/Music/` 读取；也可以用 `--assets <Steam 目录>/MultiverseJourney` 指定。
+手机版要打包进 App，仍须把 `MultiverseJourney/*.mkf` 与 `Media/Music/*.ogg` 一起复制到 `game-assets/`。
+
+### 不装 Steam 客户端下载
+
+[DepotDownloader](https://github.com/SteamRE/DepotDownloader)（开源，自带运行时，不必安装 .NET）可以用你自己的 Steam
+账号直接从 Steam 服务器下载 Windows 版文件。账号里必须已经购买本作（app 2059810）。Apple Silicon Mac：
+
+```sh
+curl -fLO https://github.com/SteamRE/DepotDownloader/releases/latest/download/DepotDownloader-macos-arm64.zip
+unzip DepotDownloader-macos-arm64.zip -d ~/depotdownloader
+xattr -d com.apple.quarantine ~/depotdownloader/DepotDownloader   # 解除 Gatekeeper 隔离
+~/depotdownloader/DepotDownloader -app 2059810 -os windows -qr -dir ~/rich4-steam
+```
+
+- `-qr` 会在终端显示二维码，用手机 Steam App 扫码登录，不必输入密码（用户名 + 密码登录常因 Steam Guard 失败）。
+- `-os windows`：本作只有 Windows 版的 depot。
+- 其他平台把压缩包换成 `DepotDownloader-macos-x64.zip`、`-linux-x64.zip`、`-windows-x64.zip` 等。
+- 卡在 `Connecting to Steam3...` 时多半是网络连不上 Steam，换个网络或开代理再试。
+
+下载完成后，按上文“Steam 版的目录”使用 `~/rich4-steam`。
 
 ## 在 Mac 上玩
 
@@ -94,7 +128,24 @@ brew install cmake sdl3 freetype
 
 双击 **`Play Rich4 Native.command`**（或执行 `./scripts/run_native_mac.sh`）。存档在
 `~/Library/Application Support/Rich4Native/saves`。空格/Enter 掷骰，F5 存档，F9 读档。
-Mac 会优先使用本机 Microsoft Office 的细明体，没有时使用 Noto Serif CJK TC。
+
+### 字体
+
+依序使用：`--font 字体文件`、环境变量 `RICH4_FONT`、`~/Library/Application Support/Rich4Native/font-path.txt`
+的第一行，最后是本机 Microsoft Office 的细明体。`.ttf`/`.otf`/`.ttc` 都可以（`.ttc` 只用其中第一款）。
+
+Office 的细明体没有原版 Windows 的内嵌点阵，小字号偏细偏糊。想要清楚的像素风格，可以用开源的
+[俐方体 11 号（Cubic 11）](https://github.com/ACh-K/Cubic-11)（SIL Open Font License 1.1，繁体中文齐全）：
+
+```sh
+mkdir -p ~/Library/Application\ Support/Rich4Native
+curl -fL -o ~/Library/Application\ Support/Rich4Native/Cubic_11.ttf \
+  https://raw.githubusercontent.com/ACh-K/Cubic-11/main/fonts/ttf/Cubic_11.ttf
+echo ~/Library/Application\ Support/Rich4Native/Cubic_11.ttf > ~/Library/Application\ Support/Rich4Native/font-path.txt
+```
+
+之后每次启动（包括双击）都会使用它；删除 `font-path.txt` 即恢复默认。系统自带字体里，
+`/System/Library/Fonts/Hiragino Sans GB.ttc`（冬青黑体）也很清楚。
 
 ## Android（仅侧载到自己的手机）
 
@@ -303,6 +354,8 @@ Boxedwine 官方 Mac 应用启用了沙盒，因此游戏、字体、Wine 文件
 - [mytbk/rich4](https://github.com/mytbk/rich4)，固定版本 `ec7d70e693059d1e781d9d1cc2ad7f36d360d39e`，GPL-3.0。
 - [Boxedwine 26R1.0](https://github.com/danoon2/Boxedwine/releases/tag/26R1.0)，官方 Mac 应用；Wine 11.0 的 32 位文件系统。
 - [Noto CJK](https://github.com/notofonts/noto-cjk)，手机版与缺少本机细明体时使用，SIL Open Font License 1.1。
+- [俐方体 11 号（Cubic 11）](https://github.com/ACh-K/Cubic-11)，可选的像素字体，由用户自行下载，不随本项目分发，SIL Open Font License 1.1。
+- [DepotDownloader](https://github.com/SteamRE/DepotDownloader)，可选的 Steam 下载工具，由用户自行下载，GPL-2.0。
 - 其余第三方元件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 《大富翁4》© 1998–2022 SOFTSTAR
