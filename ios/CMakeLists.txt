@@ -84,7 +84,7 @@ endif()
 
 add_executable(rich4 MACOSX_BUNDLE ${sources})
 target_include_directories(rich4 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${RICH4_REPO}/tools")
-target_link_libraries(rich4 PRIVATE rich4_core rich4_tinysoundfont SDL3::SDL3-static freetype iconv
+target_link_libraries(rich4 PRIVATE rich4_core rich4_tinysoundfont rich4_stb_vorbis SDL3::SDL3-static freetype iconv
   "-framework UIKit")
 set_source_files_properties(rich4_ios.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 set_target_properties(rich4 PROPERTIES

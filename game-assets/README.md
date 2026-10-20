@@ -17,7 +17,8 @@ local files) directly into `game-assets/`, not into a subfolder. File name case 
 | 檔案 / Files | 必要性 / Needed | 用途 / Purpose |
 | --- | --- | --- |
 | `Data.mkf`、`Panel.mkf`、`map.mkf`、`Effect.mkf`、`Speaking.mkf`、`jump.mkf`、`help.mkf` | **必要 / required** | 圖片、動畫、地圖、音效、語音、說明 / graphics, movies, maps, sound effects, voices, help |
-| `*.mid`（`midi01.mid`…、`Rich08.mid`…`Rich22.mid`） | **必要 / required** | 背景音樂 / music |
+| `*.mid`（`midi01.mid`…、`Rich08.mid`…`Rich22.mid`） | 光碟版必要 / required for the CD release | 背景音樂（MIDI）/ music (MIDI) |
+| `track02.ogg`…`track26.ogg` | Steam 版必要 / required for Steam | 背景音樂（原版 CD 音軌，在 Steam 的 `Media/Music/`；有它就不需要 `.mid`）/ music (the original CD audio, in Steam's `Media/Music/`; replaces the `.mid` files) |
 | `*.wav` | 建議 / recommended | 安裝程式音效（目前未使用）/ installer sounds (not used yet) |
 | `rich4.exe` | 建議 / recommended | 只在建置 Android / iOS 時讀取它的圖示做 App 圖示；不會執行、不會打包 / read at build time for the app icon only; never run or packaged |
 | `*.avi` | 不需要 / not needed | 原版過場（本專案未使用）/ cutscenes (not used) |
@@ -34,7 +35,8 @@ game-assets/
 ├── map.mkf
 ├── Panel.mkf
 ├── Speaking.mkf
-├── midi01.mid … midi16.mid, Rich08.mid … Rich22.mid
+├── midi01.mid … midi16.mid, Rich08.mid … Rich22.mid   ← 光碟版 / CD release
+├── track02.ogg … track26.ogg                           ← Steam 版 / Steam release
 └── rich4.exe        ← 選用 / optional (app icon)
 ```
 

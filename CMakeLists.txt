@@ -32,6 +32,9 @@ target_link_libraries(rich4-native-fixture PRIVATE rich4_core)
 # TinySoundFont renders the original MIDI music (header-only, implemented in tools/native_audio.cpp).
 add_library(rich4_tinysoundfont INTERFACE)
 target_include_directories(rich4_tinysoundfont SYSTEM INTERFACE third_party/TinySoundFont)
+# stb_vorbis decodes the Steam release's CD audio tracks (single file, implemented in tools/native_audio.cpp).
+add_library(rich4_stb_vorbis INTERFACE)
+target_include_directories(rich4_stb_vorbis SYSTEM INTERFACE third_party/stb)
 
 if(RICH4_BUILD_VIEWER OR RICH4_BUILD_GAME)
   find_package(SDL3 3.2 CONFIG REQUIRED)
@@ -74,7 +77,7 @@ if(RICH4_BUILD_GAME)
     tools/screens/items.cpp tools/screens/spinners.cpp tools/screens/facility.cpp tools/screens/endgame.cpp tools/screens/help.cpp
     tools/screens/monthly.cpp tools/screens/minigames.cpp
     tools/screens/tile_popup.cpp tools/screens/ai_settings.cpp)
-  target_link_libraries(rich4-portable PRIVATE rich4_core rich4_tinysoundfont SDL3::SDL3 Freetype::Freetype Iconv::Iconv)
+  target_link_libraries(rich4-portable PRIVATE rich4_core rich4_tinysoundfont rich4_stb_vorbis SDL3::SDL3 Freetype::Freetype Iconv::Iconv)
   target_compile_options(rich4-portable PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic>)
   if(APPLE)
     set_target_properties(rich4-portable PROPERTIES MACOSX_BUNDLE TRUE
@@ -92,7 +95,7 @@ if(BUILD_TESTING)
   if(RICH4_BUILD_GAME)
     add_executable(native_audio_tests tests/native_audio_tests.cpp tools/native_audio.cpp)
     target_include_directories(native_audio_tests PRIVATE tools)
-    target_link_libraries(native_audio_tests PRIVATE rich4_core rich4_tinysoundfont SDL3::SDL3)
+    target_link_libraries(native_audio_tests PRIVATE rich4_core rich4_tinysoundfont rich4_stb_vorbis SDL3::SDL3)
     target_compile_definitions(native_audio_tests PRIVATE RICH4_DEFAULT_SOUNDFONT="${RICH4_SOUNDFONT_FILE}")
     add_test(NAME native_audio COMMAND native_audio_tests)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/game-assets/effect.mkf" OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/game-assets/Effect.mkf")

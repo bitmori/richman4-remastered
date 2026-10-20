@@ -4,7 +4,8 @@ The Richman 4 (大富翁4) engine in this repository is GPL-3.0-or-later (see [`
 content is **not** included and is not covered by any license here; see [`NOTICE.md`](NOTICE.md).
 
 The only third-party code committed to this repository is TinySoundFont (two MIT-licensed headers in
-`third_party/TinySoundFont/`, with its `LICENSE`). No third-party binaries, fonts or sound banks are
+`third_party/TinySoundFont/`, with its `LICENSE`) and stb_vorbis (`third_party/stb/stb_vorbis.c`, its
+license at the end of the file). No third-party binaries, fonts or sound banks are
 committed. The build scripts and CMake download the other components below into gitignored directories
 (`android/third_party/`, `ios/third_party/`, the CMake build directory) and verify each download by
 SHA-256, or the Mac build links the Homebrew copies.
@@ -22,6 +23,7 @@ SHA-256, or the Mac build links the Homebrew copies.
 | [SDL](https://libsdl.org) | 3.4.x (3.4.16 on Android/iOS) | all | zlib |
 | [FreeType](https://freetype.org) | 2.14.x (2.14.3 on Android/iOS) | all | FreeType License (FTL), used under the FTL option |
 | [TinySoundFont](https://github.com/schellingb/TinySoundFont) (`tsf.h`, `tml.h`) @ `853a0a1` | SF2 synthesizer and MIDI loader for the original music | all | MIT |
+| [stb_vorbis](https://github.com/nothings/stb) (`stb_vorbis.c`) v1.22 @ `a7d4c21` | Ogg Vorbis decoder for the Steam release's CD audio tracks | all | MIT or public domain (Unlicense), used under MIT |
 | [GNU libiconv](https://www.gnu.org/software/libiconv/) | 1.18 | Android (statically linked; Android's own iconv has no Big5) | LGPL-2.1-or-later |
 | System iconv | — | macOS, iOS | part of the OS |
 

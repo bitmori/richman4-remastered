@@ -152,6 +152,9 @@ fs::path choose_game_folder() {
         }
         if (choice.folder.empty() || has_game_files(choice.folder))
             return choice.folder;
+        // The Steam install folder holds V3.11 in MultiverseJourney/ (Game/ is the older V2.06).
+        if (has_game_files(choice.folder / "MultiverseJourney"))
+            return choice.folder / "MultiverseJourney";
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, title,
                                  "這個資料夾裡沒有 Data.mkf。\n請選擇《大富翁4》的安裝資料夾（含 rich4.exe）。",
                                  nullptr);
@@ -283,11 +286,21 @@ Options arguments(int argc, char **argv) {
         options.assets = find_game_folder(home, !options.headless && !options.hidden_window);
 #endif
     if (options.font.empty()) {
-        const std::array candidates{
+        // --font, then $RICH4_FONT, then the first line of font-path.txt, then the known MingLiU copies.
+        std::vector<fs::path> candidates;
+        if (const auto *environment = std::getenv("RICH4_FONT"); environment && *environment)
+            candidates.emplace_back(environment);
+        if (std::ifstream file{home / "Library/Application Support/Rich4Native/font-path.txt"}; file) {
+            std::string line;
+            if (std::getline(file, line) && !line.empty())
+                candidates.emplace_back(line);
+        }
+        for (const auto &path : {
             fs::path("/Applications/Microsoft Word.app/Contents/Resources/DFonts/mingliu.ttc"),
             home / "Library/Containers/org.boxedwine/Data/Library/Application "
                    "Support/Boxedwine/Rich4/root/home/username/.wine/drive_c/windows/Fonts/mingliu.ttc",
-            fs::path("/System/Library/Fonts/PingFang.ttc")};
+            fs::path("/System/Library/Fonts/PingFang.ttc")})
+            candidates.push_back(path);
         for (const auto &path : candidates)
             if (fs::is_regular_file(path)) {
                 options.font = path;
@@ -3407,7 +3420,8 @@ int main(int argc, char **argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--help") {
         std::cout << "rich4-portable [--assets DIR] [--font FONT] [--load SAVE.DAT] [--save-dir DIR]\n"
                      "  --headless --auto-rounds N --output DIR [--start-new] [--seed N] [--overlay-gallery]\n"
-                     "Without --assets: $RICH4_ASSETS, ~/.local/share/rich4, the last chosen folder, else ask.\n";
+                     "Without --assets: $RICH4_ASSETS, ~/.local/share/rich4, the last chosen folder, else ask.\n"
+                     "Without --font: $RICH4_FONT, ~/Library/Application Support/Rich4Native/font-path.txt, MingLiU.\n";
         return 0;
     }
     int status = 0;

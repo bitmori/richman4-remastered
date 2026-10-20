@@ -13,6 +13,10 @@
 #include <tsf.h>
 #define TML_IMPLEMENTATION
 #include <tml.h>
+// stb_vorbis (third_party/stb): decodes the CD audio tracks of the Steam release, implemented here.
+#define STB_VORBIS_NO_PUSHDATA_API
+#define STB_VORBIS_NO_STDIO
+#include <stb_vorbis.c>
 
 #include <algorithm>
 #include <array>
@@ -49,6 +53,10 @@ constexpr int bytes_per_frame = channels * int(sizeof(float));
 // keep music within ~1 dB of its old balance against effects and voices.
 constexpr float clip_gain = 0.6F;   // effects and voices (-4.4 dB)
 constexpr float music_gain_db = -12.5F; // TinySoundFont gain: matches the old FluidSynth + macOS DLS music level
+// The CD tracks are mastered near full scale (RMS about -16.5 dBFS); -10 dB brings them to the
+// MIDI render's level.
+constexpr float cd_gain = 0.316F;
+constexpr std::size_t vorbis_arena_bytes = 512 * 1024; // decoder state: the audio thread never allocates
 constexpr std::string_view bundled_soundfont = "TimGM6mb.sf2";
 constexpr SDL_AudioSpec mixer_format{SDL_AUDIO_F32, channels, sample_rate};
 constexpr std::array<std::string_view, 8> music_files{"rich08.mid", "rich16.mid", "rich17.mid", "rich18.mid",
@@ -60,8 +68,29 @@ constexpr std::array<std::string_view, 18> context_files{
     "midi12.mid", "midi13.mid", "midi14-1.mid", "midi14-2.mid", "midi15.mid", "midi16.mid"};
 constexpr std::array<std::string_view, std::size_t(Loop::count)> loop_names{"spinner", "walk", "bomb"};
 
-std::filesystem::path asset_path(const std::filesystem::path &directory, std::string_view name) {
-    for (const auto &entry : std::filesystem::directory_iterator(directory)) {
+// Steam ships the original CD audio as Media/Music/trackNN.ogg (track01 is the data track).
+// Midi.txt lists the same 25 songs in CD order -- RICH08, RICH16-22, MIDI01-16 -- so the song
+// on line N is trackN+1; tracklen.nfo's lengths agree (long playlist songs, short contexts).
+std::string cd_track_file(std::string_view midi) {
+    unsigned track = 2;
+    const auto find = [&](std::span<const std::string_view> files) {
+        for (const auto file : files) {
+            if (file == midi)
+                return true;
+            ++track;
+        }
+        return false;
+    };
+    if (!find(music_files))
+        find(std::span(context_files).subspan(1)); // skip "silence"
+    char name[16];
+    std::snprintf(name, sizeof(name), "track%02u.ogg", track);
+    return name;
+}
+
+std::optional<std::filesystem::path> find_asset(const std::filesystem::path &directory, std::string_view name) {
+    std::error_code error;
+    for (const auto &entry : std::filesystem::directory_iterator(directory, error)) {
         auto candidate = entry.path().filename().string();
         std::transform(candidate.begin(), candidate.end(), candidate.begin(),
                        [](unsigned char value) { return char(std::tolower(value)); });
@@ -69,22 +98,28 @@ std::filesystem::path asset_path(const std::filesystem::path &directory, std::st
             return entry.path();
         }
     }
+    return std::nullopt;
+}
+
+std::filesystem::path asset_path(const std::filesystem::path &directory, std::string_view name) {
+    if (auto found = find_asset(directory, name))
+        return *found;
     throw assets::AssetError("missing audio asset: " + (directory / name).string());
 }
 
-std::vector<std::uint8_t> read_bytes(const std::filesystem::path &path) {
+std::vector<std::uint8_t> read_bytes(const std::filesystem::path &path, std::streamoff limit = 16 * 1024 * 1024) {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) {
-        throw std::runtime_error("cannot open MIDI: " + path.string());
+        throw std::runtime_error("cannot open music: " + path.string());
     }
     const auto length = input.tellg();
-    if (length < 0 || length > 16 * 1024 * 1024) {
-        throw std::runtime_error("invalid MIDI size: " + path.string());
+    if (length < 0 || length > limit) {
+        throw std::runtime_error("invalid music size: " + path.string());
     }
     std::vector<std::uint8_t> result(static_cast<std::size_t>(length));
     input.seekg(0);
     if (!input.read(reinterpret_cast<char *>(result.data()), length)) {
-        throw std::runtime_error("truncated MIDI: " + path.string());
+        throw std::runtime_error("truncated music: " + path.string());
     }
     return result;
 }
@@ -112,6 +147,11 @@ struct TsfClose {
 struct TmlFree {
     void operator()(tml_message *song) const {
         tml_free(song);
+    }
+};
+struct VorbisClose {
+    void operator()(stb_vorbis *decoder) const {
+        stb_vorbis_close(decoder);
     }
 };
 
@@ -175,6 +215,8 @@ struct Audio::Impl {
     std::filesystem::path directory;
     // Every original MIDI, parsed at startup; the audio thread only walks these lists.
     std::map<std::string, std::unique_ptr<tml_message, TmlFree>, std::less<>> midi_cache;
+    // CD audio track per MIDI name (Steam release). A song with a track plays it instead of its MIDI.
+    std::map<std::string, std::filesystem::path, std::less<>> cd_tracks;
     // [main]
     Trace trace;
     std::array<std::optional<std::size_t>, std::size_t(Loop::count)> loops{};
@@ -184,6 +226,7 @@ struct Audio::Impl {
         unsigned position_ms{};
     };
     std::vector<Saved> music_stack; // pushed contexts save what was under them
+    std::pair<std::string_view, unsigned> cd_loaded_for; // song and playlist track load_cd_tracks last saw
     std::optional<assets::Archive> effects;
     std::optional<assets::Archive> voices;
     std::future<void> archive_loader; // opens Effect.mkf/Speaking.mkf off the main thread at startup
@@ -206,6 +249,14 @@ struct Audio::Impl {
     const tml_message *song{};       // first event of the playing MIDI; null = no music
     const tml_message *next_event{}; // next event to apply; null = the MIDI has ended
     double song_ms{};                // playback position, advanced by rendered samples
+    // Compressed CD tracks (2-10 MB each): the main thread reads the playing, next playlist and
+    // saved songs (load_cd_track) and drops the rest, so the audio thread never touches files.
+    std::map<std::string, std::vector<std::uint8_t>, std::less<>> cd_cache;
+    std::vector<char> vorbis_arena = std::vector<char>(vorbis_arena_bytes);
+    std::unique_ptr<stb_vorbis, VorbisClose> vorbis; // decoding the playing CD track; null = MIDI or none
+    int vorbis_channels{};
+    bool vorbis_ended{}; // decoded to the end: the resampler drains, then the playlist advances
+    std::array<float, 4096> decoded{};
     struct Clip {
         const std::vector<float> *samples;
         std::size_t position{};
@@ -228,6 +279,8 @@ struct Audio::Impl {
 
     // Last member: destroyed first, so the device thread stops before anything it reads.
     std::unique_ptr<AudioSubsystem> subsystem;
+    // [shared] CD track (44.1 kHz) -> mixer rate; after `subsystem`, whose shutdown frees all streams.
+    std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> resampler{nullptr, SDL_DestroyAudioStream};
     std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> stream{nullptr,
                                                                                SDL_DestroyAudioStream};
 
@@ -286,6 +339,35 @@ struct Audio::Impl {
     }
 
     void initialize_music(std::filesystem::path bank) {
+        // Next to the .mkf files, or where Steam installs them (Game/ and Media/Music/ are siblings).
+        const std::array<std::filesystem::path, 2> track_directories{directory, directory / ".." / "Media" / "Music"};
+        const auto find_track = [this, &track_directories](std::string_view file) {
+            for (const auto &track_directory : track_directories) {
+                if (auto path = find_asset(track_directory, cd_track_file(file))) {
+                    cd_tracks.emplace(file, std::move(*path));
+                    return;
+                }
+            }
+        };
+        for (const auto file : music_files)
+            find_track(file);
+        for (const auto file : std::span(context_files).subspan(1))
+            find_track(file);
+        if (!cd_tracks.empty()) {
+            resampler.reset(SDL_CreateAudioStream(&mixer_format, &mixer_format));
+            if (!resampler)
+                throw sdl_error("create CD audio resampler");
+            load_cd_tracks();
+        }
+        if (cd_tracks.size() == music_files.size() + context_files.size() - 1) {
+            start_track_locked(); // every song has its CD track: no MIDI, no soundbank
+            return;
+        }
+        initialize_midi(std::move(bank));
+        start_track_locked(); // no device yet: no lock needed
+    }
+
+    void initialize_midi(std::filesystem::path bank) {
         if (bank.empty()) {
             if (const auto *environment = std::getenv("RICH4_SOUNDFONT")) {
                 bank = environment;
@@ -308,7 +390,8 @@ struct Audio::Impl {
         }
         // All MIDIs are tiny (~0.5 MB together): parse them now so neither a context push nor the
         // playlist advancing on the audio thread ever touches the file system. The playlist files
-        // stay mandatory; a missing context MIDI only keeps that screen silent.
+        // stay mandatory unless their CD track exists; a missing context MIDI only keeps that
+        // screen silent.
         const auto parse = [this](std::string_view file) {
             const auto bytes = read_bytes(asset_path(directory, file));
             std::unique_ptr<tml_message, TmlFree> parsed(tml_load_memory(bytes.data(), int(bytes.size())));
@@ -317,10 +400,12 @@ struct Audio::Impl {
             }
             midi_cache.emplace(file, std::move(parsed));
         };
-        for (const auto file : music_files)
-            parse(file);
-        for (const auto file : context_files) {
-            if (file == "silence")
+        for (const auto file : music_files) {
+            if (!cd_tracks.contains(file))
+                parse(file);
+        }
+        for (const auto file : std::span(context_files).subspan(1)) {
+            if (cd_tracks.contains(file))
                 continue;
             try {
                 parse(file);
@@ -335,7 +420,50 @@ struct Audio::Impl {
         }
         tsf_set_output(synth.get(), TSF_STEREO_INTERLEAVED, sample_rate, music_gain_db);
         tsf_set_max_voices(synth.get(), 128); // preallocated: note-ons never allocate on the audio thread
-        start_track_locked(); // no device yet: no lock needed
+    }
+
+    // Main thread: keep exactly the CD tracks that may start without the main thread -- the song
+    // playing now, the next playlist song (the audio thread advances to it) and every song a pop
+    // resumes -- plus `upcoming`, the song a caller is about to start. Files are read outside
+    // `mutex`; only the map update is locked.
+    void load_cd_tracks(std::string_view upcoming = {}) {
+        if (cd_tracks.empty())
+            return;
+        std::vector<std::string_view> wanted;
+        {
+            const std::lock_guard lock(mutex);
+            cd_loaded_for = {current_file_locked(), track};
+            wanted.push_back(cd_loaded_for.first);
+            wanted.push_back(music_files[track % 8]);
+        }
+        if (!upcoming.empty())
+            wanted.push_back(upcoming);
+        for (const auto &saved : music_stack)
+            wanted.push_back(saved.context ? music_file(*saved.context) : music_files[saved.track - 1]);
+        std::vector<std::pair<std::string_view, std::vector<std::uint8_t>>> loaded;
+        for (const auto file : wanted) {
+            const auto path = cd_tracks.find(file);
+            if (path == cd_tracks.end() || std::any_of(loaded.begin(), loaded.end(), [file](const auto &entry) {
+                    return entry.first == file;
+                }))
+                continue;
+            {
+                const std::lock_guard lock(mutex);
+                if (cd_cache.contains(file))
+                    continue;
+            }
+            try {
+                loaded.emplace_back(file, read_bytes(path->second, 64 * 1024 * 1024));
+            } catch (const std::exception &error) {
+                diagnostic = error.what(); // that song falls back to its MIDI, else silence
+            }
+        }
+        const std::lock_guard lock(mutex);
+        std::erase_if(cd_cache, [&wanted](const auto &entry) {
+            return std::find(wanted.begin(), wanted.end(), entry.first) == wanted.end();
+        });
+        for (auto &[file, bytes] : loaded)
+            cd_cache.emplace(file, std::move(bytes));
     }
 
     void log(std::string_view what, std::string_view detail) const {
@@ -351,15 +479,19 @@ struct Audio::Impl {
     }
     // (Re)starts whatever `context`/`track` select, from `position_ms`. With music switched off
     // the start is deferred (player_stale) so a muted game never renders MIDI. Cheap (no IO):
-    // the MIDIs were parsed at startup. Caller holds `mutex`.
+    // the MIDIs were parsed at startup, CD tracks are read ahead by load_cd_tracks and decoded in
+    // a preallocated arena. Caller holds `mutex`.
     void start_track_locked(unsigned position_ms = 0) {
-        if (!synth) {
+        if (!synth && cd_tracks.empty()) {
             return;
         }
         song = next_event = nullptr;
+        vorbis.reset();
         song_ms = 0;
-        tsf_reset(synth.get());
-        tsf_channel_set_bank_preset(synth.get(), 9, 128, 0); // General MIDI: channel 10 is drums
+        if (synth) {
+            tsf_reset(synth.get());
+            tsf_channel_set_bank_preset(synth.get(), 9, 128, 0); // General MIDI: channel 10 is drums
+        }
         if (!music_on) {
             player_stale = true;
             resume_ms = position_ms;
@@ -368,6 +500,14 @@ struct Audio::Impl {
         player_stale = false;
         if (context == Music::silence) {
             return; // no song: silence until popped
+        }
+        if (const auto track_bytes = cd_cache.find(current_file_locked()); track_bytes != cd_cache.end()) {
+            start_cd_track_locked(track_bytes->second, position_ms);
+            if (vorbis)
+                return;
+        }
+        if (!synth) {
+            return;
         }
         const auto cached = midi_cache.find(current_file_locked());
         if (cached == midi_cache.end()) {
@@ -379,6 +519,62 @@ struct Audio::Impl {
             if (next_event->type != TML_NOTE_ON && next_event->type != TML_NOTE_OFF)
                 apply_event_locked(*next_event);
         song_ms = position_ms;
+    }
+    void start_cd_track_locked(const std::vector<std::uint8_t> &bytes, unsigned position_ms) {
+        const stb_vorbis_alloc arena{vorbis_arena.data(), int(vorbis_arena.size())};
+        int error = 0;
+        vorbis.reset(stb_vorbis_open_memory(bytes.data(), int(bytes.size()), &error, &arena));
+        if (!vorbis) {
+            pending_log.emplace_back("music_error", std::string(current_file_locked()) + " CD track: stb_vorbis error " +
+                                                        std::to_string(error));
+            return; // falls back to the MIDI
+        }
+        const auto info = stb_vorbis_get_info(vorbis.get());
+        vorbis_channels = info.channels;
+        vorbis_ended = false;
+        const SDL_AudioSpec source{SDL_AUDIO_F32, info.channels, int(info.sample_rate)};
+        SDL_ClearAudioStream(resampler.get());
+        SDL_SetAudioStreamFormat(resampler.get(), &source, &mixer_format);
+        if (position_ms)
+            stb_vorbis_seek(vorbis.get(), unsigned(std::uint64_t(position_ms) * info.sample_rate / 1000));
+        song_ms = position_ms;
+    }
+    // Fills `output` from the CD track. Context songs loop until popped (fcn_00454d2c); a playlist
+    // song decodes to its end and drains the resampler, and render_block_locked advances.
+    void render_cd_track_locked(std::span<float> output) noexcept {
+        auto *const bytes = reinterpret_cast<std::uint8_t *>(output.data());
+        const int wanted = int(output.size_bytes());
+        int filled = 0;
+        bool rewound = false;
+        while (filled < wanted) {
+            const int got = SDL_GetAudioStreamData(resampler.get(), bytes + filled, wanted - filled);
+            if (got > 0) {
+                filled += got;
+                continue;
+            }
+            if (got < 0 || vorbis_ended)
+                break;
+            const int frames = stb_vorbis_get_samples_float_interleaved(vorbis.get(), vorbis_channels, decoded.data(),
+                                                                        int(decoded.size()));
+            if (frames > 0) {
+                SDL_PutAudioStreamData(resampler.get(), decoded.data(), frames * vorbis_channels * int(sizeof(float)));
+            } else if (context && !rewound) {
+                rewound = true; // once per block: a track that decodes nothing ends instead
+                stb_vorbis_seek_start(vorbis.get());
+                song_ms = 0;
+            } else {
+                vorbis_ended = true;
+                SDL_FlushAudioStream(resampler.get());
+            }
+        }
+        for (auto &sample : output.first(std::size_t(filled) / sizeof(float)))
+            sample *= cd_gain;
+        song_ms += block_frames * 1000.0 / sample_rate;
+    }
+    bool song_ended_locked() const {
+        if (vorbis)
+            return vorbis_ended && SDL_GetAudioStreamAvailable(resampler.get()) <= 0;
+        return song && !next_event;
     }
     void apply_event_locked(const tml_message &event) noexcept {
         auto *const f = synth.get();
@@ -417,6 +613,7 @@ struct Audio::Impl {
     }
     void push(Music music, bool save) {
         log(save ? "music_push" : "music_replace", music_file(music));
+        load_cd_tracks(music_file(music));
         const std::lock_guard lock(mutex);
         if (save || music_stack.empty())
             music_stack.push_back({context, track, current_position_locked()});
@@ -526,19 +723,20 @@ struct Audio::Impl {
 
     void render_block_locked(std::span<float> output) noexcept {
         std::fill(output.begin(), output.end(), 0.0F);
-        if (music_on && song) {
-            if (!next_event) {
-                if (context) {
-                    next_event = song; // context MIDIs loop until popped (fcn_00454d2c)
-                    song_ms = 0;
-                } else {
-                    track = track % 8 + 1;
-                    pending_log.emplace_back("music_next", current_file_locked());
-                    start_track_locked();
-                }
+        if (music_on && song_ended_locked()) {
+            if (context) {
+                next_event = song; // context MIDIs loop until popped (fcn_00454d2c)
+                song_ms = 0;
+            } else {
+                track = track % 8 + 1;
+                pending_log.emplace_back("music_next", current_file_locked());
+                start_track_locked();
             }
         }
-        if (music_on && song) {
+        if (music_on && vorbis) {
+            render_cd_track_locked(output);
+            stats.music_frames += block_frames;
+        } else if (music_on && song) {
             constexpr double event_ms = event_frames * 1000.0 / sample_rate;
             for (int offset = 0; offset < block_frames; offset += event_frames) {
                 const double until = song_ms + event_ms;
@@ -622,6 +820,23 @@ struct Audio::Impl {
     }
 
     // ---- main thread, once per frame ----
+    // After the playlist advanced: read the following song ahead, drop the finished one, and start
+    // the new song if the audio thread reached it before its track was read.
+    void update_cd_tracks() {
+        if (cd_tracks.empty())
+            return;
+        {
+            const std::lock_guard lock(mutex);
+            if (cd_loaded_for == std::pair{current_file_locked(), track})
+                return;
+        }
+        load_cd_tracks();
+        const std::lock_guard lock(mutex);
+        if (music_on && !player_stale && !vorbis && !song && context != Music::silence &&
+            cd_cache.contains(current_file_locked()))
+            start_track_locked();
+    }
+
     void update() {
         if (!enabled) {
             return;
@@ -640,6 +855,7 @@ struct Audio::Impl {
         last_update_ns = now_ns;
         for (const auto &[what, detail] : lines)
             log(what, detail);
+        update_cd_tracks();
         if (!error.empty() && !error_reported) {
             error_reported = true;
             diagnostic = error;
@@ -754,10 +970,15 @@ void Audio::select_music(unsigned track) {
     if (track > 8) {
         throw std::invalid_argument("normal MIDI playlist selection must be 0 through 8");
     }
+    if (track == 0) {
+        const std::lock_guard lock(impl_->mutex);
+        track = impl_->track % 8 + 1;
+    }
+    impl_->load_cd_tracks(music_files[track - 1]);
     std::string file;
     {
         const std::lock_guard lock(impl_->mutex);
-        impl_->track = track == 0 ? impl_->track % 8 + 1 : track;
+        impl_->track = track;
         impl_->context.reset();
         file = impl_->current_file_locked();
     }
@@ -795,7 +1016,7 @@ bool Audio::enabled() const noexcept {
     return impl_->enabled;
 }
 bool Audio::music_available() const noexcept {
-    return impl_->synth != nullptr; // set once at construction
+    return impl_->synth != nullptr || !impl_->cd_tracks.empty(); // set once at construction
 }
 bool Audio::music_enabled() const noexcept {
     return impl_->music_on; // written only by the main thread

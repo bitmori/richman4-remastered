@@ -91,6 +91,12 @@ class Frame {
     void picture(char archive, std::size_t entry, std::size_t frame_index, int x, int y) {
         picture(artwork.frame(archive, entry, frame_index), x, y);
     }
+    // Copies the whole frame, black (colour zero) included, like the original _draw_image_in_rect
+    // (fcn_00456280 / fcn_004563f5); e.g. the Data 2 portraits, whose black outlines are not holes.
+    void opaque_picture(char archive, std::size_t entry, std::size_t frame_index, int x, int y) {
+        const auto &image = artwork.frame(archive, entry, frame_index);
+        graphics::blit(canvas, image, x + image.origin_x, y + image.origin_y, graphics::Transparency::opaque);
+    }
     void hit(int id, graphics::Rect rect, std::function<void()> action, bool enabled = true) {
         buttons.push_back({id, rect, enabled, std::move(action)});
     }

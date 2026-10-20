@@ -71,7 +71,7 @@ val prepareRich4Assets by tasks.registering {
             digest.update("$name:${file.length()}:${file.lastModified()}\n".toByteArray())
         }
         File(source.get()).listFiles()!!.sortedBy { it.name }
-            .filter { it.isFile && it.extension.lowercase() in setOf("mkf", "mid", "wav") }
+            .filter { it.isFile && it.extension.lowercase() in setOf("mkf", "mid", "ogg", "wav") }
             .forEach { add(it, "game/${it.name}") }
         require(names.any { it.equals("game/Data.mkf", ignoreCase = true) }) { "No Data.mkf in ${source.get()}" }
         add(soundfont, "TimGM6mb.sf2")

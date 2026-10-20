@@ -710,7 +710,7 @@ void Screens::draw_frame_up(Frame &frame, GameSession &session, const GameDecisi
     for (std::size_t k = 0; k < candidates.size() && k < 4; ++k) {
         const auto index = candidates[k];
         const Rect face{left + 12 + 80 * int(k), top + 12, left + 84 + 80 * int(k), top + 84};
-        frame.picture('d', 2, character(index), face.left, face.top);
+        frame.opaque_picture('d', 2, character(index), face.left, face.top);
         if (frame.pointer_down && frame.pointer_in(face)) { // the god-of-death picker's 2 px yellow hover
             ui::border(frame.canvas, face, ui::color(255, 255, 0));
             ui::border(frame.canvas, {face.left + 1, face.top + 1, face.right - 1, face.bottom - 1},

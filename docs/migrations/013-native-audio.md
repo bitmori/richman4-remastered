@@ -60,6 +60,17 @@ FluidSynth 设置 `player.timing-source=sample`，MIDI 时间由实际生成的 
 
 关键约束：实现从未调用 `new_fluid_audio_driver` 或打开 MIDI 输出端口。根据 [FluidSynth 音频驱动说明](https://www.fluidsynth.org/api/CreatingAudioDriver.html)，合成器本身不会输出到扬声器；本模块只调用 `fluid_synth_write_float`。之后唯一设备入口是 [SDL_OpenAudioDeviceStream](https://wiki.libsdl.org/SDL3/SDL_OpenAudioDeviceStream)。因此 `SDL_AUDIODRIVER=dummy` 可以覆盖音乐和 WAV 全部声音路径，保留真实播放推进，不会出现 Boxedwine 原生 CoreAudio MIDI 绕过 SDL dummy 的情况。
 
+## Steam 版 CD 音轨
+
+Steam 版不附可直接播放的 MIDI，而是以 `Media/Music/track02.ogg`…`track26.ogg` 提供原版光盘的 CD 音轨（track01 为数据轨）。`Game/Midi.txt` 按光盘顺序列出同样 25 首：`RICH08`、`RICH16`–`RICH22`、`MIDI01`–`MIDI16`（含 `MIDI14-1/-2`），故第 N 行对应 `track(N+1).ogg`；`tracklen.nfo` 的长度一致（前 8 首 2–3 分钟为盘面播放列表，其余 16–79 秒为场景音乐）。
+
+资源目录有某首的 `trackNN.ogg` 时播放它，否则播放该首 MIDI；`music_name()` 与日志仍用 MIDI 名称。25 首都有音轨时不读取 MIDI，也不加载音色库。stb_vorbis 在预分配的 512 KB 区块内解码，SDL 音频流把 44.1 kHz 重采样到 48 kHz，增益 −10 dB（音轨 RMS 约 −16.5 dBFS，对齐 MIDI 音量）。主线程只缓存正在播放、播放列表下一首及栈中待恢复的压缩音轨（每首 2–10 MB），音频线程不读文件、不分配内存。场景音乐循环至弹出；`pop_music` 用 `stb_vorbis_seek` 回到保存的位置。
+
+```sh
+# Steam 版资源：*.mkf 与 track*.ogg 放在同一目录，无 .mid
+build/check/native_audio_tests /path/to/steam-assets
+```
+
 ## 可复现验证
 
 `tests/native_audio_tests.cpp` 在创建任何音频对象之前，用 `SDL_HINT_OVERRIDE` 强制 dummy 驱动。即使调用者环境选择硬件设备，测试也不会发出声音。不创建窗口或使用桌面自动化。

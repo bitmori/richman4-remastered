@@ -199,7 +199,7 @@ void NewGameSetup::draw(Host &host, const std::function<void(const NewGameChoice
     frame.picture('j', 8, 0, 4, 10 - shift);
     for (int i = 0; i < 12; ++i) {
         const int x = 8 + 72 * (i % 6), y = 15 + 72 * (i / 6) - shift;
-        frame.picture('d', 2, std::size_t(i), x, y);
+        frame.opaque_picture('d', 2, std::size_t(i), x, y);
         if (std::find(picks_.begin(), picks_.end(), i) != picks_.end())
             darken(frame.canvas, {x, y, x + 72, y + 72}, -16);
     }
@@ -216,7 +216,7 @@ void NewGameSetup::draw(Host &host, const std::function<void(const NewGameChoice
     }
     if (hovered >= 0) {
         const int column = hovered % 6, row = hovered / 6;
-        frame.picture('d', 2, std::size_t(hovered), 12 + 72 * column, 11 + 72 * row);
+        frame.opaque_picture('d', 2, std::size_t(hovered), 12 + 72 * column, 11 + 72 * row);
         const int tag = row == 0 ? 83 : 63;
         darken(frame.canvas, {13 + 72 * column, tag, 83 + 72 * column, tag + 20}, -20);
         text(frame, spaced_names[std::size_t(hovered)], 48 + 72 * column, tag + 10, 2, white_text);
@@ -336,7 +336,7 @@ void SaveLoadScreen::draw(Host &host, const std::function<void(int)> &choose, co
                       y);
         for (std::size_t k = 0; k < entry.characters.size() && k < 4; ++k)
             if (entry.characters[k] < 12)
-                frame.picture('d', 2, entry.characters[k], 289 + 72 * int(k), y);
+                frame.opaque_picture('d', 2, entry.characters[k], 289 + 72 * int(k), y);
     }
     int hovered = -1;
     if (frame.pointer_x >= 130 && frame.pointer_x < 577) {
