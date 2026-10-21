@@ -409,8 +409,8 @@ void MonthlyScreens::lottery_tick(Frame &frame, Playing &playing) {
 bool MonthlyScreens::draw_lottery(Frame &frame, Playing &playing, unsigned elapsed_ms) {
     const auto &figures = playing.figures;
     auto &bubble = playing.bubble;
-    // Phone: a tap ends the current bubble early (the original has no input here and waits).
-    if (playing.tapped && bubble.up)
+    // Touch builds: a tap ends the current bubble early (the original has no input here and waits).
+    if (platform::touch_ui && playing.tapped && bubble.up)
         bubble.remaining_ms = 0;
     if (bubble.up)
         bubble.remaining_ms -= std::min(bubble.remaining_ms, elapsed_ms);

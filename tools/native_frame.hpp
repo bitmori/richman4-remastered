@@ -76,6 +76,8 @@ struct Button {
     bool enabled;
     std::function<void()> action;
     bool click_sound = true; // false: the action plays its own original UI effect
+    int stands_for = 0;      // right-click handlers: the touch-build button id it replaces (replay driver)
+    std::function<void()> release{}; // runs on the left button-up after `action` ran on the press
 };
 
 // Per-frame drawing context. `pointer` is the logical mouse/touch position (or -1)
@@ -100,6 +102,12 @@ class Frame {
     }
     void hit(int id, graphics::Rect rect, std::function<void()> action, bool enabled = true) {
         buttons.push_back({id, rect, enabled, std::move(action)});
+    }
+    // The original's right-button-up on this screen (mouse builds; touch builds draw a button for it).
+    // The first registration of a frame wins; screens without one fall back to the app's cancel.
+    static constexpr int right_click_id = -2;
+    void right_click(std::function<void()> action, int stands_for = 0) {
+        buttons.push_back({right_click_id, {}, true, std::move(action), false, stands_for});
     }
     void button(int id, graphics::Rect rect, std::string_view label, std::function<void()> action,
                 bool enabled = true) {

@@ -68,12 +68,20 @@ void Picker::draw(screens::Host &host, const GameDecision &decision, const std::
     for (int slot = 0; slot < 5; ++slot) {
         const int x = slot_x + slot * slot_size;
         const auto index = option_with_value(decision, slot);
-        // Finger targets: the slot's column over the strip's full height (edges to the frame).
-        const graphics::Rect cell{slot == 0 ? strip_x : x, strip_y, slot == 4 ? x + slot_size + 7 : x + slot_size,
-                                  strip_y + 83};
+        // Touch builds: finger targets, the slot's column over the strip's full height (edges to the
+        // frame). Mouse builds: the 68x68 icon.
+        const graphics::Rect cell = platform::touch_ui
+                                        ? graphics::Rect{slot == 0 ? strip_x : x, strip_y,
+                                                         slot == 4 ? x + slot_size + 7 : x + slot_size, strip_y + 83}
+                                        : graphics::Rect{x, slot_y, x + slot_size, slot_y + slot_size};
         if (!index) { // a type the core does not offer here is dimmed and inert
             screens::darken(frame.canvas, {x, slot_y, x + slot_size, slot_y + slot_size}, -16);
             continue;
+        }
+        if (!platform::touch_ui && frame.pointer_in(cell) && selected_ != slot) {
+            selected_ = slot; // WM_MOUSEMOVE into a slot: Effect 0 (0x48231a)
+            if (host.sound)
+                host.sound(screens::hover_sound);
         }
         if (selected_ == slot) {
             // Hover (fcn_0043fae4 WM_MOUSEMOVE): three nested 0xffff00 frames 68/66/64 px.
@@ -85,7 +93,7 @@ void Picker::draw(screens::Host &host, const GameDecision &decision, const std::
         const bool chosen = selected_ == slot;
         screens::hit(host, 210 + int(*index), cell, chosen ? screens::click_sound : screens::hover_sound,
                      [this, slot, chosen, index = *index, respond] {
-                         if (chosen)
+                         if (chosen || !platform::touch_ui)
                              respond(index); // WM_LBUTTONUP: Effect 1 (0x482322), returns the slot
                          else
                              selected_ = slot; // entering a slot: Effect 0 (0x48231a)
@@ -93,8 +101,10 @@ void Picker::draw(screens::Host &host, const GameDecision &decision, const std::
     }
     if (selected_) // the hovered type's name, mode 4 at (220,154)
         messages::draw_text(frame, names[std::size_t(*selected_)], 220, 154, 4, box_style);
-    // NATIVE: touch has no hover/right-click: 確定 commits the selection; 取消 replaces the
+    // NATIVE (touch builds): no hover/right-click, so 確定 commits the selection and 取消 replaces the
     // right-click cancel (改建卡 only; building on a lot cannot be cancelled in the original).
+    if (!platform::touch_ui)
+        return;
     const auto cancel = cancel_option(decision);
     const int left = cancel ? 128 : 180;
     const auto selected_index = selected_ ? option_with_value(decision, *selected_) : std::nullopt;

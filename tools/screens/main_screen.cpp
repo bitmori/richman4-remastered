@@ -275,12 +275,17 @@ std::uint8_t MainScreen::go_mask(Frame &frame, int x, int y) {
 void MainScreen::draw(Frame &frame, const GameSession &session, unsigned rotation, const MainScreenActions &actions) {
     const auto &world = session.world();
     draw_dice(frame, session, rotation, actions);
-    if (human_turn_shown(session))
+    // Input gate (§1): the original ignores the mouse unless byte 0x46cafd is set, i.e. while GO waits
+    // for a human roll. Once the dice are cast -- and on computer turns -- nothing here is clickable.
+    const bool input_open = human_turn_shown(session);
+    if (input_open)
         draw_go(frame, session, actions);
     else {
         go_drag_.reset();
         pending_roll_ = nullptr;
+        minimap_drag_ = false;
     }
+    const auto first_control = frame.buttons.size();
     draw_toolbar(frame, session, actions);
     if (view_mode_ == 2) {
         draw_header(frame, world);
@@ -296,6 +301,8 @@ void MainScreen::draw(Frame &frame, const GameSession &session, unsigned rotatio
         full_map_ = false;
     if (full_map_)
         draw_full_map(frame, world);
+    if (!input_open) // gate closed: the toolbar, tabs, minimap and calendar are drawn but inert
+        frame.buttons.erase(frame.buttons.begin() + std::ptrdiff_t(first_control), frame.buttons.end());
 }
 
 // §2
@@ -581,10 +588,11 @@ void MainScreen::draw_go(Frame &frame, const GameSession &session, const MainScr
         const int x = frame.pointer_x, y = frame.pointer_y;
         go_drag_ = std::pair(x - go_x_, y - go_y_);
         press_point_ = {x, y};
-        pending_roll_ = [this, actions] {
-            go_drag_.reset();
-            actions.roll();
-        };
+        if (platform::touch_ui)
+            pending_roll_ = [this, actions] {
+                go_drag_.reset();
+                actions.roll();
+            };
     });
 }
 
@@ -660,6 +668,7 @@ void MainScreen::draw_full_map(Frame &frame, const World &world) {
                      60 + full_map_scale(state.y));
     }
     frame.hit(main_ids::full_map_close, {0, 0, 640, 480}, [this] { full_map_ = false; });
+    frame.right_click([this] { full_map_ = false; }); // the original closes on right-button-up (0x205)
 }
 
 } // namespace rich4::native

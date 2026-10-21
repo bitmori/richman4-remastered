@@ -3,8 +3,8 @@
 // help.mkf 0 with 8 category buttons (green), the category's topic list (red, 8 rows, scrolled
 // by 8 with 0:4/0:5) and the topic's help.mkf text (yellow, 14 lines per page; '@' lines break
 // pages, flipped with 0:8/0:9). Pure reference text: no game state is read or changed.
-// Touch: every target's hit area is enlarged to finger size, a tap on the text pane turns the
-// page, and a tap outside the window (or Back / right-click) closes it.
+// Touch builds: every target's hit area is enlarged to finger size, a tap on the text pane turns
+// the page, and a tap outside the window (or Back) closes it. Mouse builds: right-click closes it.
 #pragma once
 
 #include "draw.hpp"

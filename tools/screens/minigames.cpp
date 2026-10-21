@@ -282,7 +282,8 @@ void MiniGames::input(Frame &frame) {
                                          penguin->tap_anywhere();
                                          return;
                                      }
-                                     // Panel 81 hit map; off the map snap to the nearest cell (touch).
+                                     // Panel 81 hit map; touch builds snap a tap off the map to the
+                                     // nearest cell.
                                      int col = -1, row = -1;
                                      if (x >= 0 && y >= 0 && x < 640 && y < 480 &&
                                          std::size_t(y * 640 + x) < q.hit_map.size()) {
@@ -290,7 +291,7 @@ void MiniGames::input(Frame &frame) {
                                          if (value && core::Penguin::valid(value % 9, value / 9))
                                              col = value % 9, row = value / 9;
                                      }
-                                     if (col < 0) {
+                                     if (col < 0 && platform::touch_ui) {
                                          int best = 40 * 40 + 1;
                                          for (int r = 0; r < 9; ++r)
                                              for (int c = 0; c < 9; ++c)
@@ -310,8 +311,9 @@ void MiniGames::input(Frame &frame) {
                                  }
                              },
                              false});
-    // 喜從天降: the catcher follows the finger while it is down (the original follows the cursor).
-    if (auto *catcher = std::get_if<core::Catcher>(&p.logic); catcher && frame.pointer_down && frame.pointer_x >= 0)
+    // 喜從天降: the catcher follows the cursor (touch builds: the finger, while it is down).
+    if (auto *catcher = std::get_if<core::Catcher>(&p.logic);
+        catcher && (frame.pointer_down || !platform::touch_ui) && frame.pointer_x >= 0)
         catcher->set_target(frame.pointer_x);
 }
 

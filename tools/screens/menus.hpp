@@ -83,6 +83,7 @@ class NewGameSetup {
     std::size_t human_count_ = 0;
     int dropdown_ = -1, hovered_ = -1;
     bool filling_ = false, leaving_ = false;
+    int armed_ = 0; // mouse builds: OK (1) / EXIT (2) pressed, acting on release (NG:1991)
     std::uint64_t fill_tick_ = 0, leave_tick_ = 0;
     std::mt19937 random_{1};
     graphics::Image backdrop_;

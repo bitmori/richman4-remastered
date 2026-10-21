@@ -224,7 +224,8 @@ void TradingBoard::draw_picker(Host &host, const World &world, std::size_t actor
                 view_ = k == 0 ? View::stocks : k == 1 ? View::properties : View::items;
             });
         }
-        hit(host, ids::trade_outside, {0, 0, 640, 480}, cancel_sound, [this] { view_ = View::board; });
+        if (platform::touch_ui) // a tap outside = the right-click (mouse builds: cancel())
+            hit(host, ids::trade_outside, {0, 0, 640, 480}, cancel_sound, [this] { view_ = View::board; });
         return;
     }
     if (pad.active())
@@ -332,8 +333,10 @@ void TradingBoard::draw_picker(Host &host, const World &world, std::size_t actor
         }
         hit(host, ids::trade_picker_close, {429, 161, 500, 192}, exit_sound, [this] { view_ = View::board; });
     }
-    hit(host, ids::trade_outside - 100, window, no_sound, [] {});
-    hit(host, ids::trade_outside, {0, 0, 640, 480}, cancel_sound, [this] { view_ = View::board; });
+    if (platform::touch_ui) { // a tap outside = the right-click (mouse builds: cancel())
+        hit(host, ids::trade_outside - 100, window, no_sound, [] {});
+        hit(host, ids::trade_outside, {0, 0, 640, 480}, cancel_sound, [this] { view_ = View::board; });
+    }
 }
 
 void TradingBoard::draw_detail(Host &host, const World &world, std::size_t actor, const TradingActions &actions) {
@@ -375,8 +378,8 @@ void TradingBoard::draw_detail(Host &host, const World &world, std::size_t actor
     for (const auto rect : {act, close})
         if (frame.pointer_down && frame.pointer_in(rect))
             pressed_bevel(frame.canvas, rect);
-    const auto finger = [](graphics::Rect rect) { // the red buttons are only 23 px tall
-        return graphics::Rect{rect.left - 6, rect.top - 9, rect.right + 6, rect.bottom + 9};
+    const auto finger = [](graphics::Rect rect) { // touch: the red buttons are only 23 px tall
+        return platform::touch_ui ? graphics::Rect{rect.left - 6, rect.top - 9, rect.right + 6, rect.bottom + 9} : rect;
     };
     text(frame, own ? "撤 件" : "購 買", (act.left + act.right) / 2, (act.top + act.bottom) / 2, 2, font_b);
     text(frame, "離 開", (close.left + close.right) / 2, (close.top + close.bottom) / 2, 2, font_b);
@@ -393,8 +396,10 @@ void TradingBoard::draw_detail(Host &host, const World &world, std::size_t actor
             notice(cash < quote.offer.price ? "您的現金不足！" : "無法購買！");
     });
     hit(host, ids::trade_detail_exit, finger(close), exit_sound, [this] { view_ = View::board; });
-    hit(host, ids::trade_outside - 100, {left, top, left + 192, top + height}, no_sound, [] {});
-    hit(host, ids::trade_outside, {0, 0, 640, 480}, cancel_sound, [this] { view_ = View::board; });
+    if (platform::touch_ui) { // a tap outside = the right-click (mouse builds: cancel())
+        hit(host, ids::trade_outside - 100, {left, top, left + 192, top + height}, no_sound, [] {});
+        hit(host, ids::trade_outside, {0, 0, 640, 480}, cancel_sound, [this] { view_ = View::board; });
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -506,14 +511,18 @@ void draw_lottery(Host &host, const World &world, const GameDecision &decision,
         hit(host, 210 + int(index), {30 + 64 * (n % 9), 271 + 48 * (n / 9), 94 + 64 * (n % 9), 319 + 48 * (n / 9)},
             click_sound, [choose, index, n] { choose(index, n); });
     }
-    if (leave) // Tapping anywhere else leaves, like the original right-click (下次再來吧！).
-        hit(host, 210 + int(*leave), {0, 0, 640, 480}, cancel_sound,
-            [choose, respond, index = *leave, can_buy] {
-                if (can_buy)
-                    choose(index, -1);
-                else
-                    respond(index); // 太可惜了！ is already on screen
-            });
+    if (leave) { // The original's right-click leaves (下次再來吧！); on touch builds a tap anywhere else.
+        const auto leave_now = [choose, respond, index = *leave, can_buy] {
+            if (can_buy)
+                choose(index, -1);
+            else
+                respond(index); // 太可惜了！ is already on screen
+        };
+        if (platform::touch_ui)
+            hit(host, 210 + int(*leave), {0, 0, 640, 480}, cancel_sound, leave_now);
+        else
+            right_click(host, cancel_sound, leave_now, 210 + int(*leave));
+    }
 }
 
 // ---------------------------------------------------------------------------------------

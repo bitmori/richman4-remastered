@@ -436,9 +436,10 @@ void draw_yes_no_strip(Frame &frame, int centre_x, int centre_y, int yes_id, std
                        std::function<void()> no) {
     const auto &strip = frame.artwork.frame('d', 440, 0);
     const int left = centre_x - strip.width / 2, top = centre_y - strip.height / 2;
-    // Touch: each half's hit area reaches 10 px beyond the strip.
-    const graphics::Rect yes_rect{left - 10, top - 10, left + strip.width / 2, top + strip.height + 10};
-    const graphics::Rect no_rect{left + strip.width / 2, top - 10, left + strip.width + 10, top + strip.height + 10};
+    // Touch builds: each half's hit area reaches 10 px beyond the strip.
+    const int m = platform::touch_ui ? 10 : 0;
+    const graphics::Rect yes_rect{left - m, top - m, left + strip.width / 2, top + strip.height + m};
+    const graphics::Rect no_rect{left + strip.width / 2, top - m, left + strip.width + m, top + strip.height + m};
     const std::size_t lit = frame.pointer_in(yes_rect) ? 1 : frame.pointer_in(no_rect) ? 2 : 0;
     const auto &shown = frame.artwork.frame('d', 440, lit);
     graphics::blit(frame.canvas, shown, left + shown.origin_x, top + shown.origin_y, graphics::Transparency::opaque);

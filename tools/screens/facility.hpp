@@ -3,9 +3,9 @@
 // fcn_0043fae4. The Data.mkf 517:5 message box with "請選擇設施類別" and the Data.mkf 517:4 strip of
 // five 68x68 icons (公園, 旅館, 購物中心, 加油站, 研究所). Used when a human builds on an owned
 // empty facility lot (landing, construction company, 天使卡, 福神, magic house, 機器工人) and by
-// 改建卡. Touch: the first tap selects a slot (the original hover: yellow frame and the type name
-// in the box), a second tap on it or 確定 commits; 取消 / Back cancel where the original allows
-// right-click (改建卡 only).
+// 改建卡. Mouse builds: hover selects a slot (yellow frame and the type name in the box), a click
+// commits, right-click cancels where the original allows it (改建卡 only). Touch builds: the first tap
+// selects, a second tap on it or 確定 commits; 取消 / Back cancel.
 #pragma once
 
 #include "draw.hpp"

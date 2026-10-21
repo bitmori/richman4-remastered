@@ -101,6 +101,12 @@ void EndgameScreen::draw_play_again(Host &host, unsigned elapsed, bool hold, con
             if (actions.agree)
                 actions.agree();
         });
+        right_click(host, no_sound, [this, actions] { // 0x205, like the timeout: result 0
+            step_ = Step::done;
+            kind_ = Kind::none;
+            if (actions.play_again_done)
+                actions.play_again_done(false);
+        });
         return;
     }
     case Step::line: // _rich4_player_say(player | 0x8000, 3, event slot 26) blocks until it ends

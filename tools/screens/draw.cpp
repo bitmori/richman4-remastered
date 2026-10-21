@@ -236,4 +236,14 @@ void hit(Host &host, int id, graphics::Rect rect, int effect, std::function<void
     host.frame.buttons.back().click_sound = false;
 }
 
+void right_click(Host &host, int effect, std::function<void()> action, int stands_for) {
+    host.frame.right_click(
+        [sound = host.sound, effect, action = std::move(action)] {
+            if (effect >= 0 && sound)
+                sound(effect);
+            action();
+        },
+        stands_for);
+}
+
 } // namespace rich4::native::screens

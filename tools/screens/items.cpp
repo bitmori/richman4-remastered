@@ -245,7 +245,8 @@ void Screens::press(Frame &frame, std::string owner, Rect rect, std::function<vo
         sound(1);
 }
 
-// Touch press/release: the tile sinks while held and acts when released on it. Sliding off cancels.
+// Press/release: the tile sinks while held and acts on release. The original does not re-test the
+// release point (§1.2); touch builds act only when released on it, so sliding off cancels.
 void Screens::resolve_press(Frame &frame, std::string_view owner) {
     if (!press_)
         return;
@@ -258,7 +259,7 @@ void Screens::resolve_press(Frame &frame, std::string_view owner) {
     auto action = std::move(press_->action);
     const bool inside = ui::contains(press_->rect, frame.pointer_x, frame.pointer_y);
     press_.reset();
-    if (inside && action)
+    if ((inside || !platform::touch_ui) && action)
         deferred_.push_back(std::move(action));
 }
 
@@ -381,6 +382,10 @@ void Screens::draw_inventory(Frame &frame, GameSession &session, bool cards, con
         shot = owner + "-pressed";
     }
 
+    if (!platform::touch_ui) { // the original grid has no buttons or text; right-up closes it
+        frame.right_click([host] { host.close(); }, back_id);
+        return;
+    }
     // Native-only help strip (the original shows descriptions only in its Help screen).
     const Rect strip{gx, 316, gx + 412, 382};
     ui::fill(frame.canvas, strip, ui::paper);
@@ -501,6 +506,16 @@ void Screens::draw_targets(Frame &frame, const GameDecision &decision, const boa
         if (projected && projected->x >= 12 && projected->x < 428 && projected->y >= 54 && projected->y < 466)
             markers.push_back({i, *projected});
     }
+    // Mouse builds: a target's hit box is the cursor-sized area around it, and the one under the
+    // mouse is the lit (selected) one, like the original cursor that turns valid over a target.
+    const auto box = [](board::Point point) {
+        return platform::touch_ui ? Rect{point.x - 30, point.y - 32, point.x + 30, point.y + 28}
+                                  : Rect{point.x - 20, point.y - 24, point.x + 20, point.y + 16};
+    };
+    if (!platform::touch_ui)
+        for (const auto &marker : markers)
+            if (frame.pointer_in(box(marker.point)))
+                selected = marker.index;
     const auto animation = std::size_t(now(frame) / 100);
     shot = "target-" + std::string(card ? "card-" : "tool-") + std::to_string(item) + (selected ? "-selected" : "");
     for (const auto &marker : markers) {
@@ -519,8 +534,18 @@ void Screens::draw_targets(Frame &frame, const GameDecision &decision, const boa
             const int bounce = int((now(frame) / 80) % 8);
             keyed(frame, art(frame, 'd', 0, 38), x, y - 16 - (bounce < 4 ? bounce : 8 - bounce));
         }
-    // Finger-sized hit areas (the cursor art is mouse-sized). Where they overlap, the tap goes to
-    // the target nearest to the finger, so a target's own centre always picks that target.
+    if (!platform::touch_ui) {
+        for (const auto &marker : markers)
+            frame.hit(5000 + int(marker.index), box(marker.point), [tap, index = marker.index] { tap(index); });
+        frame.hit(4999, {0, 40, 440, 480}, [this] { // §3.2: a click off every valid target, Effect 3
+            if (sound)
+                sound(3);
+        });
+        frame.buttons.back().click_sound = false;
+        return;
+    }
+    // Touch: finger-sized hit areas (the cursor art is mouse-sized). Where they overlap, the tap goes
+    // to the target nearest to the finger, so a target's own centre always picks that target.
     const auto nearest = [&frame, markers, tap] {
         std::optional<std::size_t> best;
         long best_distance = 0;
@@ -534,10 +559,8 @@ void Screens::draw_targets(Frame &frame, const GameDecision &decision, const boa
         if (best)
             tap(*best);
     };
-    for (const auto &marker : markers) {
-        const auto [x, y] = marker.point;
-        frame.hit(5000 + int(marker.index), {x - 30, y - 32, x + 30, y + 28}, nearest);
-    }
+    for (const auto &marker : markers)
+        frame.hit(5000 + int(marker.index), box(marker.point), nearest);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -592,8 +615,8 @@ bool Screens::draw_decision(Frame &frame, GameSession &session, const Host &host
 
 // 遙控骰子 (_rich4_use_tool_yaokongtouzi): the Panel 72:0 six-face bar at (92,300) over the board;
 // the face under the mouse lights with 72:n at (104+40(n-1), 314) (fcn_00446774); touch builds light
-// the pressed face instead. Each face's hit area covers its whole 40x55 column of the bar; 取消 stands
-// in for the original right-click.
+// the pressed face instead. Each face's hit area covers its whole 40x55 column of the bar; the
+// original right-click cancels (touch builds: a 取消 button).
 void Screens::draw_remote_dice(Frame &frame, const GameDecision &decision, const Host &host) {
     shot = "remote-dice";
     opaque(frame, art(frame, 'p', 72, 0), 92, 300); // fcn_004563f5: copied whole, black pips included
@@ -607,15 +630,20 @@ void Screens::draw_remote_dice(Frame &frame, const GameDecision &decision, const
             opaque(frame, art(frame, 'p', 72, std::size_t(value)), x, 314);
         frame.hit(option_id + int(i), cell, [host, i] { host.respond(i); });
     }
-    if (const auto cancel = option_of(decision, 0))
-        frame.button(option_id + int(*cancel), {356, 306, 436, 350}, "取消",
-                     [host, index = *cancel] { host.respond(index); });
+    if (const auto cancel = option_of(decision, 0)) {
+        if (platform::touch_ui)
+            frame.button(option_id + int(*cancel), {356, 306, 436, 350}, "取消",
+                         [host, index = *cancel] { host.respond(index); });
+        else
+            frame.right_click([host, index = *cancel] { host.respond(index); }, option_id + int(*cancel));
+    }
 }
 
 // 搶奪卡 for a human (fcn_0044192a): the victim's card grid (Panel 11:0) at (14,70) and, since the
 // card allows tools, their tool grid (Panel 11:1) at (14,270), both in the victim's hand order; the
-// original takes the clicked item at once. Touch: the first tap selects a tile (sunk, yellow frame,
-// its name above the grids), a second tap takes it; 取消 replaces the right-click.
+// original takes the clicked item at once and right-click cancels. Touch builds: the first tap selects
+// a tile (sunk, yellow frame, its name above the grids), a second tap takes it; 取消 replaces the
+// right-click.
 void Screens::draw_steal(Frame &frame, GameSession &session, const GameDecision &decision, const Host &host) {
     shot = "steal";
     const auto &world = session.world();
@@ -637,14 +665,14 @@ void Screens::draw_steal(Frame &frame, GameSession &session, const GameDecision 
         const auto index = option_for(kind, id);
         if (!index)
             return;
-        if (steal_pick_ == *index || (frame.pointer_down && frame.pointer_in(rect)))
+        if (steal_pick_ == *index || ((frame.pointer_down || !platform::touch_ui) && frame.pointer_in(rect)))
             sink(frame.canvas, rect);
         if (steal_pick_ == *index)
             for (int inset = 0; inset < 3; ++inset)
                 ui::border(frame.canvas, {rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset},
                            ui::color(255, 255, 0));
         frame.hit(option_id + int(*index), rect, [this, host, index = *index] {
-            if (steal_pick_ == index) {
+            if (steal_pick_ == index || !platform::touch_ui) {
                 steal_pick_.reset();
                 if (sound)
                     sound(1);
@@ -660,7 +688,17 @@ void Screens::draw_steal(Frame &frame, GameSession &session, const GameDecision 
         tile(CardTargetKind::card, cards[t], grid_tile(gx, card_y, int(t)));
     for (std::size_t t = 0; t < tools.size(); ++t)
         tile(CardTargetKind::tool, tools[t], grid_tile(gx, tool_y, int(t)));
-    // Prompt / selected item's name and help (native: the original has no hover text here).
+    if (!platform::touch_ui) {
+        if (const auto cancel = option_of(decision, -1))
+            frame.right_click(
+                [this, host, index = *cancel] {
+                    steal_pick_.reset();
+                    host.respond(index);
+                },
+                option_id + int(*cancel));
+        return;
+    }
+    // Touch: prompt / selected item's name (native: the original has no hover text here).
     const Rect strip{gx, 41, gx + 412, 69};
     ui::fill(frame.canvas, strip, ui::paper);
     ui::border(frame.canvas, strip, ui::color(110, 74, 26));
@@ -700,6 +738,7 @@ void Screens::draw_frame_up(Frame &frame, GameSession &session, const GameDecisi
         messages::draw_yes_no(frame, "是否嫁禍給" + std::string(names.at(character(yes))) + "？",
                               option_id + int(yes), [host, yes] { host.respond(yes); },
                               option_id + int(*keep), [host, index = *keep] { host.respond(index); });
+        frame.right_click([host, index = *keep] { host.respond(index); }); // _rich4_ui_yesno: right = no
         return;
     }
     shot = "frame-up";
@@ -712,15 +751,19 @@ void Screens::draw_frame_up(Frame &frame, GameSession &session, const GameDecisi
         const auto index = candidates[k];
         const Rect face{left + 12 + 80 * int(k), top + 12, left + 84 + 80 * int(k), top + 84};
         frame.opaque_picture('d', 2, character(index), face.left, face.top);
-        if (frame.pointer_down && frame.pointer_in(face)) { // the god-of-death picker's 2 px yellow hover
+        // The god-of-death picker's 2 px yellow hover (touch builds: while pressed).
+        if ((frame.pointer_down || !platform::touch_ui) && frame.pointer_in(face)) {
             ui::border(frame.canvas, face, ui::color(255, 255, 0));
             ui::border(frame.canvas, {face.left + 1, face.top + 1, face.right - 1, face.bottom - 1},
                        ui::color(255, 255, 0));
         }
-        frame.hit(option_id + int(index), {face.left - 4, face.top - 4, face.right + 4, face.bottom + 4},
+        const int m = platform::touch_ui ? 4 : 0;
+        frame.hit(option_id + int(index), {face.left - m, face.top - m, face.right + m, face.bottom + m},
                   [host, index] { host.respond(index); });
     }
-    if (keep) // stands in for the original's right-click (keep the card)
+    if (keep && !platform::touch_ui) // the original's right-click keeps the card
+        frame.right_click([host, index = *keep] { host.respond(index); }, option_id + int(*keep));
+    else if (keep) // touch: a button stands in for it
         frame.button(option_id + int(*keep), {160, top + strip.height + 10, 280, top + strip.height + 52},
                      "保留卡片", [host, index = *keep] { host.respond(index); });
 }
@@ -829,8 +872,9 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
                 complain(mode_lines[2]);
             else if (card ? card_count(state.cards) >= 15 : state.tool_amounts.at(item - 1) >= 9)
                 complain(mode_lines[3]);
-            else if (shop_.pick_kind != kind || shop_.pick_index != row) {
-                // Touch: the first tap shows the item in the balloon, a second tap buys it.
+            else if (platform::touch_ui && (shop_.pick_kind != kind || shop_.pick_index != row)) {
+                // Touch: the first tap shows the item in the balloon, a second tap buys it (the original
+                // buys at once, §6.4).
                 shop_.pick_kind = kind;
                 shop_.pick_index = row;
                 shop_.pick_value = value;
@@ -878,7 +922,7 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
                 frame.hit(option_id + int(*option_of(decision, 200 + tool)), {12, 80 + y, 213, 128 + y},
                           buy(false, i, 200 + tool));
         }
-    // The player's own grid; a tap sells at once, as in the original.
+    // The player's own grid: a click sells at once, as in the original (touch builds: two taps).
     keyed(frame, art(frame, 'p', 11, mode ? 1 : 0), grid_x, 293);
     std::vector<std::int32_t> sell_values;
     if (mode == 0) {
@@ -906,7 +950,7 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
         const auto owned = mode ? player.tool_amounts.at(std::size_t(sell_values[tile] % 100) - 1) : 1;
         frame.hit(option_id + int(*index), rect,
                   [this, host, kind, tile, owned, index = *index, value = sell_values[tile]] {
-                      if (shop_.pick_kind != kind || shop_.pick_index != tile) {
+                      if (platform::touch_ui && (shop_.pick_kind != kind || shop_.pick_index != tile)) {
                           // Touch: the first tap names the price, a second tap sells.
                           const auto item = std::size_t(value % 100);
                           const bool card = kind == 2;
@@ -979,6 +1023,11 @@ void Screens::draw_shop(Frame &frame, GameSession &session, const GameDecision &
             frame.hit(option_id + int(*leave), {0, 0, 640, 480}, [host, index = *leave] { host.respond(index); });
         return;
     }
+    if (leave) // §6: right-up leaves at once, without the goodbye line
+        frame.right_click([this, host, index = *leave] {
+            shop_.pick_kind = -1;
+            host.respond(index);
+        });
     frame.hit(shop_switch_id, switch_rect, [this] {
         shop_.mode ^= 1;
         shop_.pick_kind = -1;
@@ -1074,7 +1123,8 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         }
         return;
     }
-    // Effect choice: tap a triangle to light it and read its label, tap it again to cast.
+    // Effect choice (§7.3): hover lights a triangle and its label (sound 0x27), a click casts. Touch
+    // builds: tap a triangle to light it and read its label, tap it again to cast.
     const auto group = magic_.category;
     const auto respond_effect = [this, host, &decision](int effect) {
         if (const auto index = option_of(decision, effect)) {
@@ -1120,7 +1170,8 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
     const auto tap = [this](int effect) {
         if (effect < 0 || effect > 11)
             return;
-        if (magic_.selected == effect) {
+        if (magic_.selected == effect || !platform::touch_ui) { // mouse builds: one click casts
+            magic_.selected = effect;
             magic_.casting = 1; // stamped with the frame time below
             return;
         }
@@ -1136,14 +1187,28 @@ void Screens::draw_magic(Frame &frame, GameSession &session, const GameDecision 
         ui::border(frame.canvas, plate, ui::color(232, 196, 96));
         centred(frame, text, 320, 460, 16, ui::color(250, 240, 210));
     };
+    if (!platform::touch_ui) { // the Panel 19 mask under the mouse picks the lit triangle
+        const int x = frame.pointer_x, y = frame.pointer_y;
+        int hovered = -1;
+        if (x >= 0 && y >= 0 && x < 640 && y < 480 && magic_mask_.size() >= 640U * 480U)
+            if (const int value = magic_mask_[std::size_t(y * 640 + x)];
+                value >= 1 && value <= 12 && option_of(decision, value - 1))
+                hovered = value - 1;
+        if (hovered != magic_.selected) {
+            magic_.selected = hovered;
+            if (hovered >= 0 && sound)
+                sound(0x27);
+        }
+    }
     if (magic_.selected >= 0) {
         const auto &effect = magic_table[std::size_t(magic_.selected)];
         keyed(frame, art(frame, 'p', 18, std::size_t(23 + magic_.selected)), effect.icon_x, effect.icon_y);
         keyed(frame, art(frame, 'p', 18, effect.plate), effect.label_x, effect.label_y);
         centred(frame, effect.text, effect.label_x, effect.label_y, 14, ui::color(224, 224, 224), true,
                 ui::color(32, 32, 32));
-        prompt(std::string(effect.text) + "？再點一次就施法");
-    } else
+        if (platform::touch_ui)
+            prompt(std::string(effect.text) + "？再點一次就施法");
+    } else if (platform::touch_ui)
         prompt(std::string(group >= 0 && group < 12 ? magic_groups[std::size_t(group)] : "") +
                "：嘿～輪到你了！請點選魔法");
     for (std::size_t i = 0; i < decision.options.size(); ++i) {
@@ -1278,6 +1343,18 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
         rescue_.thanks_until = 1; // stamped with the frame time below
     };
     const bool thanking = rescue_.thanks >= 4 && rescue_.thanks < 8;
+    // Mouse builds (§8): hover shows the slot's bail tooltip; a click checks the points, then asks with
+    // the YES/NO strip; right-click says no / leaves. Touch builds: the first tap selects the slot
+    // (tooltip and strip), a second tap or YES confirms, EXIT replaces the right-click.
+    if (!platform::touch_ui && !thanking && !rescue_.asking) {
+        rescue_.selected = -1;
+        for (int slot = 0; slot < 8; ++slot) {
+            const auto [x, y] = slot_origin(slot);
+            const Rect rect = hospital ? Rect{x, y, x + 147, y + 102} : Rect{x, y, x + 121, y + 137};
+            if (option_of(decision, slot) && frame.pointer_in(rect))
+                rescue_.selected = slot;
+        }
+    }
     for (int slot = 0; slot < 8; ++slot) {
         const auto [x, y] = slot_origin(slot);
         const auto index = rescue_.thanks == slot ? std::nullopt : option_of(decision, slot);
@@ -1294,13 +1371,19 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
                 ui::border(frame.canvas, {rect.left + 1, rect.top + 1, rect.right - 1, rect.bottom - 1},
                            ui::color(255, 255, 0));
             }
-            if (!thanking) {
+            if (!thanking && (!rescue_.asking || rescue_.selected == slot)) { // asking: the slot again = YES
                 frame.hit(option_id + int(*index), rect, [this, confirm, slot, points, index = *index] {
-                    if (points < (slot < 4 ? 30 : 300)) {
+                    if (rescue_.asking) {
+                        rescue_.asking = false;
+                        confirm(slot, index);
+                    } else if (points < (slot < 4 ? 30 : 300)) {
                         rescue_.selected = -1;
                         rescue_.poor_until = 1;
                         if (sound)
                             sound(3);
+                    } else if (!platform::touch_ui) {
+                        rescue_.selected = slot;
+                        rescue_.asking = true;
                     } else if (rescue_.selected == slot)
                         confirm(slot, index);
                     else {
@@ -1361,9 +1444,21 @@ void Screens::draw_rescue(Frame &frame, GameSession &session, const GameDecision
         centred(frame, "保釋點數", text_x, ty + 48, 16, dark, false, dark, true);
         centred(frame, std::to_string(slot < 4 ? 30 : 300) + "點", text_x, ty + 70, 16, dark, false, dark, true);
         // _rich4_ui_yesno(320,240) (ui_hospital.asm:1313, ui_prison.asm:699): the YES/NO strip alone.
-        if (const auto index = option_of(decision, slot))
-            messages::draw_yes_no_strip(frame, 320, 240, yes_id, [confirm, slot, index = *index] { confirm(slot, index); },
-                                        no_id, [this] { rescue_.selected = -1; });
+        if (const auto index = option_of(decision, slot); index && (platform::touch_ui || rescue_.asking)) {
+            const auto no = [this] {
+                rescue_.selected = -1;
+                rescue_.asking = false;
+            };
+            messages::draw_yes_no_strip(frame, 320, 240, yes_id, [this, confirm, slot, index = *index] {
+                rescue_.asking = false;
+                confirm(slot, index);
+            }, no_id, no);
+            frame.right_click(no); // _rich4_ui_yesno: right-click = no
+        }
+    }
+    if (leave && !platform::touch_ui) {
+        frame.right_click([host, index = *leave] { host.respond(index); }, option_id + int(*leave)); // §8: right-up
+        return;
     }
     if (leave) {
         // The original leaves on a right-click; a phone has none, so the game's own EXIT button

@@ -78,5 +78,7 @@ enum Effect : int { hover_sound = 0, click_sound = 1, exit_sound = 2, error_soun
 
 // Registers a hit area whose press plays `effect` instead of the application's generic click.
 void hit(Host &host, int id, graphics::Rect rect, int effect, std::function<void()> action, bool enabled = true);
+// The screen's right-button-up (mouse builds; see Frame::right_click), playing Effect `effect` first.
+void right_click(Host &host, int effect, std::function<void()> action, int stands_for = 0);
 
 } // namespace rich4::native::screens

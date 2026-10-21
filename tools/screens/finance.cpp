@@ -42,7 +42,8 @@ constexpr char pad_character(int id) {
     constexpr const char *map = "??MEC0B789456123";
     return id >= 2 && id <= 15 ? map[id] : '?';
 }
-// Touch-friendly hit rectangles: the visible keys are 33x17, the enlarged areas fill the gaps.
+// Touch builds: the visible keys are 33x17, the enlarged areas fill the gaps. Mouse builds hit the
+// key's own pressed art, like the original's Panel 22 hit map.
 graphics::Rect pad_key_rect(const PadKey &key) {
     if (key.id == 2)
         return {4, 59, 60, 91};
@@ -221,7 +222,9 @@ void NumberPad::draw(Host &host) {
                   x_ + k * 10, y_ + k * 42);
     }
     for (const auto &key : pad_keys) {
-        const auto local = pad_key_rect(key);
+        const auto &art = scaled(frame.artwork, 'p', 21, std::size_t(key.id), 1);
+        const auto local = platform::touch_ui ? pad_key_rect(key)
+                                              : graphics::Rect{key.x, key.y, key.x + art.width, key.y + art.height};
         const graphics::Rect rect{x_ + k * local.left, y_ + k * local.top, x_ + k * local.right,
                                   y_ + k * local.bottom};
         if (frame.pointer_down && frame.pointer_in(rect))
@@ -233,14 +236,16 @@ void NumberPad::draw(Host &host) {
         set_from_gauge(frame.pointer_x);
     });
     hit(host, ids::pad_body, {x_, y_, x_ + k * 128, y_ + k * 192}, no_sound, [] {});
-    // Touch has no right button: tapping outside the pad cancels, like the original right-click.
-    hit(host, ids::pad_cancel, {0, 0, 640, 480}, cancel_sound, [this] {
-        active_ = false;
-        const auto done = std::move(done_);
-        done_ = {};
-        if (done)
-            done(0);
-    });
+    // Touch has no right button: tapping outside the pad cancels, like the original right-click (which
+    // mouse builds route through cancel()).
+    if (platform::touch_ui)
+        hit(host, ids::pad_cancel, {0, 0, 640, 480}, cancel_sound, [this] {
+            active_ = false;
+            const auto done = std::move(done_);
+            done_ = {};
+            if (done)
+                done(0);
+        });
 }
 
 // ---------------------------------------------------------------------------------------
@@ -267,11 +272,11 @@ constexpr std::array<graphics::Rect, 18> atm_rects{{{57, 49, 137, 90},
                                                     {183, 233, 232, 258},
                                                     {175, 260, 232, 285}}};
 constexpr int atm_x = 60, atm_y = 71;
-// Screen rectangle (exclusive) for ATM control index, keys enlarged into their gaps for touch.
+// Screen rectangle (exclusive) for ATM control index, keys enlarged into their gaps on touch builds.
 graphics::Rect atm_rect(std::size_t index) {
     const auto &r = atm_rects[index];
     graphics::Rect rect{r.left + atm_x, r.top + atm_y, r.right + atm_x + 1, r.bottom + atm_y + 1};
-    if (index >= 4 && index <= 15)
+    if (platform::touch_ui && index >= 4 && index <= 15)
         rect = {rect.left - 3, rect.top - 1, rect.right + 3, rect.bottom + 1};
     return rect;
 }

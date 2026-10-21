@@ -97,7 +97,6 @@ struct Options {
     bool headless = false, start_new = false, hidden_window = false, exercise_recovery = false;
     bool exercise_trading = false, overlay_gallery = false;
     bool play_effects = false; // EFFECTS (dev): play effects in replays and dump effect-NNN.ppm frames
-    bool touch = false; // finger-sized number pad (always on Android; --touch on desktop)
     fs::path gallery;   // dev: render every original-style menu/finance screen to DIR and exit
     bool items_gallery = false; // dev: render every card/tool/shop screen into OUTPUT/gallery
     bool colour_gallery = false; // dev: info panel + owned plots for all 12 characters (OUTPUT/colours)
@@ -199,7 +198,6 @@ Options arguments(int argc, char **argv) {
     options.assets = platform.assets;
     options.font = platform.font;
     options.save_directory = platform.save_directory;
-    options.touch = true;
 #endif
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -225,8 +223,6 @@ Options arguments(int argc, char **argv) {
             options.monthly_gallery = true;
         else if (argument == "--start-new")
             options.start_new = true;
-        else if (argument == "--touch")
-            options.touch = true;
         else {
             if (index + 1 >= argc)
                 throw std::invalid_argument("Missing value for " + argument);
@@ -378,7 +374,7 @@ class Application {
             inputs_.open(options_.output / "inputs.jsonl");
         }
         audio_ = std::make_unique<audio::Audio>(options_.assets);
-        pad_.set_scale(options_.touch ? 2 : 1);
+        pad_.set_scale(platform::touch_ui ? 2 : 1); // finger-sized pad on touch builds
         effects_.set_skip(options_.auto_rounds && !options_.play_effects); // EFFECTS: replays stay zero-duration
         spinners_.set_skip(options_.auto_rounds && !options_.play_effects); // SPINNERS: same as effects
         monthly_.set_skip(options_.auto_rounds && !options_.play_effects); // MONTHLY: one frame per screen
@@ -516,6 +512,12 @@ class Application {
                     frame_.pointer_y = int(motion ? event.motion.y : event.button.y);
                     if (!motion)
                         frame_.pointer_down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                    // main-screen.md §7: the tile popup shows while the button is held and goes on mouse
+                    // up or move (touch builds: it stays until the next tap).
+                    if (!platform::touch_ui && tile_popup_ &&
+                        (event.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+                         (motion && std::abs(frame_.pointer_x - tile_popup_->x) + std::abs(frame_.pointer_y - tile_popup_->y) > 2)))
+                        tile_popup_.reset();
                     if (screen_ == Screen::game && session_) {
                         if (motion)
                             main_screen_.pointer_motion(frame_.pointer_x, frame_.pointer_y,
@@ -525,10 +527,24 @@ class Application {
                                                     event.button.button == SDL_BUTTON_RIGHT);
                     }
                 }
-                if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_RIGHT &&
-                    cancellable()) {
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT && pending_release_) {
+                    const auto release = std::exchange(pending_release_, {});
                     buttons_.clear();
-                    cancel_screen(); // The original's right-button-up means cancel/back on these screens.
+                    release();
+                }
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_RIGHT) {
+                    const auto handler = std::find_if(buttons_.begin(), buttons_.end(), [](const Button &button) {
+                        return button.id == native::Frame::right_click_id;
+                    });
+                    if (handler != buttons_.end()) { // the screen's own right-click (Frame::right_click)
+                        auto action = handler->action;
+                        ++input_events_;
+                        buttons_.clear();
+                        action();
+                    } else if (cancellable()) {
+                        buttons_.clear();
+                        cancel_screen(); // The original's right-button-up means cancel/back on these screens.
+                    }
                 }
                 if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_RIGHT &&
                     screen_ == Screen::game && session_ && !messages_.active() && session_->pending_decision() &&
@@ -552,6 +568,7 @@ class Application {
                                 audio_->play_sound(9);
                             if (button.id != messages::skip_button && !options_.auto_rounds)
                                 platform::haptic_tap(); // a light tap on phones for every button press
+                            pending_release_ = button.release; // e.g. NG:1991: press arms, release acts
                             buttons_.clear(); // Remaining events cannot invoke controls from the previous
                                               // screen/decision.
                             action();
@@ -1961,30 +1978,42 @@ class Application {
         font_.draw(canvas_, decision.prompt, 449, 16, 16, ui::blue, 181);
         constexpr std::size_t page_size = 8;
         const auto first = decision_page_ * page_size;
-        items_.draw_targets(frame_, decision, current_camera_, selected_target_, [this](std::size_t index) {
-            if (selected_target_ != index) {
-                select_target(index); // first tap selects and centres the camera
-                return;
-            }
+        // Mouse builds: hover lights a target, a click confirms it (§3.2: left-up, Effect 2), right-click
+        // cancels where the decision offers 取消. Touch builds: the first tap selects and centres the
+        // camera, a second tap or 確認目標 confirms, 取消 replaces the right-click.
+        const auto confirm = [this](std::size_t index) {
             if (sound_effects_)
                 audio_->play_sound(2);
-            respond(index); // second tap on the same target confirms
+            respond(index);
+        };
+        items_.draw_targets(frame_, decision, current_camera_, selected_target_, [this, confirm](std::size_t index) {
+            if (platform::touch_ui && selected_target_ != index) {
+                select_target(index);
+                return;
+            }
+            confirm(index);
         });
-        font_.draw(canvas_, "點地圖上的目標，再點一次確認", 449, 66, 12, ui::color(144, 38, 17));
+        font_.draw(canvas_, platform::touch_ui ? "點地圖上的目標，再點一次確認" : "點選地圖上的目標，右鍵取消", 449, 66,
+                   12, ui::color(144, 38, 17));
         for (std::size_t index = 0; index < decision.options.size(); ++index) {
             const auto &option = decision.options[index];
             if (index >= first && index < first + page_size) {
                 const int y = 91 + int(index - first) * 34;
+                if (!platform::touch_ui && option.location && frame_.pointer_in({448, y, 633, y + 30}) &&
+                    selected_target_ != index)
+                    select_target(index); // hovering a row shows that target
                 button(210 + int(index), {448, y, 633, y + 30},
                        (option.location ? std::to_string(index + 1) + " " : "") + option.label,
-                       [this, index] {
+                       [this, index, confirm] {
                            if (!session_->pending_decision() ||
                                index >= session_->pending_decision()->options.size())
                                return;
-                           if (session_->pending_decision()->options[index].location)
+                           if (!session_->pending_decision()->options[index].location)
+                               respond(index);
+                           else if (platform::touch_ui)
                                select_target(index);
                            else
-                               respond(index);
+                               confirm(index);
                        });
                 if (selected_target_ == index)
                     ui::border(canvas_, {450, y + 2, 631, y + 28}, ui::blue);
@@ -1994,6 +2023,19 @@ class Application {
         button(
             204, {543, 369, 633, 398}, "下一頁", [this] { ++decision_page_; },
             first + page_size < decision.options.size());
+        const auto cancel = std::find_if(decision.options.begin(), decision.options.end(),
+                                         [](const auto &option) { return option.label == "取消"; });
+        if (!platform::touch_ui) {
+            if (cancel != decision.options.end()) // right-up cancels (not when the 0x08 mask forbids it)
+                frame_.right_click(
+                    [this, index = std::size_t(cancel - decision.options.begin())] {
+                        if (sound_effects_)
+                            audio_->play_sound(screens::cancel_sound);
+                        respond(index);
+                    },
+                    208);
+            return;
+        }
         button(
             207, {449, 420, 560, 462}, "確認目標",
             [this] {
@@ -2001,8 +2043,6 @@ class Application {
                     respond(*selected_target_);
             },
             selected_target_.has_value());
-        const auto cancel = std::find_if(decision.options.begin(), decision.options.end(),
-                                         [](const auto &option) { return option.label == "取消"; });
         if (cancel != decision.options.end()) {
             const auto index = static_cast<std::size_t>(cancel - decision.options.begin());
             button(208, {567, 420, 632, 462}, "取消", [this, index] { respond(index); });
@@ -2173,6 +2213,16 @@ class Application {
                     test_release_ = event;
                 else
                     require(SDL_PushEvent(&event));
+                return;
+            }
+        // Mouse builds: a touch-only button (返回, 取消, ...) is the screen's right-click.
+        for (const auto &button : buttons_)
+            if (button.id == native::Frame::right_click_id && button.stands_for == id) {
+                SDL_Event event{};
+                event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+                event.button.windowID = SDL_GetWindowID(window_.get());
+                event.button.button = SDL_BUTTON_RIGHT;
+                require(SDL_PushEvent(&event));
                 return;
             }
         throw std::runtime_error("Native UI replay cannot find enabled button " + std::to_string(id));
@@ -2346,7 +2396,9 @@ class Application {
         if (test_stage_ == 2 &&
             (session_->completed_days() >= options_.auto_rounds ||
              session_->phase() == GamePhase::finished) &&
-            session_->can_save()) {
+            session_->can_save() &&
+            (session_->phase() == GamePhase::finished || main_screen_.human_turn_shown(*session_))) {
+            // The toolbar only answers while GO waits (the input gate), so save on a human turn.
             test_completed_days_ = session_->completed_days();
             test_finished_ = session_->phase() == GamePhase::finished;
             expected_reload_ = session_->export_save().encode();
@@ -2361,6 +2413,8 @@ class Application {
             return;
         }
         if (test_stage_ == 3) {
+            if (!test_finished_ && screen_ == Screen::game && !main_screen_.human_turn_shown(*session_))
+                return; // load from the toolbar once GO is back (the input gate)
             test_load_count_before_reload_ = loads_;
             if (test_finished_) {
                 test_stage_ = 5; // leave the end screen below, then reload through the main menu
@@ -2402,7 +2456,7 @@ class Application {
             ++test_invalid_load_stage_;
         }
         if (options_.exercise_recovery && test_invalid_load_stage_ < 4 &&
-            session_->phase() == GamePhase::human_ready) {
+            session_->phase() == GamePhase::human_ready && main_screen_.human_turn_shown(*session_)) {
             test_recovery_save_ = session_->export_save().encode();
             test_recovery_random_ = session_->random_state();
             test_recovery_path_ = options_.load;
@@ -2423,7 +2477,8 @@ class Application {
                 return button.id >= 5000 && button.enabled;
             });
             const auto cancel = std::find_if(buttons_.begin(), buttons_.end(), [](const auto &button) {
-                return button.id == 208 && button.enabled;
+                return (button.id == 208 || (button.id == native::Frame::right_click_id && button.stands_for == 208)) &&
+                       button.enabled; // mouse builds: the right-click stands for 取消
             });
             if (marker != buttons_.end() && cancel != buttons_.end()) {
                 const auto marker_id = marker->id;
@@ -2587,8 +2642,11 @@ class Application {
         for (const auto &button : buttons_)
             if (button.id == id && button.enabled) {
                 auto action = button.action;
+                auto release = button.release; // a whole click: press, then release
                 buttons_.clear();
                 action();
+                if (release)
+                    release();
                 return true;
             }
         return false;
@@ -3371,6 +3429,7 @@ class Application {
     unsigned selected_character_ = 10, selected_map_ = 0, selected_stage_ = 0, rotation_ = 0;
     unsigned speed_ = 2;           // 遊戲速度 1/2/4 = one/two/three bars; the original defaults to two
     unsigned speed_remainder_ = 0; // game_ms: thirds of a game millisecond not yet handed out
+    std::function<void()> pending_release_;   // Button::release of the control pressed last
     bool running_ = true, bank_done_for_visit_ = false, shop_done_for_visit_ = false,
          sound_effects_ = true;
     std::int32_t bank_amount_ = 1000;

@@ -64,7 +64,7 @@ void MainMenu::draw(Host &host, const MenuActions &actions) {
     for (std::size_t i = 0; i < entries.size(); ++i) {
         const auto &entry = entries[i];
         auto rect = anchored_rect(frame.artwork.frame('d', 1, 2 * i + 2), entry.x, entry.y);
-        if (entry.id == ids::menu_exit) // finger-sized target around the small EXIT label
+        if (platform::touch_ui && entry.id == ids::menu_exit) // finger-sized target around the small EXIT label
             rect = {rect.left - 10, rect.top - 6, rect.right + 10, 480};
         hit(host, entry.id, rect, entry.id == ids::menu_exit ? exit_sound : click_sound, *entry.action,
             entry.enabled);
@@ -234,9 +234,9 @@ void NewGameSetup::draw(Host &host, const std::function<void(const NewGameChoice
              row_supported(row) ? value : grey_value);
     }
     const bool pressing = frame.pointer_down && !busy() && dropdown_ < 0;
-    if (pressing && frame.pointer_in({456, 176, 536, 216}) && !picks_.empty())
+    if (armed_ == 1 || (pressing && frame.pointer_in({456, 176, 536, 216}) && !picks_.empty()))
         frame.picture('j', 8, 2, 456, 176);
-    if (pressing && frame.pointer_in({544, 176, 624, 216}))
+    if (armed_ == 2 || (pressing && frame.pointer_in({544, 176, 624, 216})))
         frame.picture('j', 8, 3, 544, 176);
     for (int row = 0; row < 4; ++row)
         if ((pressing || dropdown_ == row) && (dropdown_ == row || frame.pointer_in({602, 226 + 36 * row, 626, 251 + 36 * row})))
@@ -289,8 +289,7 @@ void NewGameSetup::draw(Host &host, const std::function<void(const NewGameChoice
     for (unsigned m = 0; m < 4; ++m)
         hit(host, ids::setup_map + int(m), {457, 31 + 32 * int(m), 626, 63 + 32 * int(m)}, click_sound,
             [this, m] { map_ = m; });
-    hit(host, ids::setup_ok, {456, 176, 536, 216}, click_sound,
-        [this, start, instant = host.instant, frame_pointer = &frame] {
+    const auto ok = [this, start, instant = host.instant, frame_pointer = &frame] {
             human_count_ = picks_.size();
             if (instant) {
                 // Replays fill the remaining seats with the first free characters so a seed
@@ -303,9 +302,25 @@ void NewGameSetup::draw(Host &host, const std::function<void(const NewGameChoice
             }
             filling_ = true;
             fill_tick_ = frame_pointer->ticks;
-        },
-        !picks_.empty());
-    hit(host, ids::setup_exit, {544, 176, 624, 216}, exit_sound, exit);
+        };
+    // NG:1991: OK / EXIT show their pressed art and sound on the button-down and act on the button-up,
+    // wherever it is released (touch builds act on the tap).
+    if (armed_ && !frame.pointer_down)
+        armed_ = 0; // released (the release already acted) or lost outside the window
+    hit(host, ids::setup_ok, {456, 176, 536, 216}, click_sound,
+        platform::touch_ui ? std::function<void()>(ok) : [this] { armed_ = 1; }, !picks_.empty());
+    if (!platform::touch_ui)
+        frame.buttons.back().release = [this, ok] {
+            armed_ = 0;
+            ok();
+        };
+    hit(host, ids::setup_exit, {544, 176, 624, 216}, exit_sound,
+        platform::touch_ui ? exit : [this] { armed_ = 2; });
+    if (!platform::touch_ui)
+        frame.buttons.back().release = [this, exit] {
+            armed_ = 0;
+            exit();
+        };
     for (int row = 0; row < 6; ++row)
         hit(host, ids::setup_dropdown + row, {dropdown_rects[std::size_t(row)].left, 220 + 36 * row, 630, 256 + 36 * row},
             hover_sound,
@@ -360,9 +375,12 @@ void SaveLoadScreen::draw(Host &host, const std::function<void(int)> &choose, co
         hit(host, (saving_ ? ids::save_slot : ids::load_slot) + slot, {130, y + 1, 577, y + 73}, exit_sound,
             [choose, slot] { choose(slot); }, saving_ || slots_[std::size_t(slot)].valid);
     }
-    hit(host, ids::slot_cancel - 100, window, no_sound, [] {}); // the window body itself does nothing
-    // Touch has no right button: a tap outside the window cancels, like the original right-click.
-    hit(host, ids::slot_cancel, {0, 0, 640, 480}, cancel_sound, cancel);
+    // Touch has no right button: a tap outside the window cancels, like the original right-click (which
+    // mouse builds route through the app's cancel).
+    if (platform::touch_ui) {
+        hit(host, ids::slot_cancel - 100, window, no_sound, [] {}); // the window body itself does nothing
+        hit(host, ids::slot_cancel, {0, 0, 640, 480}, cancel_sound, cancel);
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -447,7 +465,10 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
             else if (which == 2 && actions.quit)
                 actions.quit();
         });
-        hit(host, ids::options_confirm_no, {0, 0, 640, 480}, cancel_sound, [this] { confirm_ = -1; });
+        // _rich4_ui_yesno: 否 or the right-click says no; touch builds take a tap anywhere else as no.
+        hit(host, ids::options_confirm_no, platform::touch_ui ? graphics::Rect{0, 0, 640, 480} : no, cancel_sound,
+            [this] { confirm_ = -1; });
+        right_click(host, cancel_sound, [this] { confirm_ = -1; });
         return;
     }
     auto *frame_pointer = &frame;
@@ -482,8 +503,10 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
         actions.apply(state_);
         actions.close();
     });
-    hit(host, 0, at(0, 0, 347, 363), no_sound, [] {});
-    hit(host, ids::options_outside, {0, 0, 640, 480}, cancel_sound, actions.close); // tap outside = right-click cancel
+    if (platform::touch_ui) { // tap outside = right-click cancel (mouse builds: the app's cancel)
+        hit(host, 0, at(0, 0, 347, 363), no_sound, [] {});
+        hit(host, ids::options_outside, {0, 0, 640, 480}, cancel_sound, actions.close);
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -536,7 +559,8 @@ void PlayerInfo::draw(Host &host, const World &world, const std::function<void()
         draw_properties(host, world);
     else
         draw_stocks(host, world);
-    hit(host, ids::info_exit, {492, 0, 610, 48}, exit_sound, exit);
+    hit(host, ids::info_exit, platform::touch_ui ? graphics::Rect{492, 0, 610, 48} : graphics::Rect{492, 9, 603, 39},
+        exit_sound, exit);
 }
 
 void PlayerInfo::draw_assets(Host &host, const World &world) {
@@ -676,8 +700,9 @@ void PlayerInfo::draw_properties(Host &host, const World &world) {
         frame.picture('p', 9, 7, 593, 369);
     if (frame.pointer_down && frame.pointer_in({593, 417, 624, 448}))
         frame.picture('p', 9, 8, 593, 417);
-    hit(host, ids::info_up, {586, 360, 634, 408}, click_sound, [this] { scroll_ = scroll_ >= 10 ? scroll_ - 10 : 0; });
-    hit(host, ids::info_down, {586, 409, 634, 457}, click_sound,
+    const bool big = platform::touch_ui; // touch: the 31 px arrows grow to finger size
+    hit(host, ids::info_up, big ? graphics::Rect{586, 360, 634, 408} : graphics::Rect{593, 369, 624, 400}, click_sound, [this] { scroll_ = scroll_ >= 10 ? scroll_ - 10 : 0; });
+    hit(host, ids::info_down, big ? graphics::Rect{586, 409, 634, 457} : graphics::Rect{593, 417, 624, 448}, click_sound,
         [this, total = rows.size()] {
             if (scroll_ + 10 < total)
                 scroll_ += 10;

@@ -76,9 +76,13 @@ void line(graphics::Image &canvas, int x0, int y0, int x1, int y1, std::uint16_t
 
 constexpr graphics::Rect page_button{16, 9, 125, 40}, buy_button{128, 9, 199, 40}, sell_button{202, 9, 273, 40},
     info_button{276, 9, 411, 40}, exit_button{552, 8, 624, 41};
-// The top bar is 31 px tall; its hit areas extend to the screen edge and the header row for fingers.
+// The top bar is 31 px tall; on touch builds its hit areas extend to the screen edge and the header
+// row for fingers.
 graphics::Rect tall(graphics::Rect rect) {
-    return {rect.left, 0, rect.right, 47};
+    return platform::touch_ui ? graphics::Rect{rect.left, 0, rect.right, 47} : rect;
+}
+graphics::Rect exit_target() {
+    return platform::touch_ui ? graphics::Rect{exit_button.left, 0, 640, 47} : exit_button;
 }
 
 } // namespace
@@ -141,7 +145,7 @@ void StockMarket::draw(Host &host, const World &world, std::size_t player, Numbe
         popup_until_ = frame_pointer->ticks + 1500;
     };
     hit(host, ids::stock_page, tall(page_button), click_sound, [this] { page ^= 1; });
-    hit(host, ids::stock_exit, {exit_button.left, 0, 640, 47}, exit_sound, [this, actions] {
+    hit(host, ids::stock_exit, exit_target(), exit_sound, [this, actions] {
         if (page == 1)
             page = 0;
         else
@@ -213,27 +217,30 @@ void StockMarket::draw_card_target(Host &host, const World &world, std::size_t p
         return;
     for (std::size_t index = 0; index < decision->options.size(); ++index) {
         const auto &option = decision->options[index];
-        if (option.value < 0) { // 取消: EXIT stands in for the original right-click
+        if (option.value < 0) { // 取消: EXIT (code 5) or the original right-click
             if (frame.pointer_down && frame.pointer_in(exit_button))
                 pressed_bevel(frame.canvas, exit_button);
-            hit(host, option_base + int(index), {exit_button.left, 0, 640, 47}, exit_sound,
-                [this, respond, index] {
-                    selected.reset();
-                    respond(index);
-                });
+            const auto cancel = [this, respond, index] {
+                selected.reset();
+                respond(index);
+            };
+            hit(host, option_base + int(index), exit_target(), exit_sound, cancel);
+            right_click(host, exit_sound, cancel);
             continue;
         }
         if (!option.subject || option.subject->kind != CardTargetKind::stock ||
             option.subject->value >= world.stocks.size())
             continue;
         const auto stock = std::size_t(option.subject->value);
-        hit(host, option_base + int(index), {16, 80 + 32 * int(stock), 625, 112 + 32 * int(stock)}, click_sound,
-            [this, respond, stock, index] {
-                if (selected == stock) // touch: a second tap on the outlined row uses the card
-                    respond(index);
-                else
-                    selected = stock; // the original outlines the row under the mouse
-            });
+        const graphics::Rect row{16, 80 + 32 * int(stock), 625, 112 + 32 * int(stock)};
+        if (!platform::touch_ui && frame.pointer_in(row))
+            selected = stock; // ST:1786-2205: the row under the mouse is outlined
+        hit(host, option_base + int(index), row, click_sound, [this, respond, stock, index] {
+            if (selected == stock || !platform::touch_ui) // touch: a second tap on the outlined row uses it
+                respond(index);
+            else
+                selected = stock;
+        });
     }
 }
 

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Original 大富翁4 item screens (docs/ui/cards-tools-shops.md): the use-card and use-tool
 // grids, the card-art popup, on-map target cursors, the point shop, the magic house and the
-// hospital/prison bail screens. Adapted for touch: no hover or right-click is needed.
+// hospital/prison bail screens. Touch builds (platform::touch_ui) need no hover or right-click;
+// mouse builds keep the original hover, single clicks and right-click.
 #pragma once
 
 #include "../native_frame.hpp"
@@ -129,6 +130,7 @@ class Screens {
     struct Rescue {
         bool active = false;
         int selected = -1;
+        bool asking = false; // mouse builds: the clicked slot's _rich4_ui_yesno is up (hover moves `selected`)
         std::uint64_t poor_until = 0;
         std::uint64_t opened = 0;
         int thanks = -1;                 // rescued NPC slot 4..7 thanking the player (Panel 64)

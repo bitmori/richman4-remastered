@@ -149,7 +149,10 @@ void HelpScreen::draw(Host &host) {
     // Topic list, 8 rows from first_[category].
     auto &first = first_[category_];
     first = std::min(first, count > visible_topics ? count - visible_topics : 0U);
-    const graphics::Rect up_hit = at(146, 30, 204, 58), down_hit = at(146, 58, 204, 78);
+    // ref_00476254 regions; touch builds grow them to finger size.
+    const bool big = platform::touch_ui;
+    const graphics::Rect up_hit = big ? at(146, 30, 204, 58) : at(170, 43, 192, 58),
+                         down_hit = big ? at(146, 58, 204, 78) : at(170, 59, 192, 74);
     if (count > visible_topics) {
         frame.picture('h', 0, pressed(up_hit) ? 6 : 4, X + 170, Y + 43);
         frame.picture('h', 0, pressed(down_hit) ? 7 : 5, X + 170, Y + 59);
@@ -166,32 +169,41 @@ void HelpScreen::draw(Host &host) {
     for (std::size_t i = 0; i < lines.size(); ++i)
         text(frame, lines[i], X + 232, Y + 90 + 18 * int(i), 0, text_style);
     const bool paged = pages_.size() > 1;
-    const graphics::Rect prev_hit = at(296, 30, 344, 86), next_hit = at(344, 30, 396, 86);
+    const graphics::Rect prev_hit = big ? at(296, 30, 344, 86) : at(322, 48, 345, 80),
+                         next_hit = big ? at(344, 30, 396, 86) : at(343, 48, 366, 80);
     if (paged) {
         frame.picture('h', 0, pressed(prev_hit) ? 10 : 8, X + 322, Y + 48);
         frame.picture('h', 0, pressed(next_hit) ? 11 : 9, X + 343, Y + 48);
     }
 
-    // Hit areas, first match wins: finger-sized versions of the ref_00476254 regions.
+    // Hit areas, first match wins: the ref_00476254 columns (category x 22-91, topics x 104-196), in
+    // finger-sized versions on touch builds.
     for (unsigned i = 0; i < 8; ++i)
-        hit(host, ids::help_category + int(i), at(14, 56 + 36 * int(i), 98, 92 + 36 * int(i)), click_sound,
+        hit(host, ids::help_category + int(i),
+            big ? at(14, 56 + 36 * int(i), 98, 92 + 36 * int(i)) : at(22, 56 + 36 * int(i), 91, 92 + 36 * int(i)),
+            click_sound,
             [this, i, &artwork = frame.artwork] { select(artwork, i, 0); });
     if (count > visible_topics) {
         hit(host, ids::help_list_up, up_hit, click_sound, [this] { scroll(-1); }, first > 0);
         hit(host, ids::help_list_down, down_hit, click_sound, [this] { scroll(1); }, first + visible_topics < count);
     }
     for (unsigned row = 0; row < visible_topics && first + row < count; ++row)
-        hit(host, ids::help_topic + int(row), at(100, 77 + 34 * int(row), 204, 111 + 34 * int(row)), click_sound,
+        hit(host, ids::help_topic + int(row),
+            big ? at(100, 77 + 34 * int(row), 204, 111 + 34 * int(row)) : at(104, 78 + 34 * int(row), 196, 112 + 34 * int(row)),
+            click_sound,
             [this, index = first + row, &artwork = frame.artwork] { select(artwork, category_, index); });
     if (paged) {
         hit(host, ids::help_page_prev, prev_hit, click_sound, [this] { page_ = page_ ? page_ - 1 : 0; }, page_ > 0);
         hit(host, ids::help_page_next, next_hit, click_sound, [this] { ++page_; }, page_ + 1 < pages_.size());
-        // Native: a tap on the text turns to the next page (wrapping), so reading needs no small target.
-        hit(host, ids::help_text, at(210, 86, 380, 380), click_sound,
-            [this] { page_ = page_ + 1 < pages_.size() ? page_ + 1 : 0; });
+        // Touch: a tap on the text turns to the next page (wrapping), so reading needs no small target.
+        if (big)
+            hit(host, ids::help_text, at(210, 86, 380, 380), click_sound,
+                [this] { page_ = page_ + 1 < pages_.size() ? page_ + 1 : 0; });
     }
-    hit(host, ids::help_window, at(0, 0, window_size, window_size), no_sound, [] {});
-    hit(host, ids::help_outside, {0, 0, 640, 480}, cancel_sound, [this] { close(); });
+    if (big) { // touch: a tap outside closes it (mouse builds: right-click, through cancel())
+        hit(host, ids::help_window, at(0, 0, window_size, window_size), no_sound, [] {});
+        hit(host, ids::help_outside, {0, 0, 640, 480}, cancel_sound, [this] { close(); });
+    }
 }
 
 } // namespace rich4::native::screens

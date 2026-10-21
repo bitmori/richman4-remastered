@@ -17,19 +17,28 @@ constexpr Style button_font{20, 0x101010, 0, bold};
 constexpr std::array<int, 3> personality_y{195, 227, 259}; // red dot rows (ref_004752b8)
 constexpr std::array<int, 3> personality_label{203, 235, 268};
 
-// Finger-sized hit areas: the original rects are as small as 11x22 (arrows) and 96x18 (options);
-// each is widened to its visible artwork / row (rows are only ~32 px apart, so they share the gap).
+// The original hit rects (finance-menus.md §11). Touch builds use finger-sized ones: the originals
+// are as small as 11x22 (arrows) and 96x18 (options), so each is widened to its visible artwork / row
+// (rows are only ~32 px apart, so they share the gap).
+constexpr bool big = platform::touch_ui;
 Rect tab_rect(std::size_t slot) {
     return {110, 70 + 83 * int(slot), 226, 153 + 83 * int(slot)};
 }
-Rect option_rect(int centre_y) {
-    return {280, centre_y - 15, 420, centre_y + 16};
+Rect option_rect(std::size_t personality) {
+    constexpr std::array<int, 3> top{194, 226, 259};
+    return big ? Rect{280, personality_label[personality] - 15, 420, personality_label[personality] + 16}
+               : Rect{287, top[personality], 383, top[personality] + 18};
 }
-constexpr Rect cards_rect{280, 100, 420, 130}, tools_rect{280, 131, 420, 161};
-constexpr std::array<Rect, 2> down_rect{{{266, 322, 310, 356}, {266, 357, 310, 391}}};
-constexpr std::array<Rect, 2> up_rect{{{390, 322, 436, 356}, {390, 357, 436, 391}}};
-constexpr std::array<Rect, 2> bar_rect{{{310, 322, 390, 356}, {310, 357, 390, 391}}};
-constexpr Rect ok_rect{468, 150, 532, 226}, cancel_rect{468, 238, 532, 314};
+constexpr Rect cards_rect = big ? Rect{280, 100, 420, 130} : Rect{287, 106, 383, 124},
+               tools_rect = big ? Rect{280, 131, 420, 161} : Rect{287, 137, 383, 155};
+constexpr std::array<Rect, 2> down_rect = big ? std::array<Rect, 2>{{{266, 322, 310, 356}, {266, 357, 310, 391}}}
+                                              : std::array<Rect, 2>{{{298, 328, 309, 350}, {298, 361, 309, 383}}};
+constexpr std::array<Rect, 2> up_rect = big ? std::array<Rect, 2>{{{390, 322, 436, 356}, {390, 357, 436, 391}}}
+                                            : std::array<Rect, 2>{{{392, 328, 403, 350}, {392, 361, 403, 383}}};
+constexpr std::array<Rect, 2> bar_rect = big ? std::array<Rect, 2>{{{310, 322, 390, 356}, {310, 357, 390, 391}}}
+                                             : std::array<Rect, 2>{{{310, 327, 390, 351}, {310, 360, 390, 384}}};
+constexpr Rect ok_rect = big ? Rect{468, 150, 532, 226} : Rect{479, 159, 519, 215},
+               cancel_rect = big ? Rect{468, 238, 532, 314} : Rect{479, 247, 519, 303};
 
 std::uint8_t &ratio(AiSettings &settings, int row) {
     return row ? settings.stock_ratio : settings.cash_ratio;
@@ -100,7 +109,7 @@ void AiSettingsScreen::draw(Host &host, const World &world, const AiSettingsActi
     hit(host, ids::ai_cards, cards_rect, click_sound, [&edit] { edit.card_strategy ^= 1U; });
     hit(host, ids::ai_tools, tools_rect, click_sound, [&edit] { edit.card_strategy ^= 2U; });
     for (int p = 0; p < 3; ++p)
-        hit(host, ids::ai_personality + p, option_rect(personality_label[std::size_t(p)]), click_sound,
+        hit(host, ids::ai_personality + p, option_rect(std::size_t(p)), click_sound,
             [&edit, p] { edit.personality = std::uint8_t(p); });
     // 現金/存款 and 股票/資金 bars: ten 7x22 red cells per row; arrows step by 10, the bar is dragged.
     for (int row = 0; row < 2; ++row) {
