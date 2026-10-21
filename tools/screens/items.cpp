@@ -591,19 +591,20 @@ bool Screens::draw_decision(Frame &frame, GameSession &session, const Host &host
 }
 
 // 遙控骰子 (_rich4_use_tool_yaokongtouzi): the Panel 72:0 six-face bar at (92,300) over the board;
-// the touched face lights with 72:n at (104+40(n-1), 314) (fcn_00446774). Each face's hit area
-// covers its whole 40x55 column of the bar; 取消 stands in for the original right-click.
+// the face under the mouse lights with 72:n at (104+40(n-1), 314) (fcn_00446774); touch builds light
+// the pressed face instead. Each face's hit area covers its whole 40x55 column of the bar; 取消 stands
+// in for the original right-click.
 void Screens::draw_remote_dice(Frame &frame, const GameDecision &decision, const Host &host) {
     shot = "remote-dice";
-    keyed(frame, art(frame, 'p', 72, 0), 92, 300);
+    opaque(frame, art(frame, 'p', 72, 0), 92, 300); // fcn_004563f5: copied whole, black pips included
     for (std::size_t i = 0; i < decision.options.size(); ++i) {
         const int value = decision.options[i].value;
         if (value < 1 || value > 6)
             continue;
         const int x = 104 + 40 * (value - 1);
         const Rect cell{value == 1 ? 92 : x - 5, 300, value == 6 ? 348 : x + 35, 355};
-        if (frame.pointer_down && frame.pointer_in(cell))
-            keyed(frame, art(frame, 'p', 72, std::size_t(value)), x, 314);
+        if ((frame.pointer_down || !platform::touch_ui) && frame.pointer_in(cell))
+            opaque(frame, art(frame, 'p', 72, std::size_t(value)), x, 314);
         frame.hit(option_id + int(i), cell, [host, i] { host.respond(i); });
     }
     if (const auto cancel = option_of(decision, 0))

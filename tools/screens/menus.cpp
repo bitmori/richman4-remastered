@@ -367,7 +367,8 @@ void SaveLoadScreen::draw(Host &host, const std::function<void(int)> &choose, co
 
 // ---------------------------------------------------------------------------------------
 // §10 Options (rich4_ui_options.asm, Data 3). Only settings the native port supports are
-// live: speed, music on/off (with song preview) and sound on/off. The rest is greyed.
+// live: speed, music on/off (with song preview), sound on/off, 動畫過程 and the 視窗 set. The rest is
+// greyed.
 
 void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
     auto &frame = host.frame;
@@ -417,6 +418,7 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
     if (state_.animation) // fcn_0040fd49: cfg+1 on mark at ref_00474c22/26 = (98, 50)
         frame.picture('d', 3, 9, ox + 98, oy + 50);
     frame.picture('d', 3, 9, ox + 98, oy + 146); // the native game always autosaves daily
+    frame.picture('d', 3, 9, ox + 218, oy + std::array{218, 250, 281}[state_.view % 3]); // 視窗 (cfg+5)
     constexpr std::array<const char *, 8> songs{"1.星際總動員", "2.重回侏儸紀", "3.夢幻伊甸園", "4.打拼為將來",
                                                 "5.椰林風情畫", "6.浪漫月世界", "7.熱情的夏夜", "8.漫步星空下"};
     for (int i = 0; i < 8; ++i) {
@@ -458,6 +460,9 @@ void OptionsScreen::draw(Host &host, const OptionsActions &actions) {
     hit(host, ids::options_music, at(4, 74, 89, 105), click_sound, [this] { state_.music = !state_.music; });
     hit(host, ids::options_sound, at(4, 106, 89, 137), click_sound, [this] { state_.sound = !state_.sound; });
     hit(host, ids::options_animation, at(4, 42, 160, 73), click_sound, [this] { state_.animation = !state_.animation; });
+    for (unsigned i = 0; i < 3; ++i) // hit table 13-15: the 視窗 set rows
+        hit(host, ids::options_view + int(i), at(217, 214 + 32 * int(i), 324, 236 + 32 * int(i)), click_sound,
+            [this, i] { state_.view = i; });
     hit(host, ids::options_song, at(18, 226, 177, 346), click_sound, [actions, frame_pointer] {
         const int index = std::clamp((frame_pointer->pointer_y - oy - 226) / 15, 0, 7);
         if (actions.play_song)
@@ -574,23 +579,27 @@ void PlayerInfo::draw_assets(Host &host, const World &world) {
         text(frame, bottom[i], 142, lower[i], 2, label);
         text(frame, format("×%lld", counts[i]), 250, lower[i], 6, count);
     }
-    // Tool grid (Panel 74 icons) and the 15 card slots in hand order.
+    // Tool and card grids (rich4.asm:14283-14370): both pack only the owned entries into the page's
+    // 5x3 cells, centred at x 300+72c and y 281+32r (tools, red) / 385+32r (cards, green), in
+    // font(16, 0xffffff, 0x101010, 3). Tool icons (Panel 74, centred origins) are keyed at
+    // (cx-16, cy) with "×N" right-aligned at cx+30; card names are centred, in hand order.
+    const Style grid_text{16, 0xffffff, 0x101010, shadow | bold};
     int cell = 0;
     for (std::size_t tool = 0; tool < services::tool_names.size() && cell < 15; ++tool) {
         if (!player.state.tool_amounts[tool])
             continue;
-        const int cx = 300 + 72 * (cell % 5), cy = 298 + 32 * (cell / 5);
+        const int cx = 300 + 72 * (cell % 5), cy = 281 + 32 * (cell / 5);
         if (tool < 13)
             graphics::blit(frame.canvas, frame.artwork.frame('p', 74, tool), cx - 16, cy);
-        text(frame, format("×%lld", player.state.tool_amounts[tool]), cx + 30, cy, 6, white_text);
+        text(frame, format("×%lld", player.state.tool_amounts[tool]), cx + 30, cy, 6, grid_text);
         ++cell;
     }
     cell = 0;
     for (const auto card : player.state.cards) {
-        if (card >= 1 && card <= services::card_names.size()) {
-            const int cx = 300 + 72 * (cell % 5), cy = 402 + 32 * (cell / 5);
-            text(frame, services::card_names[card - 1], cx, cy, 2, {14, 0xffffff, 0x101010, shadow | bold});
-        }
+        if (card < 1 || card > services::card_names.size())
+            continue; // empty hand slots take no cell
+        const int cx = 300 + 72 * (cell % 5), cy = 385 + 32 * (cell / 5);
+        text(frame, services::card_names[card - 1], cx, cy, 2, grid_text);
         ++cell;
     }
 }

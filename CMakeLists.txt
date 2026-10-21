@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(RICH4_BUILD_VIEWER "Build the SDL3 resource inspection application" ON)
 option(RICH4_BUILD_GAME "Build the native SDL3 game" ON)
 option(RICH4_SANITIZERS "Check memory safety and undefined behavior" OFF)
+option(RICH4_TOUCH "Touch adaptations of the mouse UI (Android/iOS force this on)" OFF)
 set(RICH4_ORACLE_DIR "" CACHE PATH "Optional original EXE capture for differential tests")
 
 add_library(rich4_core src/assets.cpp src/graphics.cpp src/flc.cpp src/save.cpp src/calendar.cpp src/direction.cpp
@@ -79,6 +80,7 @@ if(RICH4_BUILD_GAME)
     tools/screens/tile_popup.cpp tools/screens/ai_settings.cpp)
   target_link_libraries(rich4-portable PRIVATE rich4_core rich4_tinysoundfont rich4_stb_vorbis SDL3::SDL3 Freetype::Freetype Iconv::Iconv)
   target_compile_options(rich4-portable PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic>)
+  target_compile_definitions(rich4-portable PRIVATE RICH4_TOUCH=$<BOOL:${RICH4_TOUCH}>)
   if(APPLE)
     set_target_properties(rich4-portable PROPERTIES MACOSX_BUNDLE TRUE
       MACOSX_BUNDLE_GUI_IDENTIFIER org.rich4.Native MACOSX_BUNDLE_BUNDLE_NAME "大富翁 4")

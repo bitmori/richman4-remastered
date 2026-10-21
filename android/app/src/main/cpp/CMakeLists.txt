@@ -72,6 +72,7 @@ add_library(main SHARED
   "${RICH4_REPO}/tools/screens/ai_settings.cpp"
   rich4_android.cpp)
 add_dependencies(main libiconv_build)
+target_compile_definitions(main PRIVATE RICH4_TOUCH=1) # touch adaptations of the mouse UI (tools/platform.hpp)
 target_include_directories(main PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${RICH4_REPO}/tools" "${ICONV_PREFIX}/include")
 target_link_libraries(main PRIVATE rich4_core rich4_tinysoundfont rich4_stb_vorbis SDL3::SDL3 freetype
   "${ICONV_PREFIX}/lib/libiconv.a" android log)

@@ -631,7 +631,7 @@ class Application {
                                 (session_->pending_decision() && spinners::handles(*session_->pending_decision())))
                            ? 40
                            : 500)
-                                     : static_cast<unsigned>(std::min<Uint64>(now - last_tick, 100)) * speed_;
+                                     : game_ms(static_cast<unsigned>(std::min<Uint64>(now - last_tick, 100)));
             last_tick = now;
             if (session_ && screen_ == Screen::game && !items_.popup_active() &&
                 !help_.active()) { // the card popup and the Help window are modal
@@ -1283,7 +1283,8 @@ class Application {
             last_screen_ = screen_;
             pad_.close();
             if (screen_ == Screen::settings)
-                options_screen_.open({speed_, audio_->music_enabled(), sound_effects_, interactive_minigames_},
+                options_screen_.open({speed_, audio_->music_enabled(), sound_effects_, interactive_minigames_,
+                                      main_screen_.view_mode()},
                                      session_ != nullptr);
             if (screen_ == Screen::wealth && session_)
                 info_.open(session_->world().header.current_player);
@@ -1361,6 +1362,7 @@ class Application {
                                audio_->set_music(state.music);
                            sound_effects_ = state.sound;
                            interactive_minigames_ = state.animation; // MINIGAMES: 動畫過程 (cfg+1)
+                           main_screen_.set_view_mode(state.view);
                            if (session_)
                                session_->set_interactive_mini_games(state.animation && !options_.auto_rounds);
                        },
@@ -1520,7 +1522,7 @@ class Application {
         const auto now = SDL_GetTicks();
         const auto elapsed = monthly_ticks_ ? static_cast<unsigned>(std::min<Uint64>(now - monthly_ticks_, 100)) : 0U;
         monthly_ticks_ = now;
-        monthly_.draw(frame_, session_->world(), options_.auto_rounds ? 40U : elapsed * speed_);
+        monthly_.draw(frame_, session_->world(), options_.auto_rounds ? 40U : game_ms(elapsed));
     }
     // MINIGAMES (dev): --minigame plays one game standalone; headless autoplays it and writes frames.
     void draw_dev_minigame() {
@@ -1539,6 +1541,16 @@ class Application {
             std::cerr << "mini-game score " << result->score << ", rand() calls " << result->draws << '\n';
             minigames_.clear();
         }
+    }
+    // Options 遊戲速度 one/two/three bars (speed_ 1/2/4) are the original game_speed 0/1/2: a movement
+    // tick every 120/80/40 ms (ref_0046cb20), so game time runs at 2/3, 1 and 2 times real time.
+    // Game time is calibrated to the default middle speed (80 ms ticks).
+    unsigned game_ms(unsigned real_ms) {
+        const unsigned thirds = speed_ >= 4 ? 6U : speed_ >= 2 ? 3U : 2U;
+        speed_remainder_ += real_ms * thirds;
+        const unsigned result = speed_remainder_ / 3;
+        speed_remainder_ %= 3;
+        return result;
     }
     unsigned spinner_elapsed() { // SPINNERS: real time between frames (replays: 40 ms per frame)
         const auto now = SDL_GetTicks();
@@ -3356,7 +3368,9 @@ class Application {
     screens::AuctionRoom auction_room_;     // AUCTION: bid poses and the sold sequence
     screens::AiSettingsScreen ai_settings_; // 託管AI window (toolbar icon 2)
     native::items::Screens items_;
-    unsigned selected_character_ = 10, selected_map_ = 0, selected_stage_ = 0, rotation_ = 0, speed_ = 1;
+    unsigned selected_character_ = 10, selected_map_ = 0, selected_stage_ = 0, rotation_ = 0;
+    unsigned speed_ = 2;           // 遊戲速度 1/2/4 = one/two/three bars; the original defaults to two
+    unsigned speed_remainder_ = 0; // game_ms: thirds of a game millisecond not yet handed out
     bool running_ = true, bank_done_for_visit_ = false, shop_done_for_visit_ = false,
          sound_effects_ = true;
     std::int32_t bank_amount_ = 1000;

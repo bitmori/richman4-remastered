@@ -45,7 +45,26 @@ std::string player_name(std::size_t slot) {
     return "玩家" + std::to_string(slot + 1);
 }
 constexpr unsigned roll_duration = 350;
-constexpr unsigned step_duration = 160;
+// Game time per movement tick: the original's 20 ms timer ticks every 4 periods at the default
+// speed (rich4_mouse_utils.asm:151, ref_0046cb20 {6,4,2}); the app scales game time by speed.
+constexpr unsigned movement_tick_ms = 80;
+// fcn_0040c05c: a step walks floor(distance / pixels per tick) ticks, the pixels set by the
+// traffic method (ref_004749d8: walk 8, motorbike 12, car 16, truck 8). Sleepwalkers, remote-
+// controlled players (controller_flags & 0x30) and steps onto water (pose anim 1) move
+// distance * 0.125 per tick (ref_004631dc), i.e. 8 ticks.
+unsigned step_duration(const PlayerState &state, bool sleepwalking, const MapNode &from, const MapNode &to) {
+    constexpr std::array<unsigned, 4> pixels_per_tick{8, 12, 16, 8};
+    unsigned ticks = 8;
+    if (!sleepwalking && !(state.controller_flags & 0x30U) && !(to.flags & 0x80000000U)) {
+        const std::int64_t dx = to.x - from.x, dy = to.y - from.y, squared = dx * dx + dy * dy;
+        const std::int64_t pixels = pixels_per_tick[state.traffic_method & 3U];
+        ticks = 0; // the largest t with t * pixels <= distance, in integers
+        while (std::int64_t(ticks + 1) * pixels * std::int64_t(ticks + 1) * pixels <= squared)
+            ++ticks;
+        ticks = std::max(1U, ticks);
+    }
+    return ticks * movement_tick_ms;
+}
 struct NeedChoice {
     GameDecision decision;
     std::size_t key;
@@ -735,7 +754,8 @@ struct GameSession::Impl {
         if (next_node >= world.nodes.size())
             throw std::runtime_error("fallback node outside table");
         const auto &next = world.nodes[next_node];
-        animation = MoveAnimation{actor(), state.x, state.y, next.x, next.y, 0, step_duration};
+        animation = MoveAnimation{actor(), state.x, state.y, next.x, next.y, 0,
+                                  step_duration(state, status().days_sleep_walking != 0, node, next)};
         set_phase(GamePhase::moving);
     }
     void complete_step() {
@@ -4095,7 +4115,9 @@ void GameSession::tick(unsigned elapsed_ms) {
             game.next_turn();
             continue;
         }
-        const unsigned duration = game.phase == GamePhase::rolling ? roll_duration : step_duration;
+        const unsigned duration = game.phase == GamePhase::rolling ? roll_duration
+                                  : game.animation                 ? game.animation->duration_ms
+                                                                   : movement_tick_ms;
         const unsigned needed = duration - game.phase_elapsed;
         const unsigned consumed = std::min(elapsed_ms, needed);
         game.phase_elapsed += consumed;

@@ -5,6 +5,7 @@
 #pragma once
 
 #include "native_ui.hpp"
+#include "platform.hpp"
 #include "rich4/assets.hpp"
 #include "rich4/graphics.hpp"
 

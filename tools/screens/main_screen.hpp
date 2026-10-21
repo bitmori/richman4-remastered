@@ -78,6 +78,9 @@ class MainScreen {
     void cycle_view_mode() {
         view_mode_ = (view_mode_ + 1) % 3;
     }
+    void set_view_mode(unsigned mode) { // Options 視窗 (RICH4.CFG[5])
+        view_mode_ = mode % 3;
+    }
     [[nodiscard]] unsigned view_mode() const {
         return view_mode_;
     }

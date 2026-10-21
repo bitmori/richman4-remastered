@@ -83,6 +83,7 @@ if(RICH4_ASSET_CATALOG)
 endif()
 
 add_executable(rich4 MACOSX_BUNDLE ${sources})
+target_compile_definitions(rich4 PRIVATE RICH4_TOUCH=1) # touch adaptations of the mouse UI (tools/platform.hpp)
 target_include_directories(rich4 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${RICH4_REPO}/tools")
 target_link_libraries(rich4 PRIVATE rich4_core rich4_tinysoundfont rich4_stb_vorbis SDL3::SDL3-static freetype iconv
   "-framework UIKit")
