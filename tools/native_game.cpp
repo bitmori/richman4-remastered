@@ -1291,6 +1291,7 @@ class Application {
     }
     void draw() {
         buttons_.clear();
+        picker_cursor_.reset();
         messages_.retire();
         canvas_ = graphics::make_canvas(640, 480, ui::color(7, 30, 55));
         frame_.ticks = SDL_GetTicks();
@@ -1447,6 +1448,14 @@ class Application {
             font_.draw(canvas_, toast_, 320 - font_.measure(toast_) / 2, 447);
         }
         spinners_.finish_frame(); // SPINNERS: rattle loop only while a reel/wheel is visibly spinning
+        // Mouse builds: the target picker draws its own cursor over everything and hides the system one.
+        if (picker_cursor_ && frame_.pointer_x >= 0 && frame_.pointer_y >= 0)
+            items_.draw_target_cursor(frame_, picker_cursor_->decision, frame_.pointer_x, frame_.pointer_y,
+                                      picker_cursor_->valid, picker_cursor_->edge);
+        if (picker_cursor_.has_value() != system_cursor_hidden_) {
+            system_cursor_hidden_ = picker_cursor_.has_value();
+            system_cursor_hidden_ ? SDL_HideCursor() : SDL_ShowCursor();
+        }
         const auto pixels = graphics::to_argb8888(canvas_);
         require(SDL_UpdateTexture(texture_.get(), nullptr, pixels.data(), 640 * 4));
         require(SDL_SetRenderDrawColor(renderer_.get(), 0, 0, 0, 255));
@@ -1952,6 +1961,13 @@ class Application {
         decision_page_ = 0;
         selected_target_.reset();
         target_center_.reset();
+        // Mask 0x80 (edge scrolling) goes with targets beyond the view; the others are all visible.
+        edge_scroll_ = std::any_of(decision.options.begin(), decision.options.end(), [this](const auto &option) {
+            if (!option.location)
+                return false;
+            const auto point = board::project({option.location->x, option.location->y}, current_camera_);
+            return !point || point->x < 0 || point->x >= 440 || point->y < 40 || point->y >= 480;
+        });
         if (decision.kind == DecisionKind::primary_stock)
             bank_amount_ = std::min(100, decision.max_amount);
     }
@@ -1971,9 +1987,102 @@ class Application {
         if (option.location)
             target_center_ = board::Point{option.location->x, option.location->y};
     }
+    // The option a board instance (tile_popup::instance_at code) stands for: tool targets carry the
+    // instance code as their value, card targets name it through `subject`.
+    static std::optional<std::size_t> target_option(const GameDecision &decision, std::uint16_t code) {
+        for (std::size_t i = 0; i < decision.options.size(); ++i) {
+            const auto &option = decision.options[i];
+            if (!option.location)
+                continue;
+            if (!option.subject) {
+                if (option.value == code)
+                    return i;
+                continue;
+            }
+            const auto &subject = *option.subject;
+            const bool match = subject.kind == CardTargetKind::actor      ? code == (0x8000U | (1U << subject.value))
+                               : subject.kind == CardTargetKind::property ? code == subject.value
+                               : subject.kind == CardTargetKind::object
+                                   ? code == (0x8000U | (unsigned(subject.value) << 8U))
+                                   : false;
+            if (match)
+                return i;
+        }
+        return std::nullopt;
+    }
+    std::optional<std::size_t> target_under(int x, int y) const {
+        if (x < 0 || x >= 440 || y < 40 || y >= 480 || !session_ || !session_->pending_decision())
+            return std::nullopt;
+        const auto code = native::tile_popup::instance_at(session_->world(), current_camera_, x, y);
+        return code ? target_option(*session_->pending_decision(), code) : std::nullopt;
+    }
+    // Mouse builds, _rich4_select_instance_with_mouse (cards-tools-shops.md §3): nothing marks the
+    // targets; the picker's cursor tells a valid instance (its animated cursor) from anything else
+    // (the red ✕). Left-up confirms a valid one (Effect 2) or refuses (Effect 3); right-up cancels
+    // where the decision offers 取消; the camera edge-scrolls when targets reach beyond the view
+    // (mask 0x80): 50 ms ticks, speed 8 growing by 4 up to 64, along ref_004751b4.
+    void draw_mouse_targets(const GameDecision &decision) {
+        const int x = frame_.pointer_x, y = frame_.pointer_y;
+        int edge = 0; // 1 up, 2 left, 3 down, 4 right
+        if (edge_scroll_ && x >= 0 && y >= 0)
+            edge = x <= 0 ? 2 : x >= 440 ? 4 : y <= 40 ? 1 : y >= 479 ? 3 : 0;
+        const auto now = SDL_GetTicks();
+        if (!edge) {
+            edge_speed_ = 8;
+            edge_tick_ = now;
+        } else {
+            constexpr std::int64_t h = 0xb505; // 1/sqrt(2) in 16.16
+            constexpr std::array<std::pair<std::int64_t, std::int64_t>, 8> unit{
+                {{0, -0x10000}, {-h, -h}, {-0x10000, 0}, {-h, h}, {0, 0x10000}, {h, h}, {0x10000, 0}, {h, -h}}};
+            if (!target_center_)
+                target_center_ = current_camera_.center;
+            for (; now - edge_tick_ >= 50; edge_tick_ += 50) {
+                const auto [ux, uy] = unit[std::size_t(edge * 2 + int(rotation_) - 2) & 7U];
+                target_center_->x = std::clamp(int(target_center_->x + ((ux * edge_speed_) >> 16)), 220, 2084);
+                target_center_->y = std::clamp(int(target_center_->y + ((uy * edge_speed_) >> 16)), 220, 2084);
+                edge_speed_ = std::min(edge_speed_ + 4, 64);
+            }
+        }
+        const auto hovered = edge ? std::nullopt : target_under(x, y);
+        selected_target_ = hovered; // Enter / Space confirm what the cursor is on
+        const auto confirm = [this](std::size_t index) {
+            if (sound_effects_)
+                audio_->play_sound(2);
+            respond(index);
+        };
+        // Invisible per-target points first (the replay driver presses them by id), then the whole
+        // screen: everything acts on the left button-up, like the original.
+        for (std::size_t i = 0; i < decision.options.size(); ++i)
+            if (const auto &location = decision.options[i].location)
+                if (const auto point = board::project({location->x, location->y}, current_camera_);
+                    point && point->x >= 1 && point->x < 439 && point->y >= 41 && point->y < 479)
+                    buttons_.push_back({5000 + int(i), {point->x - 1, point->y - 1, point->x + 2, point->y + 2}, true,
+                                        [] {}, false, 0, [confirm, i] { confirm(i); }});
+        buttons_.push_back({4999, {0, 0, 640, 480}, true, [] {}, false, 0, [this, confirm] {
+                                if (const auto index = target_under(frame_.pointer_x, frame_.pointer_y))
+                                    confirm(*index);
+                                else if (sound_effects_)
+                                    audio_->play_sound(3); // refused: the picker stays open
+                            }});
+        const auto cancel = std::find_if(decision.options.begin(), decision.options.end(),
+                                         [](const auto &option) { return option.label == "取消"; });
+        if (cancel != decision.options.end()) // right-up cancels (not when the 0x08 mask forbids it)
+            frame_.right_click(
+                [this, index = std::size_t(cancel - decision.options.begin())] {
+                    if (sound_effects_)
+                        audio_->play_sound(screens::cancel_sound);
+                    respond(index);
+                },
+                208);
+        picker_cursor_ = PickerCursor{decision, hovered.has_value(), edge};
+    }
     void draw_map_decision(const GameDecision &pending) {
         // Original names for the targets (messages::localized); values and order are unchanged.
         const auto decision = messages::localized(pending, session_->world());
+        if (!platform::touch_ui) {
+            draw_mouse_targets(decision);
+            return;
+        }
         ui::fill(canvas_, {440, 0, 640, 480}, ui::paper);
         font_.draw(canvas_, decision.prompt, 449, 16, 16, ui::blue, 181);
         constexpr std::size_t page_size = 8;
@@ -2618,7 +2727,7 @@ class Application {
             if (decision->kind == DecisionKind::shop && choice < decision->options.size() &&
                 items_.shop_show_option(decision->options[choice].value))
                 return; // the card or tool shelf must be on screen first
-            if (map_decision() && selected_target_ == choice)
+            if (platform::touch_ui && map_decision() && selected_target_ == choice)
                 push_button(207);
             else {
                 const auto marker = 5000 + int(choice);
@@ -2627,6 +2736,11 @@ class Application {
                     std::any_of(buttons_.begin(), buttons_.end(), [marker](const auto &button) {
                         return button.id == marker && button.enabled;
                     });
+                const auto &location = decision->options.at(choice).location;
+                if (!platform::touch_ui && map_decision() && !visible_marker && location) {
+                    target_center_ = board::Point{location->x, location->y}; // as an edge scroll would
+                    return;
+                }
                 push_button(visible_marker ? marker : 210 + int(choice));
             }
         } else if (session_->phase() == GamePhase::finished)
@@ -3430,6 +3544,16 @@ class Application {
     unsigned speed_ = 2;           // 遊戲速度 1/2/4 = one/two/three bars; the original defaults to two
     unsigned speed_remainder_ = 0; // game_ms: thirds of a game millisecond not yet handed out
     std::function<void()> pending_release_;   // Button::release of the control pressed last
+    struct PickerCursor {                      // mouse builds: the §3 target picker's cursor this frame
+        GameDecision decision;
+        bool valid = false;
+        int edge = 0;
+    };
+    std::optional<PickerCursor> picker_cursor_;
+    bool system_cursor_hidden_ = false;
+    bool edge_scroll_ = false; // the pending map decision scrolls at the screen edges (mask 0x80)
+    int edge_speed_ = 8;
+    std::uint64_t edge_tick_ = 0;
     bool running_ = true, bank_done_for_visit_ = false, shop_done_for_visit_ = false,
          sound_effects_ = true;
     std::int32_t bank_amount_ = 1000;

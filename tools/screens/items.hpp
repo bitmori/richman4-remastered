@@ -66,6 +66,10 @@ class Screens {
     // Animated original cursor sprites on the map targets of a decision.
     void draw_targets(Frame &, const GameDecision &, const board::Camera &, std::optional<std::size_t> selected,
                       const std::function<void(std::size_t)> &tap);
+    // Mouse builds (§3): the picker's own cursor at (x, y) -- the decision's animated valid-target
+    // cursor over a valid instance, the red ✕ (0:5) elsewhere, an edge-scroll arrow for `edge`
+    // 1 up / 2 left / 3 down / 4 right (ref_00475e0d).
+    void draw_target_cursor(Frame &, const GameDecision &, int x, int y, bool valid, int edge);
     // Shop, magic-house and rescue decisions, the remote-dice picker (Panel 72) and the 嫁禍卡
     // victim chooser (Data 518). Returns false for other decision kinds.
     bool draw_decision(Frame &, GameSession &, const Host &);
@@ -139,6 +143,8 @@ class Screens {
     };
 
     [[nodiscard]] std::uint64_t now(const Frame &) const;
+    [[nodiscard]] std::pair<int, int> cursor_frames(const GameDecision &, bool *card = nullptr,
+                                                    unsigned *item = nullptr) const;
     void resolve_press(Frame &, std::string_view owner);
     void press(Frame &, std::string owner, graphics::Rect rect, std::function<void()> action, int item = 0);
     const std::string &description(Artwork &, bool card, unsigned id);

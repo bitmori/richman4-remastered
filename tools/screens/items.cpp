@@ -463,8 +463,8 @@ void Screens::draw_popup(Frame &frame) {
 
 // ---------------------------------------------------------------------------------------------
 // §3 target picking: the original cursor sprites drawn on every valid target.
-void Screens::draw_targets(Frame &frame, const GameDecision &decision, const board::Camera &camera,
-                           std::optional<std::size_t> selected, const std::function<void(std::size_t)> &tap) {
+// The valid-target cursor of a decision: first Data 0 frame and frame count (§3.1 param).
+std::pair<int, int> Screens::cursor_frames(const GameDecision &decision, bool *card_out, unsigned *item_out) const {
     int first = 8, count = 4; // red reticle
     bool card = false;
     unsigned item = last_tool_;
@@ -493,6 +493,30 @@ void Screens::draw_targets(Frame &frame, const GameDecision &decision, const boa
         default: break;
         }
     }
+    if (card_out)
+        *card_out = card;
+    if (item_out)
+        *item_out = item;
+    return {first, count};
+}
+
+void Screens::draw_target_cursor(Frame &frame, const GameDecision &decision, int x, int y, bool valid, int edge) {
+    constexpr std::array<std::size_t, 5> arrows{41, 34, 40, 38, 36};
+    std::size_t sprite = 5; // red ✕
+    if (edge >= 1 && edge <= 4)
+        sprite = arrows[std::size_t(edge)];
+    else if (valid) {
+        const auto [first, count] = cursor_frames(decision);
+        sprite = std::size_t(first) + std::size_t(now(frame) / 100) % std::size_t(count);
+    }
+    keyed(frame, art(frame, 'd', 0, sprite), x, y);
+}
+
+void Screens::draw_targets(Frame &frame, const GameDecision &decision, const board::Camera &camera,
+                           std::optional<std::size_t> selected, const std::function<void(std::size_t)> &tap) {
+    bool card = false;
+    unsigned item = last_tool_;
+    const auto [first, count] = cursor_frames(decision, &card, &item);
     struct Marker {
         std::size_t index;
         board::Point point;
