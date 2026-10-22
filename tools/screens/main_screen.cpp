@@ -355,6 +355,18 @@ void MainScreen::draw_info_panel(Frame &frame, const World &world, const MainScr
     for (int row = 0; row < 3; ++row)
         text(frame, labels[tab][std::size_t(row)], 450, std::array{80, 145, 208}[std::size_t(row)], Align::left);
     text(frame, "物價指數  " + std::to_string(world.header.price_index), 450, 260, Align::left);
+    if (view_mode_ == 1) { // the minimap replaces the calendar: keep the date on the price-index row (port addition)
+        const auto &date = world.header.date;
+        static constexpr std::array<const char *, 7> weekdays{"日", "一", "二", "三", "四", "五", "六"};
+        const calendar::Date today{date.year, date.month, date.day};
+        const auto day = std::to_string(date.month) + "月" + std::to_string(date.day) + "日";
+        text(frame, day, 608, 260, Align::right);
+        // Red on a closing day (bank and stock market shut), like the month view's red day numbers.
+        const auto ink = frame.font.ink_bounds(day, Text{}.size, 0, true);
+        const bool closed = holidays::is_closed(today, world.header.map_id, world.header.stage_id);
+        text(frame, weekdays[calendar::weekday(today) % 7], 608 - (ink.right - ink.left) - 8, 260, Align::right,
+             {Text{}.size, closed ? red : text_ink, 1});
+    }
     static constexpr std::array<const char *, 4> tab_names{"資金", "地產", "股票", "其他"};
     for (unsigned i = 0; i < 4; ++i) {
         text(frame, tab_names[i], 627, std::array{35, 108, 178, 250}[i], Align::vertical,
