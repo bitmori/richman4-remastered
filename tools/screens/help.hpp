@@ -5,11 +5,13 @@
 // pages, flipped with 0:8/0:9). Pure reference text: no game state is read or changed.
 // Touch builds: every target's hit area is enlarged to finger size, a tap on the text pane turns
 // the page, and a tap outside the window (or Back) closes it. Mouse builds: right-click closes it.
+// Port addition: in a game, the 卡片/道具 topics get a "+1" button that gives the topic's item (cheat).
 #pragma once
 
 #include "draw.hpp"
 
 #include <array>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -19,7 +21,7 @@ namespace ids {
 inline constexpr int help_category = 1120, // + category 0..7
     help_topic = 1130,                     // + visible row 0..7
     help_list_up = 1140, help_list_down = 1141, help_page_prev = 1142, help_page_next = 1143,
-                     help_text = 1144, help_window = 1145, help_outside = 1146;
+                     help_text = 1144, help_window = 1145, help_outside = 1146, help_give = 1147;
 } // namespace ids
 
 class HelpScreen {
@@ -28,7 +30,9 @@ class HelpScreen {
     void open(int x, int y);
     void close() noexcept { open_ = false; }
     [[nodiscard]] bool active() const noexcept { return open_; }
-    void draw(Host &host);
+    // `give` (card?, id) -> accepted; empty outside a human's waiting turn, which hides "+1".
+    using Give = std::function<bool(bool card, std::uint8_t id)>;
+    void draw(Host &host, const Give &give = {});
     void cancel(Host &host); // right-click / Back / Escape
 
     [[nodiscard]] unsigned category() const noexcept { return category_; }

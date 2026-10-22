@@ -1440,7 +1440,10 @@ class Application {
         }
         if (help_.active()) { // HELP: modal window over the current screen
             buttons_.clear();
-            help_.draw(host);
+            screens::HelpScreen::Give give;
+            if (session_ && session_->phase() == GamePhase::human_ready) // +1 cheat: the waiting human only
+                give = [this](bool card, std::uint8_t id) { return session_ && session_->cheat_give(card, id); };
+            help_.draw(host, give);
         }
         if (!toast_.empty() && SDL_GetTicks() < toast_until_) {
             ui::fill(canvas_, {210, 439, 430, 474}, ui::paper);
@@ -3050,6 +3053,11 @@ class Application {
         point(320, 64, true); // holding the next-page arrow
         shot("help-cards-scrolled");
         point(-1, -1);
+        press(screens::ids::help_give); // +1 cheat (human_ready only)
+        shot("help-give");
+        press(screens::ids::help_category + 7); // 道具
+        press(screens::ids::help_topic + 3);    // 定時炸彈: paged, +1 at the bottom right
+        shot("help-give-paged");
         help_.close();
         std::uint64_t ticks = SDL_GetTicks();
         const auto run = [&](unsigned steps, bool redraw_board) {

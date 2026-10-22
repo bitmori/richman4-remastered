@@ -331,6 +331,10 @@ class GameSession {
     bool use_card(const CardUse &card);
     bool use_tool(unsigned id, std::uint16_t target = 0, std::uint16_t destination = 0);
     bool dismount();
+    // Port addition (Help +1 cheat): gives the waiting human player one card (1..30) or tool
+    // (1..13) while human_ready. Refused with a full hand (15 cards) or 9 of that tool; an empty
+    // supply grows by one first, so the deck counts never wrap.
+    bool cheat_give(bool card, std::uint8_t id);
     bool buy_stock(std::size_t stock, std::int32_t quantity);
     bool sell_stock(std::size_t stock, std::int32_t quantity);
     bool close_stock_market();

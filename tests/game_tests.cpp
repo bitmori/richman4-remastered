@@ -1026,6 +1026,24 @@ void lifecycle_and_finished_saves() {
     require(dice.roll_dice() && !dice.set_dice_count(1) && dice.dice().size() == 3,
             "dice count may only change at settled human input");
     value = world();
+    value.players[0].state.cards = {};
+    value.players[0].state.tool_amounts = {};
+    value.card_supply[8] = 0;
+    value.tool_supply[1] = 0;
+    rich4::GameSession cheat(value, 1);
+    require(cheat.cheat_give(true, 9) && cheat.world().players[0].state.cards[0] == 9 &&
+                cheat.world().card_supply[8] == 0,
+            "+1 card from an empty supply");
+    for (int i = 0; i < 9; ++i)
+        require(cheat.cheat_give(false, 2), "+1 tool up to nine");
+    require(!cheat.cheat_give(false, 2) && cheat.world().players[0].state.tool_amounts[1] == 9 &&
+                !cheat.cheat_give(false, 14) && !cheat.cheat_give(true, 0),
+            "+1 limits");
+    for (int i = 1; i < 15; ++i)
+        require(cheat.cheat_give(true, 1), "+1 fills the hand");
+    require(!cheat.cheat_give(true, 1), "+1 refuses a full hand");
+    require(cheat.roll_dice() && !cheat.cheat_give(true, 1), "+1 only at settled human input");
+    value = world();
     value.header.current_player = 3;
     value.players[0].state.loan = 1100;
     value.players[0].state.cash = 100;

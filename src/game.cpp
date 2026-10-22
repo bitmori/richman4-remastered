@@ -3842,6 +3842,26 @@ bool GameSession::dismount() {
         return false;
     return tools::dismount(impl_->world, impl_->actor());
 }
+bool GameSession::cheat_give(bool card, std::uint8_t id) {
+    if (impl_->phase != GamePhase::human_ready)
+        return false;
+    auto &world = impl_->world;
+    auto &player = impl_->player();
+    if (card) {
+        if (id < 1 || id > world.card_supply.size() || card_count(player.cards) == player.cards.size())
+            return false;
+        auto &supply = world.card_supply[id - 1u];
+        if (!supply)
+            ++supply;
+        receive_card(player.cards, world.card_supply, services::card_prices, id);
+        return true;
+    }
+    if (id < 1 || id > player.tool_amounts.size() - 2u || player.tool_amounts[id - 1u] >= 9)
+        return false;
+    if (id <= world.tool_supply.size() && !world.tool_supply[id - 1u])
+        ++world.tool_supply[id - 1u];
+    return receive_tool(player.tool_amounts, world.tool_supply, id);
+}
 bool GameSession::buy_stock(std::size_t stock, std::int32_t quantity) {
     if (impl_->phase != GamePhase::human_ready || stock >= impl_->world.stocks.size() || quantity <= 0 ||
         impl_->card_callbacks().market_closed())

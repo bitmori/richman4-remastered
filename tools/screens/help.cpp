@@ -4,8 +4,11 @@
 // ref_00476254 of rich4_ui_help.asm.
 #include "help.hpp"
 
+#include "rich4/services.hpp"
+
 #include <algorithm>
 #include <exception>
+#include <span>
 
 namespace rich4::native::screens {
 namespace {
@@ -124,7 +127,7 @@ void HelpScreen::scroll(int direction) { // loc_0044e881 / loc_0044e944: by 8 to
     first = target;
 }
 
-void HelpScreen::draw(Host &host) {
+void HelpScreen::draw(Host &host, const Give &give) {
     if (!open_)
         return;
     auto &frame = host.frame;
@@ -174,6 +177,34 @@ void HelpScreen::draw(Host &host) {
     if (paged) {
         frame.picture('h', 0, pressed(prev_hit) ? 10 : 8, X + 322, Y + 48);
         frame.picture('h', 0, pressed(next_hit) ? 11 : 9, X + 343, Y + 48);
+    }
+
+    // Port addition: "+1" gives the topic's card or tool. Top right of the yellow pane; the two
+    // paged tool topics (定時炸彈, 傳送機) keep their page arrows there, so it moves to the bottom
+    // right, beside their short last lines.
+    const bool cards = category_ == 6, tools = category_ == 7;
+    if (give && (cards || tools)) {
+        const auto name = category.topics.at(topic_);
+        const auto &table = cards ? std::span<const std::string_view>(services::card_names)
+                                  : std::span<const std::string_view>(services::tool_names);
+        const auto found = std::find(table.begin(), table.end(), std::string_view(name));
+        if (found != table.end()) {
+            const auto id = std::uint8_t(found - table.begin() + 1);
+            const auto rect = paged ? at(322, 328, 360, 350) : at(322, 52, 360, 76);
+            const bool down = pressed(rect);
+            ui::fill(frame.canvas, rect, down ? ui::color(0xd8, 0xb8, 0x48) : ui::color(0xff, 0xf0, 0x90));
+            ui::border(frame.canvas, rect, ui::color(0x80, 0x60, 0x20));
+            text(frame, "+1", (rect.left + rect.right) / 2 + (down ? 1 : 0), (rect.top + rect.bottom) / 2 + (down ? 1 : 0),
+                 2, topic_style);
+            // Host is per frame: keep copies of its callbacks, not a reference.
+            hit(host, ids::help_give, rect, no_sound, [sound = host.sound, toast = host.toast, give, cards, id, name] {
+                const bool given = give(cards, id);
+                if (sound)
+                    sound(given ? click_sound : error_sound);
+                if (toast)
+                    toast(given ? std::string("獲得 ") + name : std::string(cards ? "卡片已滿" : "最多 9 個"));
+            });
+        }
     }
 
     // Hit areas, first match wins: the ref_00476254 columns (category x 22-91, topics x 104-196), in
